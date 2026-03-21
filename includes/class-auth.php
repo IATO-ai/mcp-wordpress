@@ -27,11 +27,23 @@ class IATO_MCP_Auth {
 	 * @return true|WP_Error
 	 */
 	public static function authenticate( WP_REST_Request $request ): true|WP_Error {
-		// TODO: implement — check get_current_user_id() > 0 and current_user_can('read')
-		// Return true on success, WP_Error on failure.
-		// WP core Application Password auth runs automatically via authenticate filter.
-		// Reference: https://developer.wordpress.org/reference/functions/wp_authenticate_application_password/
-		return new WP_Error( 'not_implemented', 'Auth not yet implemented', [ 'status' => 501 ] );
+		if ( 0 === get_current_user_id() ) {
+			return new WP_Error(
+				'iato_mcp_unauthorized',
+				__( 'Authentication required. Use an Application Password with Basic Auth.', 'iato-mcp' ),
+				[ 'status' => 401 ]
+			);
+		}
+
+		if ( ! current_user_can( 'read' ) ) {
+			return new WP_Error(
+				'iato_mcp_forbidden',
+				__( 'Your user account does not have sufficient permissions.', 'iato-mcp' ),
+				[ 'status' => 403 ]
+			);
+		}
+
+		return true;
 	}
 
 	/**
@@ -41,7 +53,15 @@ class IATO_MCP_Auth {
 	 * @return true|WP_Error
 	 */
 	public static function require_cap( string $cap ): true|WP_Error {
-		// TODO: implement — return WP_Error with status 403 if !current_user_can($cap)
-		return new WP_Error( 'not_implemented', 'Cap check not yet implemented', [ 'status' => 501 ] );
+		if ( ! current_user_can( $cap ) ) {
+			return new WP_Error(
+				'iato_mcp_forbidden',
+				/* translators: %s: WordPress capability string */
+				sprintf( __( 'You do not have the required capability: %s', 'iato-mcp' ), $cap ),
+				[ 'status' => 403 ]
+			);
+		}
+
+		return true;
 	}
 }
