@@ -1,0 +1,15 @@
+# WordPress
+*.log
+wp-content/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Node / Composer (if added later)
+node_modules/
+vendor/
