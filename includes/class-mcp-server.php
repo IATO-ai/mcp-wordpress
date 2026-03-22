@@ -18,22 +18,80 @@ class IATO_MCP_Server {
 	private static array $tools = [];
 
 	/**
-	 * Boot: register REST route.
+	 * Boot: register REST route and auth response filter.
 	 */
 	public static function init(): void {
 		add_action( 'rest_api_init', [ self::class, 'register_routes' ] );
+		add_filter( 'rest_post_dispatch', [ self::class, 'add_auth_headers' ], 10, 3 );
 	}
 
 	/**
-	 * Register the single MCP message endpoint.
+	 * Register the MCP message endpoint.
+	 * Accepts both GET (endpoint probe / SSE) and POST (JSON-RPC messages).
 	 * Authentication is handled via the plugin-generated API key (Bearer token).
 	 */
 	public static function register_routes(): void {
 		register_rest_route( 'iato-mcp/v1', '/message', [
-			'methods'             => 'POST',
-			'callback'            => [ self::class, 'handle_request' ],
-			'permission_callback' => [ 'IATO_MCP_Auth', 'authenticate' ],
+			[
+				'methods'             => 'POST',
+				'callback'            => [ self::class, 'handle_request' ],
+				'permission_callback' => [ 'IATO_MCP_Auth', 'authenticate' ],
+			],
+			[
+				'methods'             => 'GET',
+				'callback'            => [ self::class, 'handle_get' ],
+				'permission_callback' => [ 'IATO_MCP_Auth', 'authenticate' ],
+			],
 		] );
+	}
+
+	/**
+	 * Handle GET — endpoint probe for Streamable HTTP transport.
+	 *
+	 * Claude Desktop and other MCP clients send GET to verify the endpoint
+	 * exists before starting the OAuth flow or sending JSON-RPC messages.
+	 *
+	 * @param WP_REST_Request $request Incoming request.
+	 * @return WP_REST_Response
+	 */
+	public static function handle_get( WP_REST_Request $request ): WP_REST_Response {
+		return new WP_REST_Response( [
+			'jsonrpc' => '2.0',
+			'result'  => [
+				'serverInfo' => [
+					'name'    => 'iato-mcp',
+					'version' => IATO_MCP_VERSION,
+				],
+			],
+		], 200 );
+	}
+
+	/**
+	 * Add WWW-Authenticate header to 401 responses on MCP routes.
+	 *
+	 * This tells Claude Desktop where to find the OAuth metadata so it can
+	 * start the authorization flow automatically.
+	 *
+	 * @param WP_REST_Response $response Response object.
+	 * @param WP_REST_Server   $server   REST server.
+	 * @param WP_REST_Request  $request  Request object.
+	 * @return WP_REST_Response
+	 */
+	public static function add_auth_headers( WP_REST_Response $response, WP_REST_Server $server, WP_REST_Request $request ): WP_REST_Response {
+		$route = $request->get_route();
+		if ( 0 !== strpos( $route, '/iato-mcp/' ) ) {
+			return $response;
+		}
+
+		if ( 401 === $response->get_status() ) {
+			$resource_url = rest_url( 'iato-mcp/v1/message' );
+			$response->header(
+				'WWW-Authenticate',
+				'Bearer resource_metadata="' . esc_url_raw( $resource_url ) . '"'
+			);
+		}
+
+		return $response;
 	}
 
 	/**

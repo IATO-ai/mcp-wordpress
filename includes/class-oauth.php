@@ -6,7 +6,8 @@
  * so Claude Desktop can obtain a Bearer token through its standard connector UI.
  *
  * Endpoints:
- *   GET  /.well-known/oauth-authorization-server  — RFC 8414 metadata
+ *   GET  /.well-known/oauth-authorization-server  — RFC 8414 authorization server metadata
+ *   GET  /.well-known/oauth-protected-resource    — RFC 9728 protected resource metadata
  *   POST /oauth/register                          — dynamic client registration
  *   GET  /oauth/authorize                         — authorization (requires WP admin login)
  *   POST /oauth/token                             — token exchange
@@ -38,6 +39,9 @@ class IATO_MCP_OAuth {
 			case '.well-known/oauth-authorization-server':
 				self::handle_metadata();
 				break;
+			case '.well-known/oauth-protected-resource':
+				self::handle_resource_metadata();
+				break;
 			case 'oauth/register':
 				self::handle_register();
 				break;
@@ -48,6 +52,18 @@ class IATO_MCP_OAuth {
 				self::handle_token();
 				break;
 		}
+	}
+
+	// ── Protected Resource Metadata (RFC 9728) ──────────────────────────────
+
+	private static function handle_resource_metadata(): void {
+		$base = home_url();
+
+		self::json_response( [
+			'resource'                => rest_url( 'iato-mcp/v1/message' ),
+			'authorization_servers'   => [ $base ],
+			'bearer_methods_supported' => [ 'header' ],
+		] );
 	}
 
 	// ── Metadata (RFC 8414) ──────────────────────────────────────────────────
