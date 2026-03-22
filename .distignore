@@ -1,0 +1,11 @@
+# Files excluded from the WordPress.org distribution ZIP.
+# Used by `wp dist-archive` and similar tools.
+.git
+.gitignore
+.distignore
+.DS_Store
+CLAUDE.md
+docs/
+pull_request.png
+*.docx
+*.png
