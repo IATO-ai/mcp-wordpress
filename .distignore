@@ -6,6 +6,8 @@
 .DS_Store
 CLAUDE.md
 docs/
-pull_request.png
 *.docx
-*.png
+IATO_black.png
+IATO__icon_black.png
+pull_request.png
+assets/icon-*.png
