@@ -84,10 +84,10 @@ class IATO_MCP_Server {
 		}
 
 		if ( 401 === $response->get_status() ) {
-			$resource_url = rest_url( 'iato-mcp/v1/message' );
+			$resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
 			$response->header(
 				'WWW-Authenticate',
-				'Bearer resource_metadata="' . esc_url_raw( $resource_url ) . '"'
+				'Bearer resource_metadata="' . esc_url_raw( $resource_metadata_url ) . '"'
 			);
 		}
 
