@@ -201,6 +201,129 @@ class IATO_MCP_IATO_Client {
 		return self::get( "/sitemaps/{$sitemap_id}/taxonomy" );
 	}
 
+	// ── Sitemap write endpoints ───────────────────────────────────────────────
+
+	/**
+	 * POST /sitemaps/{id}/nodes — create a sitemap node.
+	 *
+	 * @param int         $sitemap_id
+	 * @param string      $title
+	 * @param string|null $url
+	 * @param int|null    $parent_node_id
+	 * @param string      $node_type     'page'|'section'|'planned'
+	 * @param string|null $page_type     'home'|'landing'|'article'|'product'|etc.
+	 * @return array|WP_Error
+	 */
+	public static function create_sitemap_node( int $sitemap_id, string $title, ?string $url = null, ?int $parent_node_id = null, string $node_type = 'page', ?string $page_type = null ): array|WP_Error {
+		$body = [ 'title' => $title, 'node_type' => $node_type ];
+		if ( null !== $url ) {
+			$body['url'] = $url;
+		}
+		if ( null !== $parent_node_id ) {
+			$body['parent_node_id'] = $parent_node_id;
+		}
+		if ( null !== $page_type ) {
+			$body['page_type'] = $page_type;
+		}
+		return self::post( "/sitemaps/{$sitemap_id}/nodes", $body );
+	}
+
+	/**
+	 * POST /sitemaps/{id}/nodes/{node_id} — update a sitemap node.
+	 *
+	 * @param int   $sitemap_id
+	 * @param int   $node_id
+	 * @param array $fields  Any of: title, status, page_type, url, notes.
+	 * @return array|WP_Error
+	 */
+	public static function update_sitemap_node( int $sitemap_id, int $node_id, array $fields ): array|WP_Error {
+		return self::post( "/sitemaps/{$sitemap_id}/nodes/{$node_id}", $fields );
+	}
+
+	// ── Category endpoints ────────────────────────────────────────────────────
+
+	/**
+	 * POST /sitemaps/{id}/categories — create a category.
+	 *
+	 * @param int         $sitemap_id
+	 * @param string      $label
+	 * @param string|null $parent_category_id
+	 * @return array|WP_Error
+	 */
+	public static function create_category( int $sitemap_id, string $label, ?string $parent_category_id = null ): array|WP_Error {
+		$body = [ 'label' => $label ];
+		if ( null !== $parent_category_id ) {
+			$body['parent_category_id'] = $parent_category_id;
+		}
+		return self::post( "/sitemaps/{$sitemap_id}/categories", $body );
+	}
+
+	/**
+	 * POST /sitemaps/{id}/categories/assign — assign a category to nodes.
+	 *
+	 * @param int    $sitemap_id
+	 * @param array  $node_ids
+	 * @param string $category_id
+	 * @return array|WP_Error
+	 */
+	public static function assign_category( int $sitemap_id, array $node_ids, string $category_id ): array|WP_Error {
+		return self::post( "/sitemaps/{$sitemap_id}/categories/assign", [
+			'node_ids'    => $node_ids,
+			'category_id' => $category_id,
+		] );
+	}
+
+	// ── Tag endpoints ─────────────────────────────────────────────────────────
+
+	/**
+	 * POST /sitemaps/{id}/tags — create a tag.
+	 *
+	 * @param int    $sitemap_id
+	 * @param string $label
+	 * @param string $color  Hex color code.
+	 * @return array|WP_Error
+	 */
+	public static function create_tag( int $sitemap_id, string $label, string $color = '#6b7280' ): array|WP_Error {
+		return self::post( "/sitemaps/{$sitemap_id}/tags", [
+			'label' => $label,
+			'color' => $color,
+		] );
+	}
+
+	/**
+	 * POST /sitemaps/{id}/tags/assign — assign tags to nodes.
+	 *
+	 * @param int   $sitemap_id
+	 * @param array $node_ids
+	 * @param array $tag_ids
+	 * @return array|WP_Error
+	 */
+	public static function assign_tags( int $sitemap_id, array $node_ids, array $tag_ids ): array|WP_Error {
+		return self::post( "/sitemaps/{$sitemap_id}/tags/assign", [
+			'node_ids' => $node_ids,
+			'tag_ids'  => $tag_ids,
+		] );
+	}
+
+	// ── SEO fix endpoint ──────────────────────────────────────────────────────
+
+	/**
+	 * POST /crawls/{id}/fix-seo-issue — apply an SEO fix.
+	 *
+	 * @param string $crawl_id
+	 * @param int    $page_id
+	 * @param string $fix_type  'title'|'meta_description'
+	 * @param string $fix_value
+	 * @return array|WP_Error
+	 */
+	public static function fix_seo_issue( string $crawl_id, int $page_id, string $fix_type, string $fix_value ): array|WP_Error {
+		return self::post( "/crawls/{$crawl_id}/fix-seo-issue", [
+			'page_id'   => $page_id,
+			'fix_type'  => $fix_type,
+			'fix_value' => $fix_value,
+		] );
+	}
+
 	// ── Internal helpers ───────────────────────────────────────────────────────
 
 	/**
