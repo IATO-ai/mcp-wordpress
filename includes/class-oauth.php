@@ -237,6 +237,13 @@ class IATO_MCP_OAuth {
 					color: var(--iato-primary);
 					letter-spacing: -0.5px;
 					margin-bottom: 20px;
+					display: flex;
+					align-items: center;
+					gap: 8px;
+				}
+				.auth-brand img {
+					height: 32px;
+					width: auto;
 				}
 				.auth-brand span {
 					font-weight: 400;
@@ -348,7 +355,7 @@ class IATO_MCP_OAuth {
 		</head>
 		<body>
 			<div class="auth-card">
-				<div class="auth-brand">IATO <span>MCP</span></div>
+				<div class="auth-brand"><img src="<?php echo esc_url( IATO_MCP_URL . 'assets/img/logo.png' ); ?>" alt="IATO" /> <span>MCP</span></div>
 				<h2 class="auth-title"><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
 				<p class="auth-desc">
 					<?php
