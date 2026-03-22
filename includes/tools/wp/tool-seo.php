@@ -28,8 +28,19 @@ IATO_MCP_Server::register_tool(
 		$post_id = absint( $args['id'] ?? 0 );
 		if ( ! $post_id ) return new WP_Error( 'missing_id', 'Post ID required' );
 
-		// TODO: implement — IATO_MCP_SEO_Adapter::get_meta($post_id)
-		return new WP_Error( 'not_implemented', 'get_seo_data not yet implemented' );
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );
+
+		return IATO_MCP_Server::ok( [
+			'id'          => $post_id,
+			'title'       => $meta['title'],
+			'description' => $meta['description'],
+			'plugin'      => $meta['plugin'],
+		] );
 	}
 );
 
@@ -56,10 +67,41 @@ IATO_MCP_Server::register_tool(
 		$post_id = absint( $args['id'] ?? 0 );
 		if ( ! $post_id ) return new WP_Error( 'missing_id', 'Post ID required' );
 
-		// TODO: implement
-		// if isset($args['title'])       IATO_MCP_SEO_Adapter::update_title($post_id, $args['title'])
-		// if isset($args['description']) IATO_MCP_SEO_Adapter::update_description($post_id, $args['description'])
-		// Return what was updated
-		return new WP_Error( 'not_implemented', 'update_seo_data not yet implemented' );
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		if ( ! isset( $args['title'] ) && ! isset( $args['description'] ) ) {
+			return new WP_Error( 'missing_fields', 'Provide at least one of title or description to update.' );
+		}
+
+		$updated = [];
+
+		if ( isset( $args['title'] ) ) {
+			$result = IATO_MCP_SEO_Adapter::update_title( $post_id, $args['title'] );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			$updated[] = 'title';
+		}
+
+		if ( isset( $args['description'] ) ) {
+			$result = IATO_MCP_SEO_Adapter::update_description( $post_id, $args['description'] );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			$updated[] = 'description';
+		}
+
+		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );
+
+		return IATO_MCP_Server::ok( [
+			'id'          => $post_id,
+			'updated'     => $updated,
+			'title'       => $meta['title'],
+			'description' => $meta['description'],
+			'plugin'      => $meta['plugin'],
+		] );
 	}
 );

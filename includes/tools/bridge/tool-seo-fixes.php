@@ -2,9 +2,9 @@
 /**
  * Bridge Tool: get_iato_seo_fixes
  *
- * Calls IATO run_seo_audit + get_seo_issues and enriches each issue with
- * the WordPress post ID and slug so Claude can chain into update_seo_data
- * or update_alt_text immediately.
+ * Calls IATO get_seo_issues and enriches each issue with the WordPress
+ * post ID and slug so Claude can chain into update_seo_data or
+ * update_alt_text immediately.
  *
  * Issue types and fix routing:
  *   title            → auto-fix via update_seo_data (fix_type: auto)
@@ -14,7 +14,7 @@
  *   h1_duplicate     → manual review                 (fix_type: manual)
  *   canonical        → manual review                 (fix_type: manual)
  *
- * IATO tools used: run_seo_audit, get_seo_issues
+ * IATO tools used: get_seo_issues
  * WP resolution:   url_to_postid() per affected URL
  *
  * @package IATO_MCP
@@ -39,48 +39,68 @@ IATO_MCP_Server::register_tool(
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'crawl_id' => [ 'type' => 'string',  'description' => 'IATO crawl ID (required)' ],
+				'crawl_id' => [ 'type' => 'string',  'description' => 'IATO crawl ID. Falls back to default crawl ID from settings.' ],
 				'severity' => [ 'type' => 'string',  'description' => 'Filter: error|warning|info (optional, returns all if omitted)' ],
 				'limit'    => [ 'type' => 'integer', 'description' => 'Max issues to return (default: 50)' ],
 			],
-			'required' => [ 'crawl_id' ],
+			'required' => [],
 		],
 	],
 	function ( array $args ): array|WP_Error {
 		$crawl_id = sanitize_text_field( $args['crawl_id'] ?? '' );
-		if ( ! $crawl_id ) return new WP_Error( 'missing_crawl_id', 'crawl_id required' );
+		if ( ! $crawl_id ) {
+			$crawl_id = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
+		}
+		if ( ! $crawl_id ) {
+			return new WP_Error( 'missing_crawl_id', 'crawl_id required. Set a default in Settings > IATO MCP or pass it explicitly.' );
+		}
 
 		$severity = isset( $args['severity'] ) ? sanitize_text_field( $args['severity'] ) : null;
 		$limit    = absint( $args['limit'] ?? 50 );
 
-		// TODO: implement
-		// 1. IATO_MCP_IATO_Client::run_seo_audit($crawl_id)  — triggers/refreshes audit
-		// 2. IATO_MCP_IATO_Client::get_seo_issues($crawl_id, $severity, $limit)
-		// 3. For each issue:
-		//      $wp_id   = url_to_postid($issue['url'])
-		//      $wp_slug = $wp_id ? get_post_field('post_name', $wp_id) : null
-		//      $is_auto = in_array($issue['type'], IATO_MCP_AUTO_FIX_TYPES, true)
-		//
-		//      Build result item:
-		//      {
-		//        issue_type:   $issue['type'],
-		//        severity:     $issue['severity'],
-		//        url:          $issue['url'],
-		//        current:      $issue['current_value'],
-		//        suggested:    $issue['suggested_value'],
-		//        fix_type:     $is_auto ? 'auto' : 'manual',
-		//        wp_post_id:   $wp_id ?: null,
-		//        wp_slug:      $wp_slug ?: null,
-		//        manual_instructions: $is_auto ? null : (IATO_MCP_MANUAL_INSTRUCTIONS[$issue['type']] ?? null),
-		//      }
-		//
-		// 4. Return {
-		//      crawl_id:     $crawl_id,
-		//      total:        count($issues),
-		//      auto_fixable: count of fix_type=auto,
-		//      manual:       count of fix_type=manual,
-		//      issues:       [...],
-		//    }
-		return new WP_Error( 'not_implemented', 'get_iato_seo_fixes not yet implemented' );
+		$response = IATO_MCP_IATO_Client::get_seo_issues( $crawl_id, $severity, $limit );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$issues_data = $response['issues'] ?? $response['data'] ?? $response;
+		if ( ! is_array( $issues_data ) ) {
+			$issues_data = [];
+		}
+
+		$issues     = [];
+		$auto_count = 0;
+
+		foreach ( $issues_data as $issue ) {
+			$type    = $issue['type'] ?? '';
+			$url     = $issue['url'] ?? '';
+			$wp_id   = $url ? url_to_postid( $url ) : 0;
+			$wp_slug = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
+			$is_auto = in_array( $type, IATO_MCP_AUTO_FIX_TYPES, true );
+
+			if ( $is_auto ) {
+				$auto_count++;
+			}
+
+			$issues[] = [
+				'issue_type'           => $type,
+				'severity'             => $issue['severity'] ?? 'warning',
+				'url'                  => $url,
+				'current'              => $issue['current_value'] ?? null,
+				'suggested'            => $issue['suggested_value'] ?? null,
+				'fix_type'             => $is_auto ? 'auto' : 'manual',
+				'wp_post_id'           => $wp_id ?: null,
+				'wp_slug'              => $wp_slug ?: null,
+				'manual_instructions'  => $is_auto ? null : ( IATO_MCP_MANUAL_INSTRUCTIONS[ $type ] ?? null ),
+			];
+		}
+
+		return IATO_MCP_Server::ok( [
+			'crawl_id'     => $crawl_id,
+			'total'        => count( $issues ),
+			'auto_fixable' => $auto_count,
+			'manual'       => count( $issues ) - $auto_count,
+			'issues'       => $issues,
+		] );
 	}
 );
