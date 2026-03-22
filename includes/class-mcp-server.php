@@ -26,7 +26,7 @@ class IATO_MCP_Server {
 
 	/**
 	 * Register the single MCP message endpoint.
-	 * Authentication is handled inside the callback via Application Passwords.
+	 * Authentication is handled via the plugin-generated API key (Bearer token).
 	 */
 	public static function register_routes(): void {
 		register_rest_route( 'iato-mcp/v1', '/message', [

@@ -25,9 +25,43 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		// TODO: implement — WP_Query with post_type='attachment'
-		// If missing_alt: filter where get_post_meta($id, '_wp_attachment_image_alt', true) === ''
-		return new WP_Error( 'not_implemented', 'get_media not yet implemented' );
+		$per_page    = min( absint( $args['per_page'] ?? 20 ), 100 );
+		$missing_alt = ! empty( $args['missing_alt'] );
+
+		$query = new WP_Query( [
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'post_mime_type' => 'image',
+			'posts_per_page' => $missing_alt ? -1 : $per_page,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		] );
+
+		$items = [];
+		foreach ( $query->posts as $attachment ) {
+			$alt = sanitize_text_field( get_post_meta( $attachment->ID, '_wp_attachment_image_alt', true ) );
+
+			if ( $missing_alt && '' !== $alt ) {
+				continue;
+			}
+
+			$items[] = [
+				'id'        => $attachment->ID,
+				'title'     => get_the_title( $attachment ),
+				'url'       => wp_get_attachment_url( $attachment->ID ),
+				'alt'       => $alt,
+				'mime_type' => $attachment->post_mime_type,
+			];
+		}
+
+		if ( $missing_alt ) {
+			$items = array_slice( $items, 0, $per_page );
+		}
+
+		return IATO_MCP_Server::ok( [
+			'media' => $items,
+			'total' => count( $items ),
+		] );
 	}
 );
 
@@ -55,7 +89,17 @@ IATO_MCP_Server::register_tool(
 
 		if ( ! $attachment_id ) return new WP_Error( 'missing_id', 'Attachment ID required' );
 
-		// TODO: implement — update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt)
-		return new WP_Error( 'not_implemented', 'update_alt_text not yet implemented' );
+		$attachment = get_post( $attachment_id );
+		if ( ! $attachment || 'attachment' !== $attachment->post_type ) {
+			return new WP_Error( 'not_found', 'Attachment not found.' );
+		}
+
+		update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+
+		return IATO_MCP_Server::ok( [
+			'id'  => $attachment_id,
+			'alt' => $alt,
+			'url' => wp_get_attachment_url( $attachment_id ),
+		] );
 	}
 );
