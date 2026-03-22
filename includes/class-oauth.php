@@ -86,7 +86,8 @@ class IATO_MCP_OAuth {
 	// ── Dynamic Client Registration (RFC 7591) ──────────────────────────────
 
 	private static function handle_register(): void {
-		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
 			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'POST required' ], 405 );
 		}
 
@@ -121,13 +122,15 @@ class IATO_MCP_OAuth {
 	// ── Authorize ────────────────────────────────────────────────────────────
 
 	private static function handle_authorize(): void {
-		if ( 'GET' !== $_SERVER['REQUEST_METHOD'] && 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'GET' !== $method && 'POST' !== $method ) {
 			self::json_response( [ 'error' => 'invalid_request' ], 405 );
 		}
 
 		// Require WordPress admin login.
 		if ( ! is_user_logged_in() || ! current_user_can( 'manage_options' ) ) {
-			wp_redirect( wp_login_url( home_url( $_SERVER['REQUEST_URI'] ) ) );
+			$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+			wp_safe_redirect( wp_login_url( home_url( $request_uri ) ) );
 			exit;
 		}
 
@@ -155,7 +158,7 @@ class IATO_MCP_OAuth {
 		}
 
 		// POST = user approved the form.
-		if ( 'POST' === $_SERVER['REQUEST_METHOD'] ) {
+		if ( 'POST' === $method ) {
 			check_admin_referer( 'iato_mcp_oauth_authorize' );
 
 			// Store PKCE challenge for verification at the token endpoint.
@@ -175,7 +178,7 @@ class IATO_MCP_OAuth {
 				$params['state'] = $state;
 			}
 
-			wp_redirect( add_query_arg( $params, $redirect_uri ) );
+			wp_safe_redirect( add_query_arg( $params, $redirect_uri ) );
 			exit;
 		}
 
@@ -198,7 +201,10 @@ class IATO_MCP_OAuth {
 		<head>
 			<meta charset="utf-8">
 			<meta name="viewport" content="width=device-width, initial-scale=1">
-			<title><?php printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) ); ?></title>
+			<title><?php
+			/* translators: %s: site name */
+			printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) );
+		?></title>
 			<style>
 				:root {
 					--iato-primary: #1e40af;
@@ -392,18 +398,20 @@ class IATO_MCP_OAuth {
 	// ── Token Exchange ───────────────────────────────────────────────────────
 
 	private static function handle_token(): void {
-		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
 			self::json_response( [ 'error' => 'invalid_request' ], 405 );
 		}
 
 		// Accept both form-encoded and JSON bodies.
-		$content_type = $_SERVER['CONTENT_TYPE'] ?? '';
+		$content_type = isset( $_SERVER['CONTENT_TYPE'] ) ? sanitize_text_field( wp_unslash( $_SERVER['CONTENT_TYPE'] ) ) : '';
 		if ( false !== strpos( $content_type, 'application/json' ) ) {
 			$input = json_decode( file_get_contents( 'php://input' ), true );
 			if ( ! is_array( $input ) ) {
 				$input = [];
 			}
 		} else {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- OAuth token endpoint; nonce not applicable.
 			$input = wp_unslash( $_POST );
 		}
 
@@ -457,10 +465,10 @@ class IATO_MCP_OAuth {
 	 * Handles subdirectory installs correctly.
 	 */
 	private static function get_request_path(): string {
-		$uri  = $_SERVER['REQUEST_URI'] ?? '';
+		$uri  = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 		$path = trim( strtok( $uri, '?' ), '/' );
 
-		$home_path = trim( parse_url( home_url(), PHP_URL_PATH ) ?: '', '/' );
+		$home_path = trim( wp_parse_url( home_url(), PHP_URL_PATH ) ?: '', '/' );
 		if ( '' !== $home_path && 0 === strpos( $path, $home_path . '/' ) ) {
 			$path = substr( $path, strlen( $home_path ) + 1 );
 		} elseif ( $home_path === $path ) {

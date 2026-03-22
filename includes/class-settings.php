@@ -362,7 +362,7 @@ class IATO_MCP_Settings {
 						<span class="iato-tools-count" id="iato-tools-count">
 							<?php
 							/* translators: %1$d: enabled count, %2$d: total count */
-							printf( esc_html__( '%1$d of %2$d enabled', 'iato-mcp' ), $enabled_count, $total_count );
+							printf( esc_html__( '%1$d of %2$d enabled', 'iato-mcp' ), (int) $enabled_count, (int) $total_count );
 							?>
 						</span>
 					</div>
