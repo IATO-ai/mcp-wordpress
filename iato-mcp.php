@@ -50,6 +50,7 @@ if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-broken-links.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-suggestions.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-perf.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-sync.php';
 }
 
 /**
