@@ -3,20 +3,21 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     0.1.0
+ * Version:     1.0.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: iato-mcp
- * Requires at least: 5.6
- * Requires PHP: 7.4
+ * Requires at least: 6.0
+ * Requires PHP: 8.0
  *
  * @package IATO_MCP
  */
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '0.1.0' );
+define( 'IATO_MCP_VERSION', '1.0.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -69,3 +70,12 @@ function iato_mcp_activate() {
 	update_option( 'iato_mcp_show_wizard', true );
 }
 register_activation_hook( __FILE__, 'iato_mcp_activate' );
+
+/**
+ * Deactivation hook — clean up transients.
+ * Options are preserved for reactivation; full cleanup is in uninstall.php.
+ */
+function iato_mcp_deactivate() {
+	delete_transient( 'iato_mcp_oauth_pkce' );
+}
+register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

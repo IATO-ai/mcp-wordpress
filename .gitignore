@@ -13,3 +13,7 @@ Thumbs.db
 # Node / Composer (if added later)
 node_modules/
 vendor/
+
+# Dev artifacts
+pull_request.png
+*.docx
