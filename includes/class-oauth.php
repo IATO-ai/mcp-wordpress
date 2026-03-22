@@ -200,34 +200,181 @@ class IATO_MCP_OAuth {
 			<meta name="viewport" content="width=device-width, initial-scale=1">
 			<title><?php printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) ); ?></title>
 			<style>
-				body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f0f0f1; }
-				.card { background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.13); max-width: 420px; width: 100%; }
-				h2 { margin-top: 0; }
-				.actions { margin-top: 1.5rem; }
-				.btn { display: inline-block; padding: .6rem 1.2rem; border: none; border-radius: 4px; font-size: .95rem; cursor: pointer; text-decoration: none; }
-				.btn-primary { background: #2271b1; color: #fff; }
-				.btn-primary:hover { background: #135e96; }
-				.btn-cancel { background: #ddd; color: #50575e; margin-left: .5rem; }
+				:root {
+					--iato-primary: #1e40af;
+					--iato-primary-hover: #1e3a8a;
+					--iato-primary-light: #dbeafe;
+					--iato-text: #0f172a;
+					--iato-text-secondary: #475569;
+					--iato-text-muted: #94a3b8;
+					--iato-border: #e2e8f0;
+					--iato-bg: #f1f5f9;
+					--iato-success: #16a34a;
+				}
+				* { box-sizing: border-box; }
+				body {
+					font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+					display: flex;
+					justify-content: center;
+					align-items: center;
+					min-height: 100vh;
+					margin: 0;
+					background: var(--iato-bg);
+					color: var(--iato-text);
+				}
+				.auth-card {
+					background: #fff;
+					padding: 32px;
+					border-radius: 16px;
+					box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+					max-width: 440px;
+					width: 100%;
+					margin: 20px;
+				}
+				.auth-brand {
+					font-size: 22px;
+					font-weight: 700;
+					color: var(--iato-primary);
+					letter-spacing: -0.5px;
+					margin-bottom: 20px;
+				}
+				.auth-brand span {
+					font-weight: 400;
+					color: var(--iato-text-secondary);
+				}
+				.auth-title {
+					font-size: 18px;
+					font-weight: 600;
+					margin: 0 0 8px;
+					color: var(--iato-text);
+				}
+				.auth-desc {
+					font-size: 14px;
+					color: var(--iato-text-secondary);
+					margin: 0 0 20px;
+					line-height: 1.5;
+				}
+				.auth-desc strong {
+					color: var(--iato-text);
+				}
+				.auth-permissions {
+					background: var(--iato-bg);
+					border: 1px solid var(--iato-border);
+					border-radius: 10px;
+					padding: 16px 20px;
+					margin-bottom: 24px;
+				}
+				.auth-permissions h3 {
+					font-size: 12px;
+					font-weight: 600;
+					text-transform: uppercase;
+					letter-spacing: 0.5px;
+					color: var(--iato-text-secondary);
+					margin: 0 0 12px;
+				}
+				.auth-permissions ul {
+					list-style: none;
+					margin: 0;
+					padding: 0;
+				}
+				.auth-permissions li {
+					font-size: 14px;
+					color: var(--iato-text);
+					padding: 6px 0;
+					display: flex;
+					align-items: center;
+					gap: 10px;
+				}
+				.auth-permissions li::before {
+					content: '\2713';
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					width: 20px;
+					height: 20px;
+					background: #dcfce7;
+					color: var(--iato-success);
+					border-radius: 50%;
+					font-size: 12px;
+					font-weight: 700;
+					flex-shrink: 0;
+				}
+				.auth-actions {
+					display: flex;
+					gap: 10px;
+					margin-top: 0;
+				}
+				.auth-btn {
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					padding: 10px 24px;
+					border-radius: 8px;
+					font-size: 14px;
+					font-weight: 600;
+					cursor: pointer;
+					text-decoration: none;
+					transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+					border: none;
+				}
+				.auth-btn--primary {
+					flex: 1;
+					background: var(--iato-primary);
+					color: #fff;
+				}
+				.auth-btn--primary:hover {
+					background: var(--iato-primary-hover);
+					box-shadow: 0 2px 8px rgba(30, 64, 175, 0.3);
+				}
+				.auth-btn--secondary {
+					padding: 10px 20px;
+					background: #fff;
+					color: var(--iato-text-secondary);
+					border: 1px solid var(--iato-border);
+				}
+				.auth-btn--secondary:hover {
+					background: var(--iato-bg);
+					color: var(--iato-text);
+				}
+				.auth-footer {
+					text-align: center;
+					margin-top: 20px;
+					padding-top: 16px;
+					border-top: 1px solid var(--iato-border);
+					font-size: 12px;
+					color: var(--iato-text-muted);
+				}
 			</style>
 		</head>
 		<body>
-			<div class="card">
-				<h2><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
-				<p>
+			<div class="auth-card">
+				<div class="auth-brand">IATO <span>MCP</span></div>
+				<h2 class="auth-title"><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
+				<p class="auth-desc">
 					<?php
 					printf(
-						/* translators: %s: client/application name */
-						esc_html__( '%s wants to connect to your WordPress site via MCP.', 'iato-mcp' ),
-						'<strong>' . esc_html( $client_name ) . '</strong>'
+						/* translators: %1$s: client/application name, %2$s: site name */
+						esc_html__( '%1$s wants to connect to %2$s via the Model Context Protocol.', 'iato-mcp' ),
+						'<strong>' . esc_html( $client_name ) . '</strong>',
+						'<strong>' . esc_html( $site_name ) . '</strong>'
 					);
 					?>
 				</p>
-				<p><?php esc_html_e( 'This will grant read and write access to your site content.', 'iato-mcp' ); ?></p>
-				<form method="post" class="actions">
+				<div class="auth-permissions">
+					<h3><?php esc_html_e( 'This will allow', 'iato-mcp' ); ?></h3>
+					<ul>
+						<li><?php esc_html_e( 'Read site content and settings', 'iato-mcp' ); ?></li>
+						<li><?php esc_html_e( 'Create and modify posts', 'iato-mcp' ); ?></li>
+						<li><?php esc_html_e( 'Update SEO metadata', 'iato-mcp' ); ?></li>
+						<li><?php esc_html_e( 'Manage media and navigation', 'iato-mcp' ); ?></li>
+					</ul>
+				</div>
+				<form method="post" class="auth-actions">
 					<?php wp_nonce_field( 'iato_mcp_oauth_authorize' ); ?>
-					<button type="submit" class="btn btn-primary"><?php esc_html_e( 'Approve', 'iato-mcp' ); ?></button>
-					<a href="<?php echo esc_url( admin_url() ); ?>" class="btn btn-cancel"><?php esc_html_e( 'Deny', 'iato-mcp' ); ?></a>
+					<button type="submit" class="auth-btn auth-btn--primary"><?php esc_html_e( 'Approve', 'iato-mcp' ); ?></button>
+					<a href="<?php echo esc_url( admin_url() ); ?>" class="auth-btn auth-btn--secondary"><?php esc_html_e( 'Deny', 'iato-mcp' ); ?></a>
 				</form>
+				<p class="auth-footer"><?php esc_html_e( 'Powered by IATO MCP', 'iato-mcp' ); ?></p>
 			</div>
 		</body>
 		</html>
