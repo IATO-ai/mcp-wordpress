@@ -25,6 +25,7 @@ define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
 require_once IATO_MCP_DIR . 'includes/class-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-iato-client.php';
 require_once IATO_MCP_DIR . 'includes/class-seo-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 
@@ -38,20 +39,23 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-menus.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-taxonomy.php';
 
 // Phase 2 — IATO bridge tools (loaded only when IATO API key is configured)
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-sitemap.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-nav-audit.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-orphans.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-taxonomy.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-seo-fixes.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-content-gaps.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-broken-links.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-suggestions.php';
-// require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-perf.php';
+if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-sitemap.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-nav-audit.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-orphans.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-taxonomy.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-seo-fixes.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-content-gaps.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-broken-links.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-suggestions.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-perf.php';
+}
 
 /**
  * Boot the plugin after all plugins are loaded.
  */
 function iato_mcp_init() {
+	IATO_MCP_OAuth::init();
 	IATO_MCP_Settings::init();
 	IATO_MCP_Server::init();
 }
@@ -61,6 +65,7 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
  * Activation hook — show setup wizard on first run.
  */
 function iato_mcp_activate() {
+	IATO_MCP_Auth::maybe_generate_key();
 	update_option( 'iato_mcp_show_wizard', true );
 }
 register_activation_hook( __FILE__, 'iato_mcp_activate' );

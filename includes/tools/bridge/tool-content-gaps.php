@@ -20,35 +20,90 @@ IATO_MCP_Server::register_tool(
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'crawl_id'          => [ 'type' => 'string',  'description' => 'IATO crawl ID (required)' ],
-				'min_word_count'    => [ 'type' => 'integer', 'description' => 'Flag pages below this word count (default: 300)' ],
-				'limit'             => [ 'type' => 'integer', 'description' => 'Max pages to return (default: 20)' ],
+				'crawl_id'       => [ 'type' => 'string',  'description' => 'IATO crawl ID. Falls back to default crawl ID from settings.' ],
+				'min_word_count' => [ 'type' => 'integer', 'description' => 'Flag pages below this word count (default: 300)' ],
+				'limit'          => [ 'type' => 'integer', 'description' => 'Max pages to return (default: 20)' ],
 			],
-			'required' => [ 'crawl_id' ],
+			'required' => [],
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$crawl_id      = sanitize_text_field( $args['crawl_id'] ?? '' );
-		$min_words     = absint( $args['min_word_count'] ?? 300 );
-		$limit         = absint( $args['limit'] ?? 20 );
+		$crawl_id  = sanitize_text_field( $args['crawl_id'] ?? '' );
+		if ( ! $crawl_id ) {
+			$crawl_id = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
+		}
+		if ( ! $crawl_id ) {
+			return new WP_Error( 'missing_crawl_id', 'crawl_id required. Set a default in Settings > IATO MCP or pass it explicitly.' );
+		}
 
-		if ( ! $crawl_id ) return new WP_Error( 'missing_crawl_id', 'crawl_id required' );
+		$min_words = absint( $args['min_word_count'] ?? 300 );
+		$limit     = absint( $args['limit'] ?? 20 );
 
-		// TODO: implement
-		// 1. IATO_MCP_IATO_Client::get_low_performing_pages($crawl_id, $limit)
-		// 2. IATO_MCP_IATO_Client::get_content_metrics($crawl_id)  — for per-page word counts
-		// 3. For each page:
-		//      $wp_id   = url_to_postid($page['url'])
-		//      $wp_slug = $wp_id ? get_post_field('post_name', $wp_id) : null
-		//      $flags   = []
-		//      if $page['word_count'] < $min_words:  $flags[] = "word_count ({$page['word_count']} < {$min_words})"
-		//      if $page['missing_h1']:               $flags[] = 'missing_h1'
-		//      if $page['image_count'] === 0:        $flags[] = 'no_images'
-		//      if $page['internal_link_count'] < 2:  $flags[] = 'low_internal_links'
-		//
-		//      Result item: {url, title, word_count, flags, wp_post_id, wp_slug, recommendations}
-		//
-		// 4. Return {crawl_id, total, pages: [...]}
-		return new WP_Error( 'not_implemented', 'get_iato_content_gaps not yet implemented' );
+		// Fetch low-performing pages and content metrics in sequence.
+		$pages_response = IATO_MCP_IATO_Client::get_low_performing_pages( $crawl_id, $limit );
+		if ( is_wp_error( $pages_response ) ) {
+			return $pages_response;
+		}
+
+		$metrics_response = IATO_MCP_IATO_Client::get_content_metrics( $crawl_id );
+		$metrics_by_url   = [];
+		if ( ! is_wp_error( $metrics_response ) ) {
+			$metrics_data = $metrics_response['pages'] ?? $metrics_response['data'] ?? $metrics_response;
+			if ( is_array( $metrics_data ) ) {
+				foreach ( $metrics_data as $m ) {
+					$murl = $m['url'] ?? '';
+					if ( $murl ) {
+						$metrics_by_url[ $murl ] = $m;
+					}
+				}
+			}
+		}
+
+		$pages_data = $pages_response['pages'] ?? $pages_response['data'] ?? $pages_response;
+		if ( ! is_array( $pages_data ) ) {
+			$pages_data = [];
+		}
+
+		$pages = [];
+		foreach ( $pages_data as $page ) {
+			$url        = $page['url'] ?? '';
+			$wp_id      = $url ? url_to_postid( $url ) : 0;
+			$wp_slug    = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
+			$metrics    = $metrics_by_url[ $url ] ?? [];
+			$word_count = (int) ( $page['word_count'] ?? $metrics['word_count'] ?? 0 );
+
+			$flags = [];
+			if ( $word_count < $min_words ) {
+				$flags[] = "word_count ({$word_count} < {$min_words})";
+			}
+			if ( ! empty( $page['missing_h1'] ) || ! empty( $metrics['missing_h1'] ) ) {
+				$flags[] = 'missing_h1';
+			}
+			if ( 0 === (int) ( $page['image_count'] ?? $metrics['image_count'] ?? -1 ) ) {
+				$flags[] = 'no_images';
+			}
+			if ( (int) ( $page['internal_link_count'] ?? $metrics['internal_link_count'] ?? 999 ) < 2 ) {
+				$flags[] = 'low_internal_links';
+			}
+
+			if ( empty( $flags ) ) {
+				continue;
+			}
+
+			$pages[] = [
+				'url'          => $url,
+				'title'        => $page['title'] ?? '',
+				'word_count'   => $word_count,
+				'flags'        => $flags,
+				'wp_post_id'   => $wp_id ?: null,
+				'wp_slug'      => $wp_slug ?: null,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [
+			'crawl_id' => $crawl_id,
+			'total'    => count( $pages ),
+			'pages'    => $pages,
+		] );
 	}
 );

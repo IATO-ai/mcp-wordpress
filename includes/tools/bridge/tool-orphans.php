@@ -28,12 +28,39 @@ IATO_MCP_Server::register_tool(
 	],
 	function ( array $args ): array|WP_Error {
 		$sitemap_id = absint( $args['sitemap_id'] ?? 0 );
-		if ( ! $sitemap_id ) return new WP_Error( 'missing_sitemap_id', 'sitemap_id required' );
+		if ( ! $sitemap_id ) {
+			return new WP_Error( 'missing_sitemap_id', 'sitemap_id required' );
+		}
 
-		// TODO: implement
-		// 1. IATO_MCP_IATO_Client::get_orphan_pages($sitemap_id, ['section', 'planned'])
-		// 2. For each orphan: url_to_postid($orphan['url']), get_post_field('post_name', $wp_id)
-		// 3. Return [{iato_node_id, url, title, wp_post_id, wp_slug}]
-		return new WP_Error( 'not_implemented', 'get_iato_orphan_pages not yet implemented' );
+		$response = IATO_MCP_IATO_Client::get_orphan_pages( $sitemap_id, [ 'section', 'planned' ] );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$orphans_data = $response['orphans'] ?? $response['data'] ?? $response;
+		if ( ! is_array( $orphans_data ) ) {
+			$orphans_data = [];
+		}
+
+		$orphans = [];
+		foreach ( $orphans_data as $orphan ) {
+			$url     = $orphan['url'] ?? '';
+			$wp_id   = $url ? url_to_postid( $url ) : 0;
+			$wp_slug = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
+
+			$orphans[] = [
+				'iato_node_id' => $orphan['id'] ?? null,
+				'title'        => $orphan['title'] ?? '',
+				'url'          => $url,
+				'wp_post_id'   => $wp_id ?: null,
+				'wp_slug'      => $wp_slug ?: null,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [
+			'sitemap_id' => $sitemap_id,
+			'total'      => count( $orphans ),
+			'orphans'    => $orphans,
+		] );
 	}
 );

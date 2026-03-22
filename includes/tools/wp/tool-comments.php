@@ -22,8 +22,29 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		// TODO: implement — get_comments() with sanitized args
-		// Return {id, post_id, author, date, content, status}
-		return new WP_Error( 'not_implemented', 'get_comments not yet implemented' );
+		$query_args = [
+			'status' => sanitize_text_field( $args['status'] ?? 'approve' ),
+			'number' => min( absint( $args['per_page'] ?? 20 ), 100 ),
+		];
+
+		if ( ! empty( $args['post_id'] ) ) {
+			$query_args['post_id'] = absint( $args['post_id'] );
+		}
+
+		$comments = get_comments( $query_args );
+
+		$result = [];
+		foreach ( $comments as $comment ) {
+			$result[] = [
+				'id'      => (int) $comment->comment_ID,
+				'post_id' => (int) $comment->comment_post_ID,
+				'author'  => $comment->comment_author,
+				'date'    => $comment->comment_date_gmt,
+				'content' => $comment->comment_content,
+				'status'  => wp_get_comment_status( $comment ),
+			];
+		}
+
+		return IATO_MCP_Server::ok( [ 'comments' => $result ] );
 	}
 );

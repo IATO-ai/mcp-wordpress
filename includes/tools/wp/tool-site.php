@@ -19,15 +19,13 @@ IATO_MCP_Server::register_tool(
 		'inputSchema' => [ 'type' => 'object', 'properties' => new stdClass(), 'required' => [] ],
 	],
 	function ( array $args ): array|WP_Error {
-		// TODO: implement
-		// return IATO_MCP_Server::ok([
-		//   'name'           => get_bloginfo('name'),
-		//   'url'            => site_url(),
-		//   'wp_version'     => get_bloginfo('version'),
-		//   'active_theme'   => wp_get_theme()->get('Name'),
-		//   'plugin_count'   => count(get_option('active_plugins', [])),
-		// ]);
-		return new WP_Error( 'not_implemented', 'get_site_info not yet implemented' );
+		return IATO_MCP_Server::ok( [
+			'name'         => sanitize_text_field( get_bloginfo( 'name' ) ),
+			'url'          => site_url(),
+			'wp_version'   => get_bloginfo( 'version' ),
+			'active_theme' => wp_get_theme()->get( 'Name' ),
+			'plugin_count' => count( get_option( 'active_plugins', [] ) ),
+		] );
 	}
 );
 
@@ -43,8 +41,12 @@ IATO_MCP_Server::register_tool(
 		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
-		// TODO: implement
-		// Use get_option() for: blogname, blogdescription, admin_email, timezone_string, permalink_structure
-		return new WP_Error( 'not_implemented', 'get_site_settings not yet implemented' );
+		return IATO_MCP_Server::ok( [
+			'title'               => sanitize_text_field( get_option( 'blogname', '' ) ),
+			'tagline'             => sanitize_text_field( get_option( 'blogdescription', '' ) ),
+			'admin_email'         => sanitize_text_field( get_option( 'admin_email', '' ) ),
+			'timezone'            => sanitize_text_field( get_option( 'timezone_string', '' ) ),
+			'permalink_structure' => sanitize_text_field( get_option( 'permalink_structure', '' ) ),
+		] );
 	}
 );
