@@ -26,9 +26,22 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		// TODO: implement — wp_get_nav_menus()
-		// Return [{id, name, slug, item_count, location}]
-		return new WP_Error( 'not_implemented', 'get_menus not yet implemented' );
+		$menus     = wp_get_nav_menus();
+		$locations = get_nav_menu_locations();
+		$loc_map   = array_flip( $locations );
+
+		$result = [];
+		foreach ( $menus as $menu ) {
+			$result[] = [
+				'id'         => $menu->term_id,
+				'name'       => $menu->name,
+				'slug'       => $menu->slug,
+				'item_count' => (int) $menu->count,
+				'location'   => $loc_map[ $menu->term_id ] ?? null,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [ 'menus' => $result ] );
 	}
 );
 
@@ -50,9 +63,25 @@ IATO_MCP_Server::register_tool(
 		$menu_id = absint( $args['menu_id'] ?? 0 );
 		if ( ! $menu_id ) return new WP_Error( 'missing_menu_id', 'menu_id required' );
 
-		// TODO: implement — wp_get_nav_menu_items($menu_id)
-		// Return [{id, title, url, slug, post_id, parent_id, menu_order}]
-		return new WP_Error( 'not_implemented', 'get_menu_items not yet implemented' );
+		$items = wp_get_nav_menu_items( $menu_id );
+		if ( false === $items ) {
+			return new WP_Error( 'not_found', 'Menu not found.' );
+		}
+
+		$result = [];
+		foreach ( $items as $item ) {
+			$result[] = [
+				'id'         => (int) $item->ID,
+				'title'      => $item->title,
+				'url'        => $item->url,
+				'slug'       => $item->post_name,
+				'post_id'    => (int) $item->object_id,
+				'parent_id'  => (int) $item->menu_item_parent,
+				'menu_order' => (int) $item->menu_order,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [ 'items' => $result ] );
 	}
 );
 
@@ -81,9 +110,55 @@ IATO_MCP_Server::register_tool(
 		$menu_id = absint( $args['menu_id'] ?? 0 );
 		$post_id = absint( $args['post_id'] ?? 0 );
 
-		// TODO: implement
-		// If dry_run: return what would be added without calling wp_update_nav_menu_item
-		// Else: wp_update_nav_menu_item($menu_id, 0, [...])
-		return new WP_Error( 'not_implemented', 'update_menu_item not yet implemented' );
+		if ( ! $menu_id ) {
+			return new WP_Error( 'missing_menu_id', 'menu_id required.' );
+		}
+		if ( ! $post_id ) {
+			return new WP_Error( 'missing_post_id', 'post_id required.' );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$menu = wp_get_nav_menu_object( $menu_id );
+		if ( ! $menu ) {
+			return new WP_Error( 'not_found', 'Menu not found.' );
+		}
+
+		$parent_id = absint( $args['parent_id'] ?? 0 );
+
+		$item_data = [
+			'menu-item-object-id' => $post_id,
+			'menu-item-object'    => $post->post_type,
+			'menu-item-type'      => 'post_type',
+			'menu-item-title'     => get_the_title( $post ),
+			'menu-item-status'    => 'publish',
+			'menu-item-parent-id' => $parent_id,
+		];
+
+		if ( $dry_run ) {
+			return IATO_MCP_Server::ok( [
+				'dry_run'   => true,
+				'menu_id'   => $menu_id,
+				'post_id'   => $post_id,
+				'title'     => $item_data['menu-item-title'],
+				'parent_id' => $parent_id,
+			] );
+		}
+
+		$result = wp_update_nav_menu_item( $menu_id, 0, $item_data );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return IATO_MCP_Server::ok( [
+			'menu_item_id' => $result,
+			'menu_id'      => $menu_id,
+			'post_id'      => $post_id,
+			'title'        => $item_data['menu-item-title'],
+			'parent_id'    => $parent_id,
+		] );
 	}
 );

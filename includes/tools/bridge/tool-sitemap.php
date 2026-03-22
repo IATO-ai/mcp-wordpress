@@ -26,13 +26,56 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		// TODO: implement
-		// 1. IATO_MCP_IATO_Client::list_sitemaps() — pick $args['sitemap_id'] or use first result
-		// 2. IATO_MCP_IATO_Client::get_sitemap_nodes($sitemap_id)
-		// 3. For each node with a URL:
-		//      $wp_id  = url_to_postid($node['url'])
-		//      $slug   = $wp_id ? get_post_field('post_name', $wp_id) : null
-		// 4. Attach wp_post_id and wp_slug to each node, return full hierarchy
-		return new WP_Error( 'not_implemented', 'get_iato_sitemap not yet implemented' );
+		$sitemap_id = absint( $args['sitemap_id'] ?? 0 );
+
+		// If no sitemap_id provided, fetch the most recent one.
+		if ( ! $sitemap_id ) {
+			$sitemaps = IATO_MCP_IATO_Client::list_sitemaps();
+			if ( is_wp_error( $sitemaps ) ) {
+				return $sitemaps;
+			}
+			$list = $sitemaps['sitemaps'] ?? $sitemaps['data'] ?? $sitemaps;
+			if ( empty( $list ) || ! is_array( $list ) ) {
+				return new WP_Error( 'no_sitemaps', 'No sitemaps found in your IATO account.' );
+			}
+			$sitemap_id = absint( $list[0]['id'] ?? 0 );
+			if ( ! $sitemap_id ) {
+				return new WP_Error( 'no_sitemaps', 'Could not determine sitemap ID from IATO response.' );
+			}
+		}
+
+		$nodes_response = IATO_MCP_IATO_Client::get_sitemap_nodes( $sitemap_id );
+		if ( is_wp_error( $nodes_response ) ) {
+			return $nodes_response;
+		}
+
+		$nodes = $nodes_response['nodes'] ?? $nodes_response['data'] ?? $nodes_response;
+		if ( ! is_array( $nodes ) ) {
+			$nodes = [];
+		}
+
+		$result = [];
+		foreach ( $nodes as $node ) {
+			$url     = $node['url'] ?? '';
+			$wp_id   = $url ? url_to_postid( $url ) : 0;
+			$wp_slug = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
+
+			$result[] = [
+				'iato_node_id' => $node['id'] ?? null,
+				'title'        => $node['title'] ?? '',
+				'url'          => $url,
+				'parent_id'    => $node['parent_id'] ?? null,
+				'depth'        => $node['depth'] ?? 0,
+				'type'         => $node['type'] ?? null,
+				'wp_post_id'   => $wp_id ?: null,
+				'wp_slug'      => $wp_slug ?: null,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [
+			'sitemap_id' => $sitemap_id,
+			'total'      => count( $result ),
+			'nodes'      => $result,
+		] );
 	}
 );

@@ -31,8 +31,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function list_crawls(): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'list_crawls not yet implemented' );
+		return self::get( '/crawls' );
 	}
 
 	/**
@@ -42,8 +41,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_crawl_analytics( string $crawl_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_crawl_analytics not yet implemented' );
+		return self::get( "/crawls/{$crawl_id}/analytics" );
 	}
 
 	/**
@@ -55,8 +53,11 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_seo_issues( string $crawl_id, ?string $severity = null, int $limit = 50 ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_seo_issues not yet implemented' );
+		$query = [ 'limit' => $limit ];
+		if ( null !== $severity ) {
+			$query['severity'] = $severity;
+		}
+		return self::get( "/crawls/{$crawl_id}/seo-issues", $query );
 	}
 
 	/**
@@ -66,8 +67,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_seo_score( string $crawl_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_seo_score not yet implemented' );
+		return self::get( "/crawls/{$crawl_id}/seo-score" );
 	}
 
 	/**
@@ -78,8 +78,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_pages( string $crawl_id, int $limit = 50 ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_pages not yet implemented' );
+		return self::get( "/crawls/{$crawl_id}/pages", [ 'limit' => $limit ] );
 	}
 
 	/**
@@ -90,8 +89,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_page( string $crawl_id, int $page_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_page not yet implemented' );
+		return self::get( "/crawls/{$crawl_id}/pages/{$page_id}" );
 	}
 
 	/**
@@ -102,8 +100,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_low_performing_pages( string $crawl_id, int $limit = 20 ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_low_performing_pages not yet implemented' );
+		return self::get( "/crawls/{$crawl_id}/low-performing", [ 'limit' => $limit ] );
 	}
 
 	/**
@@ -113,8 +110,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_content_metrics( string $crawl_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_content_metrics not yet implemented' );
+		return self::get( "/crawls/{$crawl_id}/content-metrics" );
 	}
 
 	/**
@@ -126,8 +122,11 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function generate_suggestions( string $crawl_id, array $focus_areas = [], int $limit = 10 ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'generate_suggestions not yet implemented' );
+		$body = [ 'limit' => $limit ];
+		if ( ! empty( $focus_areas ) ) {
+			$body['focus_areas'] = $focus_areas;
+		}
+		return self::post( "/crawls/{$crawl_id}/suggestions", $body );
 	}
 
 	// ── Sitemap endpoints ──────────────────────────────────────────────────────
@@ -139,8 +138,11 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function list_sitemaps( ?int $workspace_id = null ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'list_sitemaps not yet implemented' );
+		$query = [];
+		if ( null !== $workspace_id ) {
+			$query['workspace_id'] = $workspace_id;
+		}
+		return self::get( '/sitemaps', $query );
 	}
 
 	/**
@@ -150,8 +152,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_sitemap_nodes( int $sitemap_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_sitemap_nodes not yet implemented' );
+		return self::get( "/sitemaps/{$sitemap_id}/nodes" );
 	}
 
 	/**
@@ -161,8 +162,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_menus( int $sitemap_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_menus not yet implemented' );
+		return self::get( "/sitemaps/{$sitemap_id}/menus" );
 	}
 
 	/**
@@ -173,8 +173,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_menu_items( int $sitemap_id, int $menu_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_menu_items not yet implemented' );
+		return self::get( "/sitemaps/{$sitemap_id}/menus/{$menu_id}/items" );
 	}
 
 	/**
@@ -185,8 +184,11 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_orphan_pages( int $sitemap_id, ?array $exclude_types = null ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_orphan_pages not yet implemented' );
+		$query = [];
+		if ( null !== $exclude_types ) {
+			$query['exclude_types'] = implode( ',', $exclude_types );
+		}
+		return self::get( "/sitemaps/{$sitemap_id}/orphans", $query );
 	}
 
 	/**
@@ -196,8 +198,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_taxonomy( int $sitemap_id ): array|WP_Error {
-		// TODO: implement
-		return new WP_Error( 'not_implemented', 'get_taxonomy not yet implemented' );
+		return self::get( "/sitemaps/{$sitemap_id}/taxonomy" );
 	}
 
 	// ── Internal helpers ───────────────────────────────────────────────────────
@@ -210,8 +211,25 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error Decoded JSON body or WP_Error.
 	 */
 	private static function get( string $path, array $query = [] ): array|WP_Error {
-		// TODO: implement — build URL, add auth header, call wp_remote_get, decode response
-		return new WP_Error( 'not_implemented', 'HTTP GET not yet implemented' );
+		$key = self::api_key();
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
+
+		$url = self::BASE_URL . $path;
+		if ( ! empty( $query ) ) {
+			$url = add_query_arg( $query, $url );
+		}
+
+		$response = wp_remote_get( $url, [
+			'timeout' => self::TIMEOUT,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $key,
+				'Accept'        => 'application/json',
+			],
+		] );
+
+		return self::parse_response( $response );
 	}
 
 	/**
@@ -222,8 +240,48 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error Decoded JSON body or WP_Error.
 	 */
 	private static function post( string $path, array $body = [] ): array|WP_Error {
-		// TODO: implement — build URL, add auth header, call wp_remote_post, decode response
-		return new WP_Error( 'not_implemented', 'HTTP POST not yet implemented' );
+		$key = self::api_key();
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
+
+		$response = wp_remote_post( self::BASE_URL . $path, [
+			'timeout' => self::TIMEOUT,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $key,
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+			],
+			'body' => wp_json_encode( $body ),
+		] );
+
+		return self::parse_response( $response );
+	}
+
+	/**
+	 * Parse an HTTP response from wp_remote_*.
+	 *
+	 * @param array|WP_Error $response Raw response.
+	 * @return array|WP_Error Decoded JSON body or WP_Error.
+	 */
+	private static function parse_response( array|WP_Error $response ): array|WP_Error {
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( $code < 200 || $code >= 300 ) {
+			$message = $body['message'] ?? $body['error'] ?? "IATO API returned HTTP {$code}";
+			return new WP_Error( 'iato_api_error', $message, [ 'status' => $code ] );
+		}
+
+		if ( ! is_array( $body ) ) {
+			return new WP_Error( 'iato_api_error', 'Invalid JSON response from IATO API' );
+		}
+
+		return $body;
 	}
 
 	/**

@@ -27,19 +27,64 @@ IATO_MCP_Server::register_tool(
 	],
 	function ( array $args ): array|WP_Error {
 		$sitemap_id = absint( $args['sitemap_id'] ?? 0 );
-		if ( ! $sitemap_id ) return new WP_Error( 'missing_sitemap_id', 'sitemap_id required' );
+		if ( ! $sitemap_id ) {
+			return new WP_Error( 'missing_sitemap_id', 'sitemap_id required' );
+		}
 
-		// TODO: implement
-		// 1. IATO_MCP_IATO_Client::get_taxonomy($sitemap_id)
-		// 2. For each category label: get_term_by('name', $label, 'category')
-		//    Attach wp_term_id and wp_slug if found, null if no match
-		// 3. For each tag label: get_term_by('name', $label, 'post_tag')
-		//    Attach wp_term_id and wp_slug if found, null if no match
-		// 4. Return {
-		//      categories: [{iato_id, label, color, wp_term_id, wp_slug, matched: bool}],
-		//      tags:       [{iato_id, label, color, wp_term_id, wp_slug, matched: bool}],
-		//      unmatched_count: int  // labels in IATO with no WP equivalent
-		//    }
-		return new WP_Error( 'not_implemented', 'get_iato_taxonomy not yet implemented' );
+		$response = IATO_MCP_IATO_Client::get_taxonomy( $sitemap_id );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$categories_data = $response['categories'] ?? [];
+		$tags_data       = $response['tags'] ?? [];
+		$unmatched       = 0;
+
+		$categories = [];
+		foreach ( $categories_data as $cat ) {
+			$label   = $cat['label'] ?? $cat['name'] ?? '';
+			$wp_term = $label ? get_term_by( 'name', $label, 'category' ) : false;
+
+			$matched = $wp_term && ! is_wp_error( $wp_term );
+			if ( ! $matched ) {
+				$unmatched++;
+			}
+
+			$categories[] = [
+				'iato_id'    => $cat['id'] ?? null,
+				'label'      => $label,
+				'color'      => $cat['color'] ?? null,
+				'wp_term_id' => $matched ? $wp_term->term_id : null,
+				'wp_slug'    => $matched ? $wp_term->slug : null,
+				'matched'    => $matched,
+			];
+		}
+
+		$tags = [];
+		foreach ( $tags_data as $tag ) {
+			$label   = $tag['label'] ?? $tag['name'] ?? '';
+			$wp_term = $label ? get_term_by( 'name', $label, 'post_tag' ) : false;
+
+			$matched = $wp_term && ! is_wp_error( $wp_term );
+			if ( ! $matched ) {
+				$unmatched++;
+			}
+
+			$tags[] = [
+				'iato_id'    => $tag['id'] ?? null,
+				'label'      => $label,
+				'color'      => $tag['color'] ?? null,
+				'wp_term_id' => $matched ? $wp_term->term_id : null,
+				'wp_slug'    => $matched ? $wp_term->slug : null,
+				'matched'    => $matched,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [
+			'sitemap_id'      => $sitemap_id,
+			'categories'      => $categories,
+			'tags'            => $tags,
+			'unmatched_count' => $unmatched,
+		] );
 	}
 );

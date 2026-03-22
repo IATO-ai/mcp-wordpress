@@ -32,9 +32,27 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_taxonomy', 'taxonomy must be category or post_tag' );
 		}
 
-		// TODO: implement — get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false])
-		// Return [{id, name, slug, count, parent_id}]
-		return new WP_Error( 'not_implemented', 'get_terms not yet implemented' );
+		$terms = get_terms( [
+			'taxonomy'   => $taxonomy,
+			'hide_empty' => false,
+		] );
+
+		if ( is_wp_error( $terms ) ) {
+			return $terms;
+		}
+
+		$result = [];
+		foreach ( $terms as $term ) {
+			$result[] = [
+				'id'        => $term->term_id,
+				'name'      => $term->name,
+				'slug'      => $term->slug,
+				'count'     => (int) $term->count,
+				'parent_id' => (int) $term->parent,
+			];
+		}
+
+		return IATO_MCP_Server::ok( [ 'terms' => $result ] );
 	}
 );
 
@@ -64,7 +82,30 @@ IATO_MCP_Server::register_tool(
 
 		if ( ! $post_id || ! $term_id ) return new WP_Error( 'missing_args', 'post_id and term_id required' );
 
-		// TODO: implement — wp_set_post_terms($post_id, [$term_id], $taxonomy, $append = true)
-		return new WP_Error( 'not_implemented', 'assign_term not yet implemented' );
+		if ( ! in_array( $taxonomy, [ 'category', 'post_tag' ], true ) ) {
+			return new WP_Error( 'invalid_taxonomy', 'taxonomy must be category or post_tag' );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$term = get_term( $term_id, $taxonomy );
+		if ( is_wp_error( $term ) || ! $term ) {
+			return new WP_Error( 'not_found', 'Term not found.' );
+		}
+
+		$result = wp_set_post_terms( $post_id, [ $term_id ], $taxonomy, true );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return IATO_MCP_Server::ok( [
+			'post_id'  => $post_id,
+			'term_id'  => $term_id,
+			'term_name' => $term->name,
+			'taxonomy' => $taxonomy,
+		] );
 	}
 );
