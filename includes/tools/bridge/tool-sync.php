@@ -609,3 +609,214 @@ IATO_MCP_Server::register_tool(
 		] );
 	}
 );
+
+// ── 4. sync_wp_menus_to_iato ─────────────────────────────────────────────
+
+IATO_MCP_Server::register_tool(
+	'sync_wp_menus_to_iato',
+	[
+		'description' => 'Syncs WordPress navigation menus and their items to IATO. Creates menus that don\'t exist yet in IATO (matched by name) and populates them with menu items preserving parent-child hierarchy and ordering.',
+		'inputSchema' => [
+			'type'       => 'object',
+			'properties' => [
+				'sitemap_id' => [
+					'type'        => 'integer',
+					'description' => 'IATO sitemap ID to sync menus into.',
+				],
+				'crawl_id'   => [
+					'type'        => 'string',
+					'description' => 'IATO crawl ID (required for consistency with other sync tools).',
+				],
+				'dry_run'    => [
+					'type'        => 'boolean',
+					'description' => 'If true, return what would be synced without making changes.',
+					'default'     => false,
+				],
+			],
+			'required'   => [ 'sitemap_id', 'crawl_id' ],
+		],
+	],
+	function ( array $args ): array|\WP_Error {
+
+		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
+		if ( is_wp_error( $cap_check ) ) {
+			return $cap_check;
+		}
+
+		$sitemap_id = absint( $args['sitemap_id'] ?? 0 );
+		$crawl_id   = sanitize_text_field( $args['crawl_id'] ?? '' );
+		$dry_run    = ! empty( $args['dry_run'] );
+
+		if ( ! $sitemap_id || empty( $crawl_id ) ) {
+			return new \WP_Error( 'missing_params', 'sitemap_id and crawl_id are required.' );
+		}
+
+		// Fetch existing IATO menus for deduplication.
+		$iato_menus = IATO_MCP_IATO_Client::get_menus( $sitemap_id );
+		if ( is_wp_error( $iato_menus ) ) {
+			return $iato_menus;
+		}
+
+		$existing_menus = [];
+		foreach ( $iato_menus as $im ) {
+			$name = $im['name'] ?? '';
+			if ( $name !== '' ) {
+				$existing_menus[ $name ] = $im['id'] ?? $im['menu_id'] ?? 0;
+			}
+		}
+
+		// Fetch all WP nav menus.
+		$wp_menus = wp_get_nav_menus();
+		if ( empty( $wp_menus ) ) {
+			return IATO_MCP_Server::ok( [
+				'sitemap_id'    => $sitemap_id,
+				'dry_run'       => $dry_run,
+				'menus_created' => 0,
+				'menus_skipped' => 0,
+				'items_created' => 0,
+				'items_skipped' => 0,
+				'message'       => 'No WordPress navigation menus found.',
+				'details'       => [],
+			] );
+		}
+
+		$menus_created = 0;
+		$menus_skipped = 0;
+		$items_created = 0;
+		$items_skipped = 0;
+		$details       = [];
+
+		foreach ( $wp_menus as $wp_menu ) {
+			$menu_name   = $wp_menu->name;
+			$menu_detail = [
+				'wp_menu_id'   => $wp_menu->term_id,
+				'name'         => $menu_name,
+				'action'       => 'skip',
+				'iato_menu_id' => null,
+				'items'        => [],
+			];
+
+			// Create or skip the menu itself.
+			if ( isset( $existing_menus[ $menu_name ] ) ) {
+				$iato_menu_id = $existing_menus[ $menu_name ];
+				$menu_detail['action']       = 'skipped';
+				$menu_detail['iato_menu_id'] = $iato_menu_id;
+				$menus_skipped++;
+			} else {
+				if ( $dry_run ) {
+					$iato_menu_id = 0;
+					$menu_detail['action'] = 'would_create';
+				} else {
+					$result = IATO_MCP_IATO_Client::create_menu( $sitemap_id, $menu_name );
+					if ( is_wp_error( $result ) ) {
+						$menu_detail['action'] = 'error';
+						$menu_detail['error']  = $result->get_error_message();
+						$details[] = $menu_detail;
+						continue;
+					}
+					$iato_menu_id = $result['id'] ?? $result['menu_id'] ?? 0;
+					$menu_detail['action']       = 'created';
+					$menu_detail['iato_menu_id'] = $iato_menu_id;
+				}
+				$menus_created++;
+			}
+
+			// Fetch WP menu items.
+			$wp_items = wp_get_nav_menu_items( $wp_menu->term_id );
+			if ( empty( $wp_items ) ) {
+				$details[] = $menu_detail;
+				continue;
+			}
+
+			// Build existing item keys for deduplication (only if menu already existed).
+			$existing_item_keys = [];
+			if ( isset( $existing_menus[ $menu_name ] ) && $iato_menu_id ) {
+				$iato_items = IATO_MCP_IATO_Client::get_menu_items( $sitemap_id, $iato_menu_id );
+				if ( ! is_wp_error( $iato_items ) ) {
+					foreach ( $iato_items as $ii ) {
+						$key = ( $ii['label'] ?? '' ) . '|' . ( $ii['url'] ?? '' );
+						$existing_item_keys[ $key ] = true;
+					}
+				}
+			}
+
+			// Group WP items by parent for BFS traversal.
+			$by_parent = [];
+			foreach ( $wp_items as $item ) {
+				$parent = (int) $item->menu_item_parent;
+				$by_parent[ $parent ][] = $item;
+			}
+
+			// BFS: process roots first, then children — preserves hierarchy.
+			$wp_to_iato_item = [];
+			$queue           = $by_parent[0] ?? [];
+
+			while ( ! empty( $queue ) ) {
+				$item = array_shift( $queue );
+
+				// Enqueue children so they're processed after parent.
+				if ( isset( $by_parent[ $item->ID ] ) ) {
+					foreach ( $by_parent[ $item->ID ] as $child ) {
+						$queue[] = $child;
+					}
+				}
+
+				$label = $item->title;
+				$url   = $item->url;
+				$key   = $label . '|' . $url;
+
+				$item_detail = [
+					'wp_item_id' => $item->ID,
+					'label'      => $label,
+					'url'        => $url,
+					'position'   => $item->menu_order,
+					'parent'     => (int) $item->menu_item_parent ?: null,
+					'action'     => 'skip',
+				];
+
+				if ( isset( $existing_item_keys[ $key ] ) ) {
+					$item_detail['action'] = 'skipped';
+					$items_skipped++;
+				} else {
+					$iato_parent_id = $wp_to_iato_item[ (int) $item->menu_item_parent ] ?? null;
+
+					if ( $dry_run ) {
+						$item_detail['action'] = 'would_create';
+						$wp_to_iato_item[ $item->ID ] = 'dry_run_' . $item->ID;
+					} else {
+						$result = IATO_MCP_IATO_Client::create_menu_item( $sitemap_id, $iato_menu_id, [
+							'label'          => $label,
+							'url'            => $url,
+							'parent_item_id' => $iato_parent_id,
+							'position'       => $item->menu_order,
+						] );
+
+						if ( is_wp_error( $result ) ) {
+							$item_detail['action'] = 'error';
+							$item_detail['error']  = $result->get_error_message();
+						} else {
+							$item_detail['action']       = 'created';
+							$item_detail['iato_item_id'] = $result['id'] ?? $result['item_id'] ?? 0;
+							$wp_to_iato_item[ $item->ID ] = $item_detail['iato_item_id'];
+						}
+					}
+					$items_created++;
+				}
+
+				$menu_detail['items'][] = $item_detail;
+			}
+
+			$details[] = $menu_detail;
+		}
+
+		return IATO_MCP_Server::ok( [
+			'sitemap_id'    => $sitemap_id,
+			'dry_run'       => $dry_run,
+			'menus_created' => $menus_created,
+			'menus_skipped' => $menus_skipped,
+			'items_created' => $items_created,
+			'items_skipped' => $items_skipped,
+			'details'       => $details,
+		] );
+	}
+);

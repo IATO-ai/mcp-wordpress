@@ -1,7 +1,6 @@
 <?php
 /**
  * Plugin Name: IATO MCP
- * Plugin URI:  https://iato.ai
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
  * Version:     1.0.0
  * Author:      IATO

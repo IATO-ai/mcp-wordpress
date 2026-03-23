@@ -324,6 +324,29 @@ class IATO_MCP_IATO_Client {
 		] );
 	}
 
+	/**
+	 * Create a navigation menu in an IATO sitemap.
+	 *
+	 * @param int    $sitemap_id Sitemap ID.
+	 * @param string $name       Menu name.
+	 * @return array|WP_Error
+	 */
+	public static function create_menu( int $sitemap_id, string $name ): array|WP_Error {
+		return self::post( "/sitemaps/{$sitemap_id}/menus", [ 'name' => $name ] );
+	}
+
+	/**
+	 * Create a menu item inside an IATO menu.
+	 *
+	 * @param int   $sitemap_id Sitemap ID.
+	 * @param int   $menu_id    IATO menu ID.
+	 * @param array $item_data  Item fields: label, url, parent_item_id, position.
+	 * @return array|WP_Error
+	 */
+	public static function create_menu_item( int $sitemap_id, int $menu_id, array $item_data ): array|WP_Error {
+		return self::post( "/sitemaps/{$sitemap_id}/menus/{$menu_id}/items", $item_data );
+	}
+
 	// ── Internal helpers ───────────────────────────────────────────────────────
 
 	/**
