@@ -37,6 +37,7 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-comments.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-menus.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-taxonomy.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-builder.php';
 
 // Phase 2 — IATO bridge tools (loaded only when IATO API key is configured)
 if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
