@@ -40,39 +40,60 @@ class IATO_MCP_Settings {
 		'get_menus',
 		'get_menu_items',
 		'update_menu_item',
+		'create_menu_item',
+		'delete_menu_item',
+		'update_menu_item_details',
 		'get_terms',
 		'assign_term',
+		'create_term',
+		'update_term',
+		'delete_term',
+		'update_taxonomy',
+		'update_canonical',
+		'update_structured_data',
+		'update_redirect',
 	];
 
 	/** Tool descriptions for UI display. */
 	private const TOOL_DESCRIPTIONS = [
-		'get_site_info'     => 'Basic site information and health',
-		'get_site_settings' => 'WordPress settings (admin only)',
-		'get_posts'         => 'List published posts with filters',
-		'get_post'          => 'Single post details and meta',
-		'create_post'       => 'Create new posts and pages',
-		'update_post'       => 'Edit existing post content',
-		'search_posts'      => 'Full-text search across posts',
-		'get_seo_data'      => 'Read SEO meta fields',
-		'update_seo_data'   => 'Update SEO titles and descriptions',
-		'get_media'         => 'List media library items',
-		'update_alt_text'   => 'Update image alt text',
-		'get_comments'      => 'List and filter comments',
-		'get_menus'         => 'List navigation menus',
-		'get_menu_items'    => 'Menu item details and structure',
-		'update_menu_item'  => 'Edit menu items (admin only)',
-		'get_terms'         => 'List categories, tags, and terms',
-		'assign_term'       => 'Assign terms to posts',
+		'get_site_info'            => 'Basic site information and health',
+		'get_site_settings'        => 'WordPress settings (admin only)',
+		'get_posts'                => 'List published posts with filters',
+		'get_post'                 => 'Single post details and meta',
+		'create_post'              => 'Create new posts and pages',
+		'update_post'              => 'Edit existing post content',
+		'search_posts'             => 'Full-text search across posts',
+		'get_seo_data'             => 'Read SEO meta fields',
+		'update_seo_data'          => 'Update SEO titles and descriptions',
+		'get_media'                => 'List media library items',
+		'update_alt_text'          => 'Update image alt text',
+		'get_comments'             => 'List and filter comments',
+		'get_menus'                => 'List navigation menus',
+		'get_menu_items'           => 'Menu item details and structure',
+		'update_menu_item'         => 'Add items to a menu (admin only)',
+		'create_menu_item'         => 'Create new menu items (admin only)',
+		'delete_menu_item'         => 'Remove menu items (admin only)',
+		'update_menu_item_details' => 'Edit menu item properties (admin only)',
+		'get_terms'                => 'List categories, tags, and terms',
+		'assign_term'              => 'Assign terms to posts',
+		'create_term'              => 'Create new taxonomy terms (admin only)',
+		'update_term'              => 'Edit existing terms (admin only)',
+		'delete_term'              => 'Remove taxonomy terms (admin only)',
+		'update_taxonomy'          => 'Replace all terms on a post',
+		'update_canonical'         => 'Set canonical URL for a post',
+		'update_structured_data'   => 'Add JSON-LD structured data',
+		'update_redirect'          => 'Create or update redirect rules (admin only)',
 	];
 
 	/** Tool groupings for UI categories. */
 	private const TOOL_CATEGORIES = [
 		'Content'    => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts' ],
 		'Site'       => [ 'get_site_info', 'get_site_settings' ],
-		'SEO'        => [ 'get_seo_data', 'update_seo_data' ],
+		'SEO'        => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
 		'Media'      => [ 'get_media', 'update_alt_text' ],
-		'Navigation' => [ 'get_menus', 'get_menu_items', 'update_menu_item' ],
-		'Taxonomy'   => [ 'get_terms', 'assign_term' ],
+		'Navigation' => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details' ],
+		'Taxonomy'   => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
+		'Redirects'  => [ 'update_redirect' ],
 		'Comments'   => [ 'get_comments' ],
 	];
 
@@ -1149,7 +1170,10 @@ class IATO_MCP_Settings {
 						?>
 					</div>
 				</div>
-				<div style="margin-top: 8px;">
+				<div style="margin-top: 8px; display: flex; gap: 16px; align-items: center;">
+					<?php if ( ! get_option( 'iato_mcp_setup_complete' ) ) : ?>
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #1e40af; color: #fff; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
+					<?php endif; ?>
 					<a href="<?php echo esc_url( $dismiss_url ); ?>" style="color: #94a3b8; font-size: 13px; text-decoration: none;"><?php esc_html_e( 'Dismiss this notice', 'iato-mcp' ); ?></a>
 				</div>
 			</div>

@@ -94,12 +94,21 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Attachment not found.' );
 		}
 
+		// Capture before value for change receipt.
+		$before_alt = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
+		$before_alt = '' !== $before_alt ? $before_alt : null;
+
 		update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
 
-		return IATO_MCP_Server::ok( [
+		$receipt = IATO_MCP_Change_Receipt::record( $attachment_id, 'image', 'alt_text', $before_alt, $alt );
+
+		$data = [
 			'id'  => $attachment_id,
 			'alt' => $alt,
 			'url' => wp_get_attachment_url( $attachment_id ),
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
