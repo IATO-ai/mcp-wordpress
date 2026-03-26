@@ -25,8 +25,13 @@ define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
 require_once IATO_MCP_DIR . 'includes/class-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-iato-client.php';
 require_once IATO_MCP_DIR . 'includes/class-seo-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
+require_once IATO_MCP_DIR . 'includes/class-rollback.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
+require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
+require_once IATO_MCP_DIR . 'includes/class-review-queue.php';
+require_once IATO_MCP_DIR . 'includes/class-dashboard-widget.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 
 // Phase 1 — WP native tools
@@ -38,6 +43,9 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-comments.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-menus.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-taxonomy.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-builder.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-canonical.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-structured-data.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-redirects.php';
 
 // Phase 2 — IATO bridge tools (loaded only when IATO API key is configured)
 if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
@@ -60,6 +68,10 @@ function iato_mcp_init() {
 	IATO_MCP_OAuth::init();
 	IATO_MCP_Settings::init();
 	IATO_MCP_Server::init();
+	IATO_MCP_Rollback::init();
+	IATO_MCP_Setup_Wizard::init();
+	IATO_MCP_Review_Queue::init();
+	IATO_MCP_Dashboard_Widget::init();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
 
@@ -68,6 +80,7 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
  */
 function iato_mcp_activate() {
 	IATO_MCP_Auth::maybe_generate_key();
+	IATO_MCP_Change_Receipt::create_table();
 	update_option( 'iato_mcp_show_wizard', true );
 }
 register_activation_hook( __FILE__, 'iato_mcp_activate' );
@@ -78,5 +91,6 @@ register_activation_hook( __FILE__, 'iato_mcp_activate' );
  */
 function iato_mcp_deactivate() {
 	delete_transient( 'iato_mcp_oauth_pkce' );
+	delete_transient( 'iato_mcp_dashboard_data' );
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

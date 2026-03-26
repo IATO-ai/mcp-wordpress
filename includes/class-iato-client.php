@@ -347,6 +347,181 @@ class IATO_MCP_IATO_Client {
 		return self::post( "/sitemaps/{$sitemap_id}/menus/{$menu_id}/items", $item_data );
 	}
 
+	// ── Workspace endpoints ──────────────────────────────────────────────────
+
+	/**
+	 * GET /workspaces — list workspaces.
+	 *
+	 * @return array|WP_Error
+	 */
+	public static function list_workspaces(): array|WP_Error {
+		return self::get( '/workspaces' );
+	}
+
+	/**
+	 * GET /workspaces/{id}
+	 *
+	 * @param string $workspace_id
+	 * @return array|WP_Error
+	 */
+	public static function get_workspace( string $workspace_id ): array|WP_Error {
+		return self::get( "/workspaces/{$workspace_id}" );
+	}
+
+	// ── Governance endpoints ─────────────────────────────────────────────────
+
+	/**
+	 * GET /workspaces/{id}/governance-policy
+	 *
+	 * @param string $workspace_id
+	 * @return array|WP_Error
+	 */
+	public static function get_governance_policy( string $workspace_id ): array|WP_Error {
+		return self::get( "/workspaces/{$workspace_id}/governance-policy" );
+	}
+
+	/**
+	 * POST /workspaces/{id}/governance-policy
+	 *
+	 * @param string $workspace_id
+	 * @param array  $policy
+	 * @return array|WP_Error
+	 */
+	public static function update_governance_policy( string $workspace_id, array $policy ): array|WP_Error {
+		return self::post( "/workspaces/{$workspace_id}/governance-policy", $policy );
+	}
+
+	// ── Change Queue endpoints ───────────────────────────────────────────────
+
+	/**
+	 * GET /change-queue — list change queue items.
+	 *
+	 * @param string $workspace_id
+	 * @param array  $params       Optional: status, site_url, limit, page.
+	 * @return array|WP_Error
+	 */
+	public static function get_change_queue( string $workspace_id, array $params = [] ): array|WP_Error {
+		$query = array_merge( [ 'workspace_id' => $workspace_id ], $params );
+		return self::get( '/change-queue', $query );
+	}
+
+	/**
+	 * POST /change-queue/{id}/approve
+	 *
+	 * @param string $change_id
+	 * @return array|WP_Error
+	 */
+	public static function approve_change( string $change_id ): array|WP_Error {
+		return self::post( "/change-queue/{$change_id}/approve" );
+	}
+
+	/**
+	 * POST /change-queue/{id}/reject
+	 *
+	 * @param string $change_id
+	 * @return array|WP_Error
+	 */
+	public static function reject_change( string $change_id ): array|WP_Error {
+		return self::post( "/change-queue/{$change_id}/reject" );
+	}
+
+	/**
+	 * POST /change-queue/{id}/mark-fixed
+	 *
+	 * @param string $change_id
+	 * @param string $notes
+	 * @return array|WP_Error
+	 */
+	public static function mark_as_fixed( string $change_id, string $notes = '' ): array|WP_Error {
+		$body = [];
+		if ( '' !== $notes ) {
+			$body['notes'] = $notes;
+		}
+		return self::post( "/change-queue/{$change_id}/mark-fixed", $body );
+	}
+
+	/**
+	 * POST /change-queue/batch/{id}/approve
+	 *
+	 * @param string $batch_id
+	 * @return array|WP_Error
+	 */
+	public static function approve_batch( string $batch_id ): array|WP_Error {
+		return self::post( "/change-queue/batch/{$batch_id}/approve" );
+	}
+
+	/**
+	 * POST /change-queue/batch/{id}/reject
+	 *
+	 * @param string $batch_id
+	 * @return array|WP_Error
+	 */
+	public static function reject_batch( string $batch_id ): array|WP_Error {
+		return self::post( "/change-queue/batch/{$batch_id}/reject" );
+	}
+
+	/**
+	 * POST /change-queue/batch/{id}/mark-fixed
+	 *
+	 * @param string $batch_id
+	 * @param string $notes
+	 * @return array|WP_Error
+	 */
+	public static function mark_batch_as_fixed( string $batch_id, string $notes = '' ): array|WP_Error {
+		$body = [];
+		if ( '' !== $notes ) {
+			$body['notes'] = $notes;
+		}
+		return self::post( "/change-queue/batch/{$batch_id}/mark-fixed", $body );
+	}
+
+	// ── Activity Log endpoints ───────────────────────────────────────────────
+
+	/**
+	 * GET /workspaces/{id}/activity-log
+	 *
+	 * @param string $workspace_id
+	 * @param array  $params       Optional: action, limit, page.
+	 * @return array|WP_Error
+	 */
+	public static function get_activity_log( string $workspace_id, array $params = [] ): array|WP_Error {
+		return self::get( "/workspaces/{$workspace_id}/activity-log", $params );
+	}
+
+	// ── Schedule endpoints ───────────────────────────────────────────────────
+
+	/**
+	 * POST /schedules — create a crawl schedule.
+	 *
+	 * @param array $data Schedule configuration.
+	 * @return array|WP_Error
+	 */
+	public static function create_schedule( array $data ): array|WP_Error {
+		return self::post( '/schedules', $data );
+	}
+
+	/**
+	 * POST /schedules/{id}/run — trigger an immediate crawl.
+	 *
+	 * @param string $schedule_id
+	 * @return array|WP_Error
+	 */
+	public static function run_schedule_now( string $schedule_id ): array|WP_Error {
+		return self::post( "/schedules/{$schedule_id}/run" );
+	}
+
+	// ── SEO Audit endpoint ───────────────────────────────────────────────────
+
+	/**
+	 * POST /crawls/{id}/seo-audit — run an SEO audit.
+	 *
+	 * @param string $crawl_id
+	 * @return array|WP_Error
+	 */
+	public static function run_seo_audit( string $crawl_id ): array|WP_Error {
+		return self::post( "/crawls/{$crawl_id}/seo-audit" );
+	}
+
 	// ── Internal helpers ───────────────────────────────────────────────────────
 
 	/**

@@ -76,14 +76,19 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'missing_fields', 'Provide at least one of title or description to update.' );
 		}
 
-		$updated = [];
+		// Capture before values for change receipt.
+		$before = IATO_MCP_SEO_Adapter::get_meta( $post_id );
+
+		$updated  = [];
+		$receipts = [];
 
 		if ( isset( $args['title'] ) ) {
 			$result = IATO_MCP_SEO_Adapter::update_title( $post_id, $args['title'] );
 			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
-			$updated[] = 'title';
+			$updated[]  = 'title';
+			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'title', $before['title'], $args['title'] );
 		}
 
 		if ( isset( $args['description'] ) ) {
@@ -91,17 +96,26 @@ IATO_MCP_Server::register_tool(
 			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
-			$updated[] = 'description';
+			$updated[]  = 'description';
+			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'meta_description', $before['description'], $args['description'] );
 		}
 
 		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );
 
-		return IATO_MCP_Server::ok( [
+		$data = [
 			'id'          => $post_id,
 			'updated'     => $updated,
 			'title'       => $meta['title'],
 			'description' => $meta['description'],
 			'plugin'      => $meta['plugin'],
-		] );
+		];
+
+		if ( count( $receipts ) === 1 ) {
+			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
+		} elseif ( count( $receipts ) > 1 ) {
+			$data['change_receipts'] = $receipts;
+		}
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );

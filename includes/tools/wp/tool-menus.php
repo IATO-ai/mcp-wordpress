@@ -154,13 +154,21 @@ IATO_MCP_Server::register_tool(
 			return $result;
 		}
 
-		return IATO_MCP_Server::ok( [
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$result, 'menu_item', 'create', null,
+			wp_json_encode( array_merge( $item_data, [ 'menu_id' => $menu_id ] ) )
+		);
+
+		$data = [
 			'menu_item_id' => $result,
 			'menu_id'      => $menu_id,
 			'post_id'      => $post_id,
 			'title'        => $item_data['menu-item-title'],
 			'parent_id'    => $parent_id,
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 
@@ -255,7 +263,12 @@ IATO_MCP_Server::register_tool(
 			return $result;
 		}
 
-		return IATO_MCP_Server::ok( [
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$result, 'menu_item', 'create', null,
+			wp_json_encode( array_merge( $item_data, [ 'menu_id' => $menu_id ] ) )
+		);
+
+		$data = [
 			'menu_item_id' => $result,
 			'menu_id'      => $menu_id,
 			'title'        => $title,
@@ -264,7 +277,10 @@ IATO_MCP_Server::register_tool(
 			'position'     => $position,
 			'parent_id'    => $parent_id,
 			'type'         => $post_id ? 'post_type' : 'custom',
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 
@@ -299,6 +315,19 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Menu item not found.' );
 		}
 
+		// Snapshot full item state for rollback.
+		$menu_terms = wp_get_object_terms( $menu_item_id, 'nav_menu' );
+		$snapshot   = [
+			'menu_id'    => ! is_wp_error( $menu_terms ) && ! empty( $menu_terms ) ? $menu_terms[0]->term_id : 0,
+			'title'      => $item->post_title,
+			'url'        => get_post_meta( $menu_item_id, '_menu_item_url', true ),
+			'type'       => get_post_meta( $menu_item_id, '_menu_item_type', true ),
+			'object'     => get_post_meta( $menu_item_id, '_menu_item_object', true ),
+			'object_id'  => get_post_meta( $menu_item_id, '_menu_item_object_id', true ),
+			'parent_id'  => get_post_meta( $menu_item_id, '_menu_item_menu_item_parent', true ),
+			'position'   => $item->menu_order,
+		];
+
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
 				'dry_run'       => true,
@@ -313,11 +342,18 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'delete_failed', 'Failed to delete menu item.' );
 		}
 
-		return IATO_MCP_Server::ok( [
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$menu_item_id, 'menu_item', 'delete', wp_json_encode( $snapshot ), null
+		);
+
+		$data = [
 			'menu_item_id' => $menu_item_id,
 			'title'        => $item->post_title,
 			'action'       => 'deleted',
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 
@@ -422,10 +458,27 @@ IATO_MCP_Server::register_tool(
 			return $result;
 		}
 
-		return IATO_MCP_Server::ok( [
+		// Build before/after from the tracked changes.
+		$before_vals = [];
+		$after_vals  = [];
+		foreach ( $changes as $key => $change ) {
+			$before_vals[ $key ] = $change['from'];
+			$after_vals[ $key ]  = $change['to'];
+		}
+
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$menu_item_id, 'menu_item', 'details',
+			wp_json_encode( $before_vals ),
+			wp_json_encode( $after_vals )
+		);
+
+		$data = [
 			'menu_item_id' => $result,
 			'menu_id'      => $menu_id,
 			'changes'      => $changes,
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
