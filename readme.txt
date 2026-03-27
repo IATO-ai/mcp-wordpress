@@ -71,7 +71,7 @@ IATO MCP connects your WordPress site to Claude Desktop and other MCP-enabled AI
 
 This plugin connects to the following external service when configured:
 
-**IATO API** ([https://iato.ai](https://iato.ai)) — When you enter an IATO API key in the plugin settings, the plugin sends requests to `https://iato.ai/api/v1` to retrieve crawl data, SEO audit results, sitemap information, and AI-generated improvement suggestions. No data is sent to IATO until you configure an API key. Your public page URLs (as crawled by IATO) and crawl analysis results are transmitted.
+**IATO API** ([https://iato.ai](https://iato.ai)) — When you enter an IATO API key in the plugin settings, the plugin sends requests to `https://iato.ai/api` to retrieve crawl data, SEO audit results, sitemap information, and AI-generated improvement suggestions. No data is sent to IATO until you configure an API key. Your public page URLs (as crawled by IATO) and crawl analysis results are transmitted.
 
 * [IATO Terms of Service](https://iato.ai/terms)
 * [IATO Privacy Policy](https://iato.ai/privacy)

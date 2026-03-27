@@ -171,7 +171,7 @@ class IATO_MCP_Settings {
 		}
 
 		// Validate by calling IATO API.
-		$response = wp_remote_get( 'https://iato.ai/api/v1/workspaces', [
+		$response = wp_remote_get( 'https://iato.ai/api/workspaces', [
 			'timeout' => 30,
 			'headers' => [
 				'Authorization' => 'Bearer ' . $value,

@@ -167,7 +167,7 @@ GET  /wp/v2/settings                 site settings
 
 ## IATO API Client
 
-Base URL: `https://iato.ai/api/v1`
+Base URL: `https://iato.ai/api`
 Auth: `Authorization: Bearer {iato_api_key}` header
 All requests via `wp_remote_*` with 30s timeout.
 
@@ -198,7 +198,7 @@ Fields:
 - Default crawl ID (text, used as fallback when bridge tools aren't passed a crawl_id)
 - Enable/disable individual tools (checkboxes per tool name)
 
-Validate API key on save by calling `GET /api/v1/workspaces` and checking 200 response.
+Validate API key on save by calling `GET /api/workspaces` and checking 200 response.
 
 ---
 

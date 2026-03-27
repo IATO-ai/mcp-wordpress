@@ -2,7 +2,7 @@
 /**
  * IATO API Client — thin HTTP wrapper around the IATO REST API.
  *
- * Base URL: https://iato.ai/api/v1
+ * Base URL: https://iato.ai/api
  * Auth:     Authorization: Bearer {api_key}
  * Timeout:  30s (crawl endpoints can be slow)
  * Transport: wp_remote_get / wp_remote_post — never curl directly.
@@ -17,7 +17,7 @@ defined( 'ABSPATH' ) || exit;
 
 class IATO_MCP_IATO_Client {
 
-	private const BASE_URL = 'https://iato.ai/api/v1';
+	private const BASE_URL = 'https://iato.ai/api';
 	private const TIMEOUT  = 30;
 
 	/** @var string|null Cached API key for this request. */
