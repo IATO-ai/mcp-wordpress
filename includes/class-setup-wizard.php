@@ -502,9 +502,52 @@ class IATO_MCP_Setup_Wizard {
 			'cms_integration'  => 'wordpress',
 		];
 
-		$result = IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, $policy );
-		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( $result->get_error_message() );
+		// DEBUG: Trace the raw IATO API call. Remove after debugging.
+		$api_key  = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
+		$api_url  = 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy';
+		$api_body = wp_json_encode( $policy );
+
+		$raw_response = wp_remote_post( $api_url, [
+			'timeout' => 30,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $api_key,
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+			],
+			'body' => $api_body,
+		] );
+
+		if ( is_wp_error( $raw_response ) ) {
+			wp_send_json_error( [
+				'debug'        => true,
+				'request_url'  => $api_url,
+				'request_body' => $policy,
+				'wp_error'     => $raw_response->get_error_message(),
+			] );
+		}
+
+		$status_code   = wp_remote_retrieve_response_code( $raw_response );
+		$response_body = wp_remote_retrieve_body( $raw_response );
+
+		if ( $status_code < 200 || $status_code >= 300 ) {
+			wp_send_json_error( [
+				'debug'         => true,
+				'request_url'   => $api_url,
+				'request_body'  => $policy,
+				'response_code' => $status_code,
+				'response_body' => $response_body,
+			] );
+		}
+
+		$result = json_decode( $response_body, true );
+		if ( ! is_array( $result ) ) {
+			wp_send_json_error( [
+				'debug'         => true,
+				'request_url'   => $api_url,
+				'response_code' => $status_code,
+				'response_body' => $response_body,
+				'error'         => 'Invalid JSON from IATO API',
+			] );
 		}
 
 		update_option( 'iato_mcp_wizard_step', 3 );
