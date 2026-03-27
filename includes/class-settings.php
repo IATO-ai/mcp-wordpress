@@ -263,6 +263,7 @@ class IATO_MCP_Settings {
 		$enabled_count = $all_on ? count( self::TOOL_NAMES ) : count( $enabled );
 		$total_count   = count( self::TOOL_NAMES );
 
+		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
 		self::render_styles();
 		?>
 		<div class="iato-wrap">
@@ -447,32 +448,33 @@ class IATO_MCP_Settings {
 		<style>
 			/* ── Reset & Variables ──────────────────────────────── */
 			.iato-wrap {
-				--iato-primary: #1e40af;
-				--iato-primary-hover: #1e3a8a;
-				--iato-primary-light: #dbeafe;
-				--iato-success: #16a34a;
-				--iato-success-bg: #dcfce7;
-				--iato-warning: #d97706;
-				--iato-warning-bg: #fef3c7;
-				--iato-danger: #dc2626;
-				--iato-danger-bg: #fee2e2;
-				--iato-neutral: #64748b;
-				--iato-neutral-bg: #f1f5f9;
-				--iato-bg: #f1f5f9;
+				--iato-primary: #5a89f4;
+				--iato-primary-hover: #3f64b8;
+				--iato-primary-light: rgba(90,137,244,0.12);
+				--iato-primary-btn: #4b72cc;
+				--iato-success: #38d68e;
+				--iato-success-bg: rgba(56,214,142,0.12);
+				--iato-warning: #eda145;
+				--iato-warning-bg: rgba(237,161,69,0.12);
+				--iato-danger: #ef4444;
+				--iato-danger-bg: rgba(239,68,68,0.12);
+				--iato-neutral: #6b7280;
+				--iato-neutral-bg: #f3f4f6;
+				--iato-bg: #f3f4f6;
 				--iato-card-bg: #ffffff;
-				--iato-border: #e2e8f0;
-				--iato-text: #0f172a;
-				--iato-text-secondary: #475569;
-				--iato-text-muted: #94a3b8;
-				--iato-code-bg: #0f172a;
-				--iato-code-text: #e2e8f0;
+				--iato-border: #e5e7eb;
+				--iato-text: #111827;
+				--iato-text-secondary: #6b7280;
+				--iato-text-muted: #9ca3af;
+				--iato-code-bg: #0b0d17;
+				--iato-code-text: #e6e8f0;
 				--iato-radius: 12px;
 				--iato-radius-sm: 8px;
 
 				max-width: 860px;
 				margin: 20px auto 40px;
 				padding: 0 20px;
-				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+				font-family: 'DM Sans', system-ui, sans-serif;
 			}
 
 			/* ── Header ────────────────────────────────────────── */
@@ -486,7 +488,8 @@ class IATO_MCP_Settings {
 			}
 			.iato-title {
 				font-size: 28px;
-				font-weight: 700;
+				font-weight: 400;
+				font-family: 'Instrument Serif', Georgia, serif;
 				color: var(--iato-primary);
 				margin: 0;
 				letter-spacing: -0.5px;
@@ -518,6 +521,7 @@ class IATO_MCP_Settings {
 				padding: 24px;
 				margin-bottom: 20px;
 				box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+				transition: background 0.2s, box-shadow 0.2s;
 			}
 			.iato-card--hero {
 				border-left: 4px solid var(--iato-primary);
@@ -561,7 +565,7 @@ class IATO_MCP_Settings {
 				padding: 4px 12px;
 				font-size: 12px;
 				font-weight: 600;
-				border-radius: 20px;
+				border-radius: 99px;
 				line-height: 1;
 			}
 			.iato-badge--success {
@@ -663,7 +667,7 @@ class IATO_MCP_Settings {
 				flex: 1;
 			}
 			.iato-key-masked {
-				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+				font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 				letter-spacing: 0.5px;
 			}
 
@@ -741,7 +745,7 @@ class IATO_MCP_Settings {
 				background: var(--iato-danger-bg);
 			}
 			.iato-btn--danger:hover {
-				background: #fecaca;
+				background: rgba(239,68,68,0.2);
 				color: var(--iato-danger);
 			}
 
@@ -771,7 +775,7 @@ class IATO_MCP_Settings {
 				font-size: 13px;
 				line-height: 1.6;
 				color: var(--iato-code-text);
-				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+				font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 				overflow-x: auto;
 				white-space: pre;
 				tab-size: 2;
@@ -805,7 +809,7 @@ class IATO_MCP_Settings {
 			}
 			.iato-input-group:focus-within {
 				border-color: var(--iato-primary);
-				box-shadow: 0 0 0 2px var(--iato-primary-light);
+				box-shadow: 0 0 0 2px rgba(90,137,244,0.1);
 			}
 			.iato-input {
 				flex: 1;
@@ -829,7 +833,7 @@ class IATO_MCP_Settings {
 			}
 			.iato-field-value > .iato-input:focus {
 				border-color: var(--iato-primary);
-				box-shadow: 0 0 0 2px var(--iato-primary-light);
+				box-shadow: 0 0 0 2px rgba(90,137,244,0.1);
 				outline: none;
 			}
 			.iato-input-toggle {
@@ -871,11 +875,11 @@ class IATO_MCP_Settings {
 			}
 			.iato-tool-category-header h3 {
 				margin: 0;
-				font-size: 13px;
+				font-size: 11px;
 				font-weight: 600;
 				color: var(--iato-text-secondary);
 				text-transform: uppercase;
-				letter-spacing: 0.5px;
+				letter-spacing: 0.06em;
 			}
 			.iato-tool-category-actions {
 				display: flex;
@@ -941,7 +945,7 @@ class IATO_MCP_Settings {
 				color: var(--iato-text);
 				background: none;
 				padding: 0;
-				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+				font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 			}
 			.iato-tool-desc {
 				font-size: 11px;
@@ -1003,9 +1007,21 @@ class IATO_MCP_Settings {
 				margin-top: 4px;
 			}
 			.iato-submit .button-primary {
-				padding: 6px 24px;
+				padding: 8px 24px;
 				height: auto;
-				font-size: 14px;
+				font-size: 13.5px;
+				font-weight: 600;
+				font-family: 'DM Sans', system-ui, sans-serif;
+				background: var(--iato-primary-btn);
+				border-color: var(--iato-primary-btn);
+				border-radius: 8px;
+				box-shadow: 0 0 24px rgba(90,137,244,0.18);
+				transition: all 0.2s;
+			}
+			.iato-submit .button-primary:hover {
+				background: var(--iato-primary-hover);
+				border-color: var(--iato-primary-hover);
+				box-shadow: 0 0 36px rgba(90,137,244,0.3);
 			}
 
 			/* ── WordPress overrides ─────────────────────────── */
@@ -1150,12 +1166,12 @@ class IATO_MCP_Settings {
 			],
 		], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 		?>
-		<div class="notice" style="border-left-color: #1e40af; padding: 0; overflow: hidden;">
+		<div class="notice" style="border-left-color: #5a89f4; padding: 0; overflow: hidden;">
 			<div style="padding: 20px 24px;">
-				<h3 style="margin: 0 0 12px; font-size: 16px; color: #1e40af;"><img src="<?php echo esc_url( IATO_MCP_URL . 'assets/img/logo.png' ); ?>" alt="IATO" height="28" style="vertical-align: middle; margin-right: 8px;" /><span style="vertical-align: middle;">MCP — Ready to Connect</span></h3>
+				<h3 style="margin: 0 0 12px; font-size: 16px; color: #5a89f4;"><img src="<?php echo esc_url( IATO_MCP_URL . 'assets/img/logo.png' ); ?>" alt="IATO" height="28" style="vertical-align: middle; margin-right: 8px;" /><span style="vertical-align: middle;">MCP — Ready to Connect</span></h3>
 				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
 					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #dbeafe; color: #1e40af; border-radius: 50%; font-size: 12px; font-weight: 700;">1</span>
+						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">1</span>
 					</div>
 					<div>
 						<strong><?php esc_html_e( 'Copy this configuration', 'iato-mcp' ); ?></strong>
@@ -1169,7 +1185,7 @@ class IATO_MCP_Settings {
 				</div>
 				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
 					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #dbeafe; color: #1e40af; border-radius: 50%; font-size: 12px; font-weight: 700;">2</span>
+						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">2</span>
 					</div>
 					<div>
 						<strong><?php esc_html_e( 'Open Claude Desktop settings and paste under MCP Servers', 'iato-mcp' ); ?></strong>
@@ -1178,21 +1194,21 @@ class IATO_MCP_Settings {
 				</div>
 				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
 					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #dbeafe; color: #1e40af; border-radius: 50%; font-size: 12px; font-weight: 700;">3</span>
+						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">3</span>
 					</div>
 					<div>
 						<?php
 						printf(
 							/* translators: %s: link to settings page */
 							esc_html__( '(Optional) Enter your IATO API key in %s to enable bridge tools.', 'iato-mcp' ),
-							'<a href="' . esc_url( $settings_url ) . '" style="color: #1e40af; font-weight: 500;">' . esc_html__( 'Settings', 'iato-mcp' ) . '</a>'
+							'<a href="' . esc_url( $settings_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'Settings', 'iato-mcp' ) . '</a>'
 						);
 						?>
 					</div>
 				</div>
 				<div style="margin-top: 8px; display: flex; gap: 16px; align-items: center;">
 					<?php if ( ! get_option( 'iato_mcp_setup_complete' ) ) : ?>
-						<a href="<?php echo esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #1e40af; color: #fff; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
 					<?php endif; ?>
 					<a href="<?php echo esc_url( $dismiss_url ); ?>" style="color: #94a3b8; font-size: 13px; text-decoration: none;"><?php esc_html_e( 'Dismiss this notice', 'iato-mcp' ); ?></a>
 				</div>
