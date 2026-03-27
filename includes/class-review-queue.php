@@ -45,8 +45,8 @@ class IATO_MCP_Review_Queue {
 			wp_die( __( 'Unauthorized.', 'iato-mcp' ) );
 		}
 
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
 		$api_key      = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
+		$workspace_id = ! empty( $api_key ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
 		$nonce        = wp_create_nonce( 'iato_mcp_review' );
 
 		?>
