@@ -32,7 +32,7 @@ class IATO_MCP_Review_Queue {
 			'edit_posts',
 			'iato-review-queue',
 			[ __CLASS__, 'render' ],
-			'dashicons-feedback',
+			IATO_MCP_URL . 'icon-white.png',
 			80
 		);
 	}
@@ -50,41 +50,48 @@ class IATO_MCP_Review_Queue {
 		$workspace_id = ( ! empty( $api_key ) && $api_valid ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
 		$nonce        = wp_create_nonce( 'iato_mcp_review' );
 
+		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
+
 		?>
 		<div class="wrap">
-			<h1 class="wp-heading-inline"><?php esc_html_e( 'IATO Review Queue', 'iato-mcp' ); ?></h1>
+			<h1 class="wp-heading-inline" style="font-family: 'Instrument Serif', Georgia, serif; font-weight: 400;"><?php esc_html_e( 'IATO Review Queue', 'iato-mcp' ); ?></h1>
 
 			<style>
-				.iato-rq { max-width: 1100px; }
-				.iato-rq-notice { padding: 12px 16px; border-left: 4px solid #dba617; background: #fcf9e8; margin: 16px 0; border-radius: 2px; }
-				.iato-rq-notice a { color: #2271b1; }
+				.iato-rq { max-width: 1100px; font-family: 'DM Sans', system-ui, sans-serif; }
+				.iato-rq-notice { padding: 12px 16px; border-left: 4px solid #eda145; background: rgba(237,161,69,0.12); margin: 16px 0; border-radius: 8px; }
+				.iato-rq-notice a { color: #5a89f4; }
 				.iato-rq-actions-bar { display: flex; justify-content: space-between; align-items: center; margin: 16px 0; flex-wrap: wrap; gap: 8px; }
 				.iato-rq-filters { display: flex; gap: 8px; }
-				.iato-rq-filters select { padding: 4px 8px; }
-				.iato-rq-bulk .button { margin-left: 4px; }
+				.iato-rq-filters select { padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; transition: border-color 0.15s, box-shadow 0.15s; }
+				.iato-rq-filters select:focus { border-color: #5a89f4; box-shadow: 0 0 0 2px rgba(90,137,244,0.1); outline: none; }
+				.iato-rq-bulk .button { margin-left: 4px; border-radius: 8px; transition: all 0.2s; }
 				.iato-rq-group { margin-bottom: 24px; }
-				.iato-rq-group-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f6f7f7; border: 1px solid #c3c4c7; border-bottom: none; border-radius: 4px 4px 0 0; cursor: pointer; }
-				.iato-rq-group-header h3 { margin: 0; font-size: 14px; }
-				.iato-rq-group-header .count { color: #50575e; font-size: 13px; }
-				.iato-rq-items { border: 1px solid #c3c4c7; border-radius: 0 0 4px 4px; }
-				.iato-rq-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px; border-bottom: 1px solid #f0f0f1; gap: 16px; }
+				.iato-rq-group-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f3f4f6; border: 1px solid #e5e7eb; border-bottom: none; border-radius: 12px 12px 0 0; cursor: pointer; transition: background 0.15s; }
+				.iato-rq-group-header:hover { background: #e5e7eb; }
+				.iato-rq-group-header h3 { margin: 0; font-size: 14px; color: #111827; text-transform: capitalize; }
+				.iato-rq-group-header .count { color: #6b7280; font-size: 13px; }
+				.iato-rq-items { border: 1px solid #e5e7eb; border-radius: 0 0 12px 12px; background: #fff; }
+				.iato-rq-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px; border-bottom: 1px solid #e5e7eb; gap: 16px; transition: background 0.15s; }
+				.iato-rq-item:hover { background: #f9fafb; }
 				.iato-rq-item:last-child { border-bottom: none; }
 				.iato-rq-item-info { flex: 1; min-width: 0; }
-				.iato-rq-item-info .page-url { font-weight: 600; color: #1d2327; margin-bottom: 4px; }
-				.iato-rq-item-info .current { color: #50575e; font-size: 13px; }
-				.iato-rq-item-info .proposed { color: #1d2327; font-size: 13px; margin-top: 4px; padding: 8px; background: #f0f6fc; border-radius: 3px; }
-				.iato-rq-item-info .confidence { display: inline-block; background: #dba617; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-top: 6px; }
+				.iato-rq-item-info .page-url { font-weight: 600; color: #111827; margin-bottom: 4px; }
+				.iato-rq-item-info .current { color: #6b7280; font-size: 13px; }
+				.iato-rq-item-info .proposed { color: #111827; font-size: 13px; margin-top: 4px; padding: 8px; background: rgba(90,137,244,0.08); border-radius: 8px; }
+				.iato-rq-item-info .confidence { display: inline-flex; align-items: center; background: rgba(237,161,69,0.12); color: #eda145; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 600; margin-top: 6px; }
 				.iato-rq-item-actions { display: flex; gap: 4px; flex-shrink: 0; align-items: flex-start; }
-				.iato-rq-item-actions .button-small { font-size: 12px; }
-				.iato-rq-empty { text-align: center; padding: 60px 20px; color: #50575e; }
-				.iato-rq-empty h2 { color: #1d2327; }
-				.iato-rq-upsell { background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 24px; margin-bottom: 20px; text-align: center; }
-				.iato-rq-upsell h3 { margin-top: 0; }
-				.iato-rq-upsell .cta { display: inline-block; padding: 10px 20px; background: #2271b1; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 600; }
-				.iato-rq-upsell .cta:hover { background: #135e96; color: #fff; }
-				.iato-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #c3c4c7; border-top-color: #2271b1; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; }
+				.iato-rq-item-actions .button-small { font-size: 12px; border-radius: 8px; transition: all 0.2s; }
+				.iato-rq-item-actions .button-primary { background: #4b72cc; border-color: #4b72cc; box-shadow: 0 0 24px rgba(90,137,244,0.18); }
+				.iato-rq-item-actions .button-primary:hover { background: #3f64b8; border-color: #3f64b8; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+				.iato-rq-empty { text-align: center; padding: 60px 20px; color: #6b7280; }
+				.iato-rq-empty h2 { color: #111827; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+				.iato-rq-upsell { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin-bottom: 20px; text-align: center; }
+				.iato-rq-upsell h3 { margin-top: 0; color: #111827; }
+				.iato-rq-upsell .cta { display: inline-block; padding: 8px 20px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13.5px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
+				.iato-rq-upsell .cta:hover { background: #3f64b8; color: #fff; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+				.iato-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e5e7eb; border-top-color: #5a89f4; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; }
 				@keyframes iato-spin { to { transform: rotate(360deg); } }
-				.iato-rq-loading { text-align: center; padding: 40px; }
+				.iato-rq-loading { text-align: center; padding: 40px; color: #6b7280; }
 			</style>
 
 			<div class="iato-rq">
@@ -133,11 +140,6 @@ class IATO_MCP_Review_Queue {
 						<div class="iato-rq-filters">
 							<select id="rq-filter-type">
 								<option value=""><?php esc_html_e( 'All Types', 'iato-mcp' ); ?></option>
-								<option value="title"><?php esc_html_e( 'Title', 'iato-mcp' ); ?></option>
-								<option value="meta_description"><?php esc_html_e( 'Meta Description', 'iato-mcp' ); ?></option>
-								<option value="alt_text"><?php esc_html_e( 'Alt Text', 'iato-mcp' ); ?></option>
-								<option value="canonical"><?php esc_html_e( 'Canonical', 'iato-mcp' ); ?></option>
-								<option value="h1"><?php esc_html_e( 'H1', 'iato-mcp' ); ?></option>
 							</select>
 						</div>
 						<div class="iato-rq-bulk">
@@ -220,8 +222,35 @@ class IATO_MCP_Review_Queue {
 							}
 							container.innerHTML = html;
 
+							// Build filter options dynamically from item types.
+							buildFilterOptions(items);
+
 							// Apply type filter.
 							applyFilter();
+						}
+
+						function buildFilterOptions(items) {
+							const types = new Set();
+							items.forEach(item => {
+								types.add(item.issue_type || item.field || 'other');
+							});
+							const select = document.getElementById('rq-filter-type');
+							const current = select.value;
+							select.length = 1; // Keep "All Types" only.
+							const labels = {
+								title: 'Title', meta_description: 'Meta Description',
+								alt_text: 'Alt Text', canonical: 'Canonical', h1: 'H1',
+								content: 'Content', navigation: 'Navigation', menu: 'Navigation',
+								taxonomy: 'Taxonomy', redirect: 'Redirects', link: 'Links',
+								structure: 'Structure'
+							};
+							Array.from(types).sort().forEach(type => {
+								const opt = document.createElement('option');
+								opt.value = type;
+								opt.textContent = labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+								select.appendChild(opt);
+							});
+							if (current) select.value = current;
 						}
 
 						function applyFilter() {

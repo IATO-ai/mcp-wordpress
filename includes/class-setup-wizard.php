@@ -86,37 +86,44 @@ class IATO_MCP_Setup_Wizard {
 		$api_key       = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		$nonce         = wp_create_nonce( 'iato_mcp_wizard' );
 
+		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
+
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'IATO Autopilot Setup', 'iato-mcp' ); ?></h1>
 
 			<style>
-				.iato-wizard { max-width: 680px; margin: 30px auto; }
+				.iato-wizard { max-width: 680px; margin: 30px auto; font-family: 'DM Sans', system-ui, sans-serif; }
 				.iato-wizard-steps { display: flex; gap: 8px; margin-bottom: 30px; }
-				.iato-wizard-steps .step { flex: 1; padding: 12px; text-align: center; background: #f0f0f1; border-radius: 4px; font-size: 13px; color: #50575e; }
-				.iato-wizard-steps .step.active { background: #2271b1; color: #fff; font-weight: 600; }
-				.iato-wizard-steps .step.done { background: #00a32a; color: #fff; }
-				.iato-wizard-card { background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 24px; margin-bottom: 20px; }
-				.iato-wizard-card h2 { margin-top: 0; }
-				.iato-wizard-card p { color: #50575e; }
-				.iato-wizard-card label { display: block; margin-bottom: 8px; font-weight: 600; }
+				.iato-wizard-steps .step { flex: 1; padding: 12px; text-align: center; background: #f3f4f6; border-radius: 8px; font-size: 13px; color: #6b7280; transition: all 0.2s; }
+				.iato-wizard-steps .step.active { background: #5a89f4; color: #fff; font-weight: 600; }
+				.iato-wizard-steps .step.done { background: #38d68e; color: #fff; }
+				.iato-wizard-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin-bottom: 20px; transition: background 0.2s, box-shadow 0.2s; }
+				.iato-wizard-card h2 { margin-top: 0; color: #111827; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+				.iato-wizard-card p { color: #6b7280; }
+				.iato-wizard-card label { display: block; margin-bottom: 8px; font-weight: 600; color: #111827; }
 				.iato-wizard-card input[type="text"],
 				.iato-wizard-card input[type="password"],
-				.iato-wizard-card select { width: 100%; padding: 8px 12px; border: 1px solid #8c8f94; border-radius: 4px; font-size: 14px; }
+				.iato-wizard-card select { width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; font-family: 'DM Sans', system-ui, sans-serif; transition: border-color 0.15s, box-shadow 0.15s; }
+				.iato-wizard-card input[type="text"]:focus,
+				.iato-wizard-card input[type="password"]:focus,
+				.iato-wizard-card select:focus { border-color: #5a89f4; box-shadow: 0 0 0 2px rgba(90,137,244,0.1); outline: none; }
 				.iato-wizard-card .field-group { margin-bottom: 16px; }
 				.iato-wizard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
-				.iato-wizard-actions .skip { color: #50575e; text-decoration: none; font-size: 13px; cursor: pointer; }
-				.iato-wizard-actions .skip:hover { color: #2271b1; }
-				.iato-notice { padding: 12px 16px; border-left: 4px solid #dba617; background: #fcf9e8; margin-bottom: 16px; border-radius: 2px; }
-				.iato-notice.success { border-color: #00a32a; background: #edfaef; }
-				.iato-notice.error { border-color: #d63638; background: #fcf0f1; }
-				.iato-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #c3c4c7; border-top-color: #2271b1; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; margin-left: 8px; }
+				.iato-wizard-actions .skip { color: #6b7280; text-decoration: none; font-size: 13px; cursor: pointer; transition: color 0.2s; }
+				.iato-wizard-actions .skip:hover { color: #5a89f4; }
+				.iato-wizard-actions .button-primary { background: #4b72cc; border-color: #4b72cc; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
+				.iato-wizard-actions .button-primary:hover { background: #3f64b8; border-color: #3f64b8; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+				.iato-notice { padding: 12px 16px; border-left: 4px solid #eda145; background: rgba(237,161,69,0.12); margin-bottom: 16px; border-radius: 8px; }
+				.iato-notice.success { border-color: #38d68e; background: rgba(56,214,142,0.12); }
+				.iato-notice.error { border-color: #ef4444; background: rgba(239,68,68,0.12); }
+				.iato-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #5a89f4; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; margin-left: 8px; }
 				@keyframes iato-spin { to { transform: rotate(360deg); } }
 				.iato-completion { text-align: center; padding: 40px 20px; }
 				.iato-completion .checkmark { font-size: 48px; margin-bottom: 16px; }
-				.iato-completion h2 { color: #00a32a; }
-				.iato-cta { display: inline-block; padding: 12px 24px; background: #2271b1; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 16px; }
-				.iato-cta:hover { background: #135e96; color: #fff; }
+				.iato-completion h2 { color: #38d68e; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+				.iato-cta { display: inline-block; padding: 8px 20px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13.5px; margin-top: 16px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
+				.iato-cta:hover { background: #3f64b8; color: #fff; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
 			</style>
 
 			<div class="iato-wizard">
@@ -133,7 +140,15 @@ class IATO_MCP_Setup_Wizard {
 				<!-- Step 1: Connect to IATO -->
 				<div class="iato-wizard-card" id="step-1" style="<?php echo $current_step !== 1 ? 'display:none' : ''; ?>">
 					<h2><?php esc_html_e( 'Connect to IATO', 'iato-mcp' ); ?></h2>
-					<p><?php esc_html_e( 'Enter your IATO API key to connect this WordPress site to the IATO platform.', 'iato-mcp' ); ?></p>
+					<p>
+					<?php
+					printf(
+						/* translators: %s: link to IATO account page */
+						esc_html__( 'Enter your IATO API key to connect this WordPress site to the IATO platform. Visit the %s.', 'iato-mcp' ),
+						'<a href="https://iato.ai/#/account" target="_blank">' . esc_html__( 'My Account page', 'iato-mcp' ) . '</a>'
+					);
+					?>
+				</p>
 
 					<div class="field-group">
 						<label for="iato-api-key"><?php esc_html_e( 'IATO API Key', 'iato-mcp' ); ?></label>
@@ -204,13 +219,28 @@ class IATO_MCP_Setup_Wizard {
 					</div>
 
 					<div class="field-group">
-						<label for="schedule-time"><?php esc_html_e( 'Preferred Time (UTC)', 'iato-mcp' ); ?></label>
+						<label for="schedule-time"><?php esc_html_e( 'Preferred Time', 'iato-mcp' ); ?></label>
 						<select id="schedule-time">
 							<?php for ( $h = 0; $h < 24; $h++ ) : ?>
 								<option value="<?php echo esc_attr( sprintf( '%02d:00', $h ) ); ?>" <?php echo 3 === $h ? 'selected' : ''; ?>>
-									<?php echo esc_html( sprintf( '%02d:00 UTC', $h ) ); ?>
+									<?php echo esc_html( sprintf( '%02d:00', $h ) ); ?>
 								</option>
 							<?php endfor; ?>
+						</select>
+					</div>
+
+					<div class="field-group">
+						<label for="schedule-timezone"><?php esc_html_e( 'Timezone', 'iato-mcp' ); ?></label>
+						<select id="schedule-timezone">
+							<?php
+							$site_tz = wp_timezone_string();
+							$zones   = timezone_identifiers_list();
+							foreach ( $zones as $tz ) :
+							?>
+								<option value="<?php echo esc_attr( $tz ); ?>" <?php selected( $tz, $site_tz ); ?>>
+									<?php echo esc_html( $tz ); ?>
+								</option>
+							<?php endforeach; ?>
 						</select>
 					</div>
 
@@ -259,6 +289,9 @@ class IATO_MCP_Setup_Wizard {
 				let workspaceId = <?php echo wp_json_encode( $workspace_id ); ?>;
 
 				function showMessage(msg, type) {
+					if (typeof msg === 'object' && msg !== null) {
+						msg = msg.message || msg.error || JSON.stringify(msg);
+					}
 					const el = document.getElementById('iato-wizard-message');
 					el.innerHTML = '<div class="iato-notice ' + type + '">' + msg + '</div>';
 					if (type !== 'error') setTimeout(() => el.innerHTML = '', 5000);
@@ -275,15 +308,16 @@ class IATO_MCP_Setup_Wizard {
 				}
 
 				function post(action, data, btn) {
-					if (btn) { btn.disabled = true; btn.innerHTML += '<span class="iato-spinner"></span>'; }
+					let originalHTML;
+					if (btn) { originalHTML = btn.innerHTML; btn.disabled = true; btn.innerHTML += '<span class="iato-spinner"></span>'; }
 					return fetch(ajaxurl, {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 						body: new URLSearchParams(Object.assign({ action, _wpnonce: nonce }, data))
 					})
 					.then(r => r.json())
-					.then(r => { if (btn) { btn.disabled = false; btn.textContent = btn.textContent; } return r; })
-					.catch(e => { if (btn) { btn.disabled = false; } showMessage(e.message, 'error'); throw e; });
+					.then(r => { if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; } return r; })
+					.catch(e => { if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; } showMessage(e.message, 'error'); throw e; });
 				}
 
 				// Step 1: Connect
@@ -344,6 +378,7 @@ class IATO_MCP_Setup_Wizard {
 						workspace_id: workspaceId,
 						frequency: document.getElementById('schedule-frequency').value,
 						time: document.getElementById('schedule-time').value,
+						timezone: document.getElementById('schedule-timezone').value,
 						site_url: <?php echo wp_json_encode( site_url() ); ?>,
 					}, this).then(r => {
 						if (r.success) { showMessage('Schedule created!', 'success'); goToStep(4); }
@@ -495,13 +530,17 @@ class IATO_MCP_Setup_Wizard {
 		$workspace_id = sanitize_text_field( wp_unslash( $_POST['workspace_id'] ?? '' ) );
 		$frequency    = sanitize_text_field( wp_unslash( $_POST['frequency'] ?? 'weekly' ) );
 		$time         = sanitize_text_field( wp_unslash( $_POST['time'] ?? '03:00' ) );
+		$timezone     = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
 		$site_url     = esc_url_raw( wp_unslash( $_POST['site_url'] ?? site_url() ) );
+		$site_name    = sanitize_text_field( get_bloginfo( 'name' ) );
 
 		$result = IATO_MCP_IATO_Client::create_schedule( [
-			'workspace_id' => $workspace_id,
-			'frequency'    => $frequency,
-			'time'         => $time,
-			'url'          => $site_url,
+			'workspace_id'  => $workspace_id,
+			'name'          => $site_name . ' — ' . $frequency . ' crawl',
+			'frequency'     => $frequency,
+			'schedule_time' => $time,
+			'timezone'      => $timezone,
+			'url'           => $site_url,
 		] );
 
 		if ( is_wp_error( $result ) ) {
