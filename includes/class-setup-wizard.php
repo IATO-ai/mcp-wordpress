@@ -484,11 +484,21 @@ class IATO_MCP_Setup_Wizard {
 			wp_send_json_error( 'Workspace ID required.' );
 		}
 
+		// Convert checkbox booleans to IATO rules format.
+		$rules = [];
+		$issue_types = [ 'title', 'meta_description', 'alt_text', 'canonical' ];
+		foreach ( $issue_types as $type ) {
+			$rules[ $type ] = [
+				'action' => ! empty( $auto_fix_types[ $type ] ) ? 'auto_fix' : 'needs_review',
+			];
+		}
+
 		$policy = [
-			'is_active'      => true,
-			'auto_fix_types' => $auto_fix_types,
-			'tone'           => $tone,
-			'brand_context'  => $brand_context,
+			'is_active'        => true,
+			'rules'            => $rules,
+			'ai_tone'          => $tone,
+			'ai_brand_context' => $brand_context,
+			'cms_integration'  => 'wordpress',
 		];
 
 		$result = IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, $policy );
