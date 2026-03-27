@@ -28,6 +28,7 @@ class IATO_MCP_Setup_Wizard {
 		add_action( 'wp_ajax_iato_mcp_wizard_crawl', [ __CLASS__, 'ajax_crawl' ] );
 		add_action( 'wp_ajax_iato_mcp_wizard_skip_policy', [ __CLASS__, 'ajax_skip_policy' ] );
 		add_action( 'wp_ajax_iato_mcp_wizard_complete', [ __CLASS__, 'ajax_complete' ] );
+		add_action( 'wp_ajax_iato_mcp_debug_policy', [ __CLASS__, 'ajax_debug_policy' ] );
 	}
 
 	/**
@@ -607,5 +608,62 @@ class IATO_MCP_Setup_Wizard {
 		delete_option( 'iato_mcp_show_wizard' );
 
 		wp_send_json_success();
+	}
+
+	/**
+	 * DEBUG: Trace the exact IATO API request/response for policy update.
+	 * TEMPORARY — remove after debugging.
+	 */
+	public static function ajax_debug_policy(): void {
+		check_ajax_referer( 'iato_mcp_wizard', '_wpnonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( 'Unauthorized.' );
+		}
+
+		$workspace_id   = sanitize_text_field( wp_unslash( $_POST['workspace_id'] ?? '' ) );
+		$auto_fix_types = json_decode( wp_unslash( $_POST['auto_fix_types'] ?? '{}' ), true );
+		$tone           = sanitize_text_field( wp_unslash( $_POST['tone'] ?? 'professional' ) );
+		$brand_context  = sanitize_textarea_field( wp_unslash( $_POST['brand_context'] ?? '' ) );
+
+		$rules = [];
+		$issue_types = [ 'title', 'meta_description', 'alt_text', 'canonical' ];
+		foreach ( $issue_types as $type ) {
+			$rules[ $type ] = [
+				'action' => ! empty( $auto_fix_types[ $type ] ) ? 'auto_fix' : 'needs_review',
+			];
+		}
+
+		$policy = [
+			'is_active'        => true,
+			'rules'            => $rules,
+			'ai_tone'          => $tone,
+			'ai_brand_context' => $brand_context,
+			'cms_integration'  => 'wordpress',
+		];
+
+		$api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
+		$url     = 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy';
+		$body    = wp_json_encode( $policy );
+
+		$response = wp_remote_post( $url, [
+			'timeout' => 30,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $api_key,
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+			],
+			'body' => $body,
+		] );
+
+		$debug = [
+			'request_url'     => $url,
+			'request_body'    => $policy,
+			'request_body_json' => $body,
+			'response_code'   => is_wp_error( $response ) ? 'WP_ERROR' : wp_remote_retrieve_response_code( $response ),
+			'response_body'   => is_wp_error( $response ) ? $response->get_error_message() : wp_remote_retrieve_body( $response ),
+			'response_headers'=> is_wp_error( $response ) ? null : wp_remote_retrieve_headers( $response )->getAll(),
+		];
+
+		wp_send_json_success( $debug );
 	}
 }
