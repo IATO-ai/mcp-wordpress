@@ -88,7 +88,7 @@ class IATO_MCP_Review_Queue {
 
 			<div class="iato-rq">
 
-				<?php if ( empty( $api_key ) || empty( $workspace_id ) ) : ?>
+				<?php if ( empty( $api_key ) ) : ?>
 					<!-- Upsell for unconnected users -->
 					<div class="iato-rq-upsell">
 						<h3><?php esc_html_e( 'The IATO MCP plugin is free and works with any LLM.', 'iato-mcp' ); ?></h3>
@@ -99,6 +99,16 @@ class IATO_MCP_Review_Queue {
 						<p style="margin-top:12px;font-size:13px">
 							<?php esc_html_e( 'Already have an account?', 'iato-mcp' ); ?>
 							<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp' ) ); ?>"><?php esc_html_e( 'Connect IATO in Settings', 'iato-mcp' ); ?></a>
+						</p>
+					</div>
+				<?php elseif ( empty( $workspace_id ) ) : ?>
+					<!-- API key present but cannot connect -->
+					<div class="notice notice-error" style="margin: 16px 0; padding: 12px 16px;">
+						<p><strong><?php esc_html_e( 'Unable to connect to IATO.', 'iato-mcp' ); ?></strong></p>
+						<p><?php esc_html_e( 'Your IATO API key could not be verified. It may be expired, revoked, or invalid. Please re-enter your key in Settings.', 'iato-mcp' ); ?></p>
+						<p>
+							<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp' ) ); ?>" class="button"><?php esc_html_e( 'Check Settings', 'iato-mcp' ); ?></a>
+							<a href="https://iato.ai" target="_blank" style="margin-left: 8px;"><?php esc_html_e( 'Get a new API key at iato.ai', 'iato-mcp' ); ?> &rarr;</a>
 						</p>
 					</div>
 				<?php else : ?>
@@ -390,4 +400,5 @@ class IATO_MCP_Review_Queue {
 
 		wp_send_json_success( $result );
 	}
+
 }
