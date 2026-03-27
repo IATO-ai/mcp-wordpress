@@ -502,53 +502,78 @@ class IATO_MCP_Setup_Wizard {
 			'cms_integration'  => 'wordpress',
 		];
 
-		// DEBUG: Trace the raw IATO API call. Remove after debugging.
-		$api_key  = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
-		$api_url  = 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy';
-		$api_body = wp_json_encode( $policy );
+		// DEBUG: Try multiple endpoint/method combos. Remove after debugging.
+		$api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
+		$headers = [
+			'Authorization' => 'Bearer ' . $api_key,
+			'Content-Type'  => 'application/json',
+			'Accept'        => 'application/json',
+		];
 
-		$raw_response = wp_remote_post( $api_url, [
-			'timeout' => 30,
-			'headers' => [
-				'Authorization' => 'Bearer ' . $api_key,
-				'Content-Type'  => 'application/json',
-				'Accept'        => 'application/json',
+		// Include workspace_id in body for variants that need it.
+		$policy_with_ws = array_merge( $policy, [ 'workspace_id' => (int) $workspace_id ] );
+
+		$attempts = [
+			// 1. POST /workspaces/{id}/governance-policy (current)
+			[
+				'method' => 'POST',
+				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy',
+				'body'   => $policy,
 			],
-			'body' => $api_body,
-		] );
+			// 2. PUT /workspaces/{id}/governance-policy
+			[
+				'method' => 'PUT',
+				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy',
+				'body'   => $policy,
+			],
+			// 3. POST /governance-policy with workspace_id in body
+			[
+				'method' => 'POST',
+				'url'    => 'https://iato.ai/api/governance-policy',
+				'body'   => $policy_with_ws,
+			],
+			// 4. PUT /governance-policy with workspace_id in body
+			[
+				'method' => 'PUT',
+				'url'    => 'https://iato.ai/api/governance-policy',
+				'body'   => $policy_with_ws,
+			],
+			// 5. PATCH /workspaces/{id}/governance-policy
+			[
+				'method' => 'PATCH',
+				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy',
+				'body'   => $policy,
+			],
+		];
 
-		if ( is_wp_error( $raw_response ) ) {
-			wp_send_json_error( [
-				'debug'        => true,
-				'request_url'  => $api_url,
-				'request_body' => $policy,
-				'wp_error'     => $raw_response->get_error_message(),
+		$results = [];
+		foreach ( $attempts as $i => $attempt ) {
+			$raw = wp_remote_request( $attempt['url'], [
+				'method'  => $attempt['method'],
+				'timeout' => 15,
+				'headers' => $headers,
+				'body'    => wp_json_encode( $attempt['body'] ),
 			] );
+
+			$results[] = [
+				'attempt'       => $i + 1,
+				'method'        => $attempt['method'],
+				'url'           => $attempt['url'],
+				'body_sent'     => $attempt['body'],
+				'response_code' => is_wp_error( $raw ) ? 'WP_ERROR' : wp_remote_retrieve_response_code( $raw ),
+				'response_body' => is_wp_error( $raw ) ? $raw->get_error_message() : wp_remote_retrieve_body( $raw ),
+			];
+
+			// If we got a 2xx, stop trying.
+			if ( ! is_wp_error( $raw ) ) {
+				$code = wp_remote_retrieve_response_code( $raw );
+				if ( $code >= 200 && $code < 300 ) {
+					break;
+				}
+			}
 		}
 
-		$status_code   = wp_remote_retrieve_response_code( $raw_response );
-		$response_body = wp_remote_retrieve_body( $raw_response );
-
-		if ( $status_code < 200 || $status_code >= 300 ) {
-			wp_send_json_error( [
-				'debug'         => true,
-				'request_url'   => $api_url,
-				'request_body'  => $policy,
-				'response_code' => $status_code,
-				'response_body' => $response_body,
-			] );
-		}
-
-		$result = json_decode( $response_body, true );
-		if ( ! is_array( $result ) ) {
-			wp_send_json_error( [
-				'debug'         => true,
-				'request_url'   => $api_url,
-				'response_code' => $status_code,
-				'response_body' => $response_body,
-				'error'         => 'Invalid JSON from IATO API',
-			] );
-		}
+		wp_send_json_error( [ 'debug_attempts' => $results ] );
 
 		update_option( 'iato_mcp_wizard_step', 3 );
 		wp_send_json_success( [ 'step' => 3 ] );
