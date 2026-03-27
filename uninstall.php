@@ -24,6 +24,7 @@ delete_option( 'iato_mcp_setup_complete' );
 delete_option( 'iato_mcp_wizard_step' );
 delete_option( 'iato_mcp_redirects' );
 delete_option( 'iato_mcp_widget_sections' );
+delete_option( 'iato_mcp_api_key_valid' );
 
 // Transients.
 delete_transient( 'iato_mcp_oauth_pkce' );

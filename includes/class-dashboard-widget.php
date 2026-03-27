@@ -43,9 +43,10 @@ class IATO_MCP_Dashboard_Widget {
 	 */
 	public static function render(): void {
 		$api_key      = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
-		$workspace_id = ! empty( $api_key ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
+		$api_valid    = (bool) get_option( 'iato_mcp_api_key_valid', false );
+		$workspace_id = ( ! empty( $api_key ) && $api_valid ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
 
-		if ( empty( $api_key ) || empty( $workspace_id ) ) {
+		if ( empty( $api_key ) || ! $api_valid || empty( $workspace_id ) ) {
 			self::render_empty_state();
 			return;
 		}

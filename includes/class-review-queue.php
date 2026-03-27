@@ -20,7 +20,6 @@ class IATO_MCP_Review_Queue {
 		// AJAX handlers.
 		add_action( 'wp_ajax_iato_mcp_review_action', [ __CLASS__, 'ajax_action' ] );
 		add_action( 'wp_ajax_iato_mcp_review_bulk', [ __CLASS__, 'ajax_bulk' ] );
-		add_action( 'wp_ajax_iato_mcp_debug', [ __CLASS__, 'ajax_debug' ] );
 	}
 
 	/**
@@ -47,7 +46,8 @@ class IATO_MCP_Review_Queue {
 		}
 
 		$api_key      = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
-		$workspace_id = ! empty( $api_key ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
+		$api_valid    = (bool) get_option( 'iato_mcp_api_key_valid', false );
+		$workspace_id = ( ! empty( $api_key ) && $api_valid ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
 		$nonce        = wp_create_nonce( 'iato_mcp_review' );
 
 		?>
@@ -102,35 +102,25 @@ class IATO_MCP_Review_Queue {
 							<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp' ) ); ?>"><?php esc_html_e( 'Connect IATO in Settings', 'iato-mcp' ); ?></a>
 						</p>
 					</div>
-				<?php elseif ( empty( $workspace_id ) ) : ?>
-					<!-- API key present but cannot connect -->
+				<?php elseif ( ! $api_valid ) : ?>
+					<!-- API key present but validation failed -->
 					<div class="notice notice-error" style="margin: 16px 0; padding: 12px 16px;">
-						<p><strong><?php esc_html_e( 'Unable to connect to IATO.', 'iato-mcp' ); ?></strong></p>
-						<p><?php esc_html_e( 'Your IATO API key could not be verified. It may be expired, revoked, or invalid. Please re-enter your key in Settings.', 'iato-mcp' ); ?></p>
+						<p><strong><?php esc_html_e( 'IATO API key is invalid.', 'iato-mcp' ); ?></strong></p>
+						<p><?php esc_html_e( 'Your API key failed validation when it was saved. Please re-enter or regenerate your key in Settings.', 'iato-mcp' ); ?></p>
 						<p>
-							<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp' ) ); ?>" class="button"><?php esc_html_e( 'Check Settings', 'iato-mcp' ); ?></a>
+							<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp' ) ); ?>" class="button"><?php esc_html_e( 'Go to Settings', 'iato-mcp' ); ?></a>
 							<a href="https://iato.ai" target="_blank" style="margin-left: 8px;"><?php esc_html_e( 'Get a new API key at iato.ai', 'iato-mcp' ); ?> &rarr;</a>
 						</p>
 					</div>
-					<?php if ( current_user_can( 'manage_options' ) ) : ?>
-					<script>
-					(function(){
-						var ajaxurl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
-						fetch(ajaxurl + '?action=iato_mcp_debug')
-							.then(function(r){ return r.json(); })
-							.then(function(d){
-								console.log('IATO Debug:', JSON.stringify(d, null, 2));
-								var el = document.getElementById('iato-debug-output');
-								if(el) el.textContent = JSON.stringify(d, null, 2);
-							})
-							.catch(function(e){ console.error('Debug fetch failed:', e); });
-					})();
-					</script>
-					<details style="margin-top:12px;">
-						<summary style="cursor:pointer;font-size:12px;color:#646970;">Diagnostic details (admin only)</summary>
-						<pre id="iato-debug-output" style="background:#f6f7f7;padding:12px;font-size:11px;overflow:auto;max-height:300px;">Loading...</pre>
-					</details>
-					<?php endif; ?>
+				<?php elseif ( empty( $workspace_id ) ) : ?>
+					<!-- API key valid but no workspace found -->
+					<div class="notice notice-warning" style="margin: 16px 0; padding: 12px 16px;">
+						<p><strong><?php esc_html_e( 'No IATO workspace found.', 'iato-mcp' ); ?></strong></p>
+						<p><?php esc_html_e( 'Your API key is valid but no workspaces were returned. Create a workspace at iato.ai first, then reload this page.', 'iato-mcp' ); ?></p>
+						<p>
+							<a href="https://iato.ai" target="_blank" class="button"><?php esc_html_e( 'Go to iato.ai', 'iato-mcp' ); ?> &rarr;</a>
+						</p>
+					</div>
 				<?php else : ?>
 
 					<div class="iato-rq-notice">
@@ -419,86 +409,6 @@ class IATO_MCP_Review_Queue {
 		}
 
 		wp_send_json_success( $result );
-	}
-
-	/**
-	 * Temporary diagnostic endpoint — remove after debugging.
-	 */
-	public static function ajax_debug(): void {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( 'Unauthorized.' );
-		}
-
-		$diag = [];
-
-		// 1. Option values.
-		$api_key      = get_option( 'iato_mcp_api_key', '' );
-		$workspace_id = get_option( 'iato_mcp_workspace_id', '' );
-		$diag['api_key_length']      = strlen( $api_key );
-		$diag['api_key_first8']      = substr( $api_key, 0, 8 );
-		$diag['workspace_id_stored'] = $workspace_id;
-
-		if ( empty( $api_key ) ) {
-			$diag['error'] = 'No API key in options';
-			wp_send_json_success( $diag );
-		}
-
-		// 2. Raw HTTP response (bypassing IATO_Client class).
-		$raw = wp_remote_get( 'https://iato.ai/api/v1/workspaces', [
-			'timeout' => 30,
-			'headers' => [
-				'Authorization' => 'Bearer ' . $api_key,
-				'Accept'        => 'application/json',
-			],
-		] );
-
-		if ( is_wp_error( $raw ) ) {
-			$diag['http_error'] = $raw->get_error_message();
-			wp_send_json_success( $diag );
-		}
-
-		$diag['http_status'] = wp_remote_retrieve_response_code( $raw );
-		$raw_body            = wp_remote_retrieve_body( $raw );
-		$diag['raw_body']    = substr( $raw_body, 0, 2000 );
-
-		// 3. Parsed response.
-		$parsed = json_decode( $raw_body, true );
-		$diag['json_valid']     = is_array( $parsed );
-		$diag['top_level_keys'] = is_array( $parsed ) ? array_keys( $parsed ) : 'not_array';
-		$diag['top_level_type'] = gettype( $parsed );
-
-		if ( is_array( $parsed ) ) {
-			// 4. Fallback chain trace.
-			if ( isset( $parsed['workspaces'] ) ) {
-				$diag['fallback_branch'] = 'workspaces';
-				$ws_list = $parsed['workspaces'];
-			} elseif ( isset( $parsed['data'] ) ) {
-				$diag['fallback_branch'] = 'data';
-				$ws_list = $parsed['data'];
-			} else {
-				$diag['fallback_branch'] = 'flat_array';
-				$ws_list = $parsed;
-			}
-
-			$diag['ws_list_type']  = gettype( $ws_list );
-			$diag['ws_list_count'] = is_array( $ws_list ) ? count( $ws_list ) : 'not_array';
-			$diag['ws_list_has_0'] = isset( $ws_list[0] );
-
-			// 5. First workspace.
-			if ( isset( $ws_list[0] ) && is_array( $ws_list[0] ) ) {
-				$diag['first_ws_keys'] = array_keys( $ws_list[0] );
-				$diag['first_ws_id']   = $ws_list[0]['id'] ?? '(no id key)';
-				$diag['first_ws_name'] = $ws_list[0]['name'] ?? '(no name key)';
-			}
-		}
-
-		// 6. Test resolve_workspace_id() with fresh state.
-		delete_option( 'iato_mcp_workspace_id' );
-		$resolved = IATO_MCP_IATO_Client::resolve_workspace_id();
-		$diag['resolved_workspace_id'] = $resolved;
-		$diag['resolved_empty']        = empty( $resolved );
-
-		wp_send_json_success( $diag );
 	}
 
 }
