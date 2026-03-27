@@ -155,6 +155,20 @@ class IATO_MCP_Settings {
 			'sanitize_callback' => [ self::class, 'sanitize_tools' ],
 			'default'           => [],
 		] );
+
+		// --- Autopilot Enabled ---
+		register_setting( self::OPTION_GROUP, 'iato_mcp_autopilot_enabled', [
+			'type'              => 'boolean',
+			'sanitize_callback' => [ self::class, 'sanitize_autopilot_enabled' ],
+			'default'           => false,
+		] );
+
+		// --- Governance Policy ---
+		register_setting( self::OPTION_GROUP, 'iato_mcp_governance_policy', [
+			'type'              => 'array',
+			'sanitize_callback' => [ self::class, 'sanitize_governance_policy' ],
+			'default'           => [],
+		] );
 	}
 
 	// ── Sanitize Callbacks ───────────────────────────────────────────────────────
@@ -225,6 +239,79 @@ class IATO_MCP_Settings {
 		return array_values( array_intersect( array_map( 'sanitize_text_field', $value ), self::TOOL_NAMES ) );
 	}
 
+	/**
+	 * Sanitize autopilot enabled toggle and sync to IATO API.
+	 */
+	public static function sanitize_autopilot_enabled( $value ): bool {
+		$enabled      = (bool) $value;
+		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+
+		if ( $workspace_id ) {
+			$result = IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, [
+				'is_active' => $enabled,
+			] );
+			if ( is_wp_error( $result ) ) {
+				add_settings_error(
+					'iato_mcp_autopilot_enabled',
+					'iato_mcp_autopilot_sync_error',
+					__( 'Autopilot setting saved locally but failed to sync with IATO.', 'iato-mcp' ),
+					'warning'
+				);
+			} else {
+				update_option( 'iato_mcp_policy_synced_at', current_time( 'mysql' ) );
+			}
+		}
+
+		return $enabled;
+	}
+
+	/** Allowed AI tone values. */
+	private const ALLOWED_TONES = [ 'professional', 'casual', 'technical', 'friendly' ];
+
+	/** Allowed auto-fix rule types. */
+	private const ALLOWED_RULE_TYPES = [ 'title', 'meta_description', 'alt_text', 'canonical' ];
+
+	/**
+	 * Sanitize governance policy array and sync to IATO API.
+	 */
+	public static function sanitize_governance_policy( $value ): array {
+		if ( ! is_array( $value ) ) {
+			return [];
+		}
+
+		// Build sanitized rules.
+		$rules = [];
+		$raw_rules = $value['rules'] ?? [];
+		foreach ( self::ALLOWED_RULE_TYPES as $type ) {
+			$rules[ $type ] = [
+				'action' => ! empty( $raw_rules[ $type ] ) ? 'auto_fix' : 'needs_review',
+			];
+		}
+
+		$tone = sanitize_text_field( $value['ai_tone'] ?? 'professional' );
+		if ( ! in_array( $tone, self::ALLOWED_TONES, true ) ) {
+			$tone = 'professional';
+		}
+
+		$policy = [
+			'rules'            => $rules,
+			'ai_tone'          => $tone,
+			'ai_brand_context' => sanitize_textarea_field( $value['ai_brand_context'] ?? '' ),
+			'cms_integration'  => 'wordpress',
+		];
+
+		// Sync to IATO API (best-effort).
+		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		if ( $workspace_id ) {
+			$result = IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, $policy );
+			if ( ! is_wp_error( $result ) ) {
+				update_option( 'iato_mcp_policy_synced_at', current_time( 'mysql' ) );
+			}
+		}
+
+		return $policy;
+	}
+
 	// ── Settings Page ────────────────────────────────────────────────────────────
 
 	public static function render_page(): void {
@@ -238,6 +325,36 @@ class IATO_MCP_Settings {
 		$crawl_id     = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
 		$enabled      = get_option( 'iato_mcp_tools', [] );
 		$all_on       = empty( $enabled );
+
+		// Autopilot & Governance Policy.
+		$api_valid          = (bool) get_option( 'iato_mcp_api_key_valid', false );
+		$autopilot_enabled  = (bool) get_option( 'iato_mcp_autopilot_enabled', false );
+		$governance_policy  = get_option( 'iato_mcp_governance_policy', [] );
+		$workspace_id       = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$policy_synced_at   = get_option( 'iato_mcp_policy_synced_at', '' );
+
+		// Fetch from IATO API on first load if local cache is empty.
+		if ( empty( $governance_policy ) && $iato_api_key && $api_valid && $workspace_id ) {
+			$remote_policy = IATO_MCP_IATO_Client::get_governance_policy( $workspace_id );
+			if ( ! is_wp_error( $remote_policy ) && is_array( $remote_policy ) ) {
+				$governance_policy = $remote_policy;
+				$autopilot_enabled = ! empty( $remote_policy['is_active'] );
+				update_option( 'iato_mcp_governance_policy', $governance_policy );
+				update_option( 'iato_mcp_autopilot_enabled', $autopilot_enabled );
+				update_option( 'iato_mcp_policy_synced_at', current_time( 'mysql' ) );
+				$policy_synced_at = get_option( 'iato_mcp_policy_synced_at', '' );
+			}
+		}
+
+		// Fall back to wizard's local policy.
+		if ( empty( $governance_policy ) ) {
+			$governance_policy = get_option( 'iato_mcp_local_policy', [] );
+		}
+
+		// Extract policy fields with defaults.
+		$policy_rules   = $governance_policy['rules'] ?? [];
+		$policy_tone    = $governance_policy['ai_tone'] ?? 'professional';
+		$policy_brand   = $governance_policy['ai_brand_context'] ?? '';
 
 		$regenerate_url = wp_nonce_url(
 			admin_url( 'admin-post.php?action=iato_mcp_regenerate_key' ),
@@ -348,9 +465,7 @@ class IATO_MCP_Settings {
 							<span class="dashicons dashicons-cloud"></span>
 							<h2><?php esc_html_e( 'IATO Platform', 'iato-mcp' ); ?></h2>
 						</div>
-						<?php
-						$api_valid = (bool) get_option( 'iato_mcp_api_key_valid', false );
-						if ( $iato_api_key && $api_valid ) : ?>
+						<?php if ( $iato_api_key && $api_valid ) : ?>
 							<span class="iato-badge iato-badge--success"><?php esc_html_e( 'Connected', 'iato-mcp' ); ?></span>
 						<?php elseif ( $iato_api_key ) : ?>
 							<span class="iato-badge iato-badge--danger"><?php esc_html_e( 'Key Invalid', 'iato-mcp' ); ?></span>
@@ -382,7 +497,97 @@ class IATO_MCP_Settings {
 					</div>
 				</div>
 
-				<!-- Card 3: Tools -->
+				<!-- Card 3: Autopilot & Governance Policy -->
+				<div class="iato-card">
+					<div class="iato-card-header">
+						<div class="iato-card-title">
+							<span class="dashicons dashicons-controls-repeat"></span>
+							<h2><?php esc_html_e( 'Autopilot', 'iato-mcp' ); ?></h2>
+						</div>
+						<?php if ( $autopilot_enabled ) : ?>
+							<span class="iato-badge iato-badge--success"><?php esc_html_e( 'Enabled', 'iato-mcp' ); ?></span>
+						<?php else : ?>
+							<span class="iato-badge iato-badge--neutral"><?php esc_html_e( 'Disabled', 'iato-mcp' ); ?></span>
+						<?php endif; ?>
+					</div>
+					<p class="iato-card-desc"><?php esc_html_e( 'When enabled, IATO automatically fixes SEO issues based on your policy rules. When disabled, all issues go to the Review Queue for manual review.', 'iato-mcp' ); ?></p>
+
+					<div class="iato-field-row">
+						<label class="iato-label"><?php esc_html_e( 'Enable Autopilot', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<label class="iato-toggle iato-autopilot-toggle">
+								<input type="checkbox" name="iato_mcp_autopilot_enabled" value="1" id="iato-autopilot-toggle" <?php checked( $autopilot_enabled ); ?> />
+								<span class="iato-toggle-slider" role="switch" aria-checked="<?php echo $autopilot_enabled ? 'true' : 'false'; ?>"></span>
+							</label>
+						</div>
+					</div>
+
+					<div class="iato-policy-section" id="iato-policy-section" style="<?php echo ! $autopilot_enabled ? 'display:none' : ''; ?>">
+
+						<h3 class="iato-section-title"><?php esc_html_e( 'Auto-Fix Rules', 'iato-mcp' ); ?></h3>
+						<p class="iato-hint" style="margin-bottom:12px"><?php esc_html_e( 'Choose which issue types Autopilot can fix automatically. Unchecked types will be sent to the Review Queue.', 'iato-mcp' ); ?></p>
+
+						<div class="iato-policy-rules">
+							<?php
+							$rule_labels = [
+								'title'            => __( 'Auto-fix missing/poor SEO titles', 'iato-mcp' ),
+								'meta_description' => __( 'Auto-fix missing meta descriptions', 'iato-mcp' ),
+								'alt_text'         => __( 'Auto-fix missing image alt text', 'iato-mcp' ),
+								'canonical'        => __( 'Auto-fix canonical URL issues', 'iato-mcp' ),
+							];
+							foreach ( $rule_labels as $rule_key => $rule_label ) :
+								$rule_active = ( ( $policy_rules[ $rule_key ]['action'] ?? 'needs_review' ) === 'auto_fix' );
+							?>
+								<label class="iato-tool-item">
+									<div class="iato-toggle">
+										<input type="checkbox" name="iato_mcp_governance_policy[rules][<?php echo esc_attr( $rule_key ); ?>]" value="1" <?php checked( $rule_active ); ?> />
+										<span class="iato-toggle-slider" role="switch" aria-checked="<?php echo $rule_active ? 'true' : 'false'; ?>"></span>
+									</div>
+									<div class="iato-tool-info">
+										<span class="iato-tool-desc"><?php echo esc_html( $rule_label ); ?></span>
+									</div>
+								</label>
+							<?php endforeach; ?>
+						</div>
+
+						<h3 class="iato-section-title" style="margin-top:20px"><?php esc_html_e( 'AI Writing Style', 'iato-mcp' ); ?></h3>
+
+						<div class="iato-field-row">
+							<label class="iato-label" for="iato-policy-tone"><?php esc_html_e( 'Tone', 'iato-mcp' ); ?></label>
+							<div class="iato-field-value">
+								<select name="iato_mcp_governance_policy[ai_tone]" id="iato-policy-tone" class="iato-input">
+									<option value="professional" <?php selected( $policy_tone, 'professional' ); ?>><?php esc_html_e( 'Professional', 'iato-mcp' ); ?></option>
+									<option value="casual" <?php selected( $policy_tone, 'casual' ); ?>><?php esc_html_e( 'Casual', 'iato-mcp' ); ?></option>
+									<option value="technical" <?php selected( $policy_tone, 'technical' ); ?>><?php esc_html_e( 'Technical', 'iato-mcp' ); ?></option>
+									<option value="friendly" <?php selected( $policy_tone, 'friendly' ); ?>><?php esc_html_e( 'Friendly', 'iato-mcp' ); ?></option>
+								</select>
+							</div>
+						</div>
+
+						<div class="iato-field-row">
+							<label class="iato-label" for="iato-policy-brand"><?php esc_html_e( 'Brand Context', 'iato-mcp' ); ?></label>
+							<div class="iato-field-value">
+								<textarea name="iato_mcp_governance_policy[ai_brand_context]" id="iato-policy-brand" class="iato-input" rows="3" placeholder="<?php esc_attr_e( 'e.g., We are a B2B SaaS company focused on...', 'iato-mcp' ); ?>"><?php echo esc_textarea( $policy_brand ); ?></textarea>
+								<p class="iato-hint"><?php esc_html_e( 'Provide brand context to guide AI-generated content. Optional.', 'iato-mcp' ); ?></p>
+							</div>
+						</div>
+					</div>
+
+					<?php if ( $policy_synced_at ) : ?>
+						<p class="iato-hint" style="margin-top:12px">
+							<?php
+							/* translators: %s: date/time of last sync */
+							printf( esc_html__( 'Last synced with IATO: %s', 'iato-mcp' ), esc_html( $policy_synced_at ) );
+							?>
+						</p>
+					<?php elseif ( $iato_api_key && ! $api_valid ) : ?>
+						<p class="iato-hint" style="margin-top:12px;color:var(--iato-warning)"><?php esc_html_e( 'Local only — IATO API key is invalid.', 'iato-mcp' ); ?></p>
+					<?php elseif ( ! $iato_api_key ) : ?>
+						<p class="iato-hint" style="margin-top:12px"><?php esc_html_e( 'Local only — connect IATO API to sync.', 'iato-mcp' ); ?></p>
+					<?php endif; ?>
+				</div>
+
+				<!-- Card 4: Tools -->
 				<div class="iato-card">
 					<div class="iato-card-header">
 						<div class="iato-card-title">
@@ -995,6 +1200,35 @@ class IATO_MCP_Settings {
 				box-shadow: 0 0 0 2px var(--iato-primary-light);
 			}
 
+			/* ── Autopilot & Policy ──────────────────────────── */
+			.iato-autopilot-toggle {
+				transform: scale(1.15);
+				transform-origin: left center;
+			}
+			.iato-section-title {
+				font-size: 13px;
+				font-weight: 600;
+				color: var(--iato-text);
+				margin: 0 0 8px;
+				padding-top: 16px;
+				border-top: 1px solid var(--iato-border);
+			}
+			.iato-policy-rules {
+				display: grid;
+				grid-template-columns: 1fr;
+				gap: 8px;
+			}
+			@media (min-width: 600px) {
+				.iato-policy-rules {
+					grid-template-columns: 1fr 1fr;
+				}
+			}
+			.iato-policy-section textarea.iato-input {
+				width: 100%;
+				max-width: 480px;
+				resize: vertical;
+			}
+
 			/* ── Tools Count ──────────────────────────────────── */
 			.iato-tools-count {
 				font-size: 12px;
@@ -1132,6 +1366,15 @@ class IATO_MCP_Settings {
 			document.querySelectorAll('.iato-tool-grid input[type="checkbox"]').forEach(function(cb) {
 				cb.addEventListener('change', updateCount);
 			});
+
+			// Autopilot toggle — show/hide policy section
+			var autopilotToggle = document.getElementById('iato-autopilot-toggle');
+			var policySection = document.getElementById('iato-policy-section');
+			if (autopilotToggle && policySection) {
+				autopilotToggle.addEventListener('change', function() {
+					policySection.style.display = this.checked ? '' : 'none';
+				});
+			}
 		})();
 		</script>
 		<?php

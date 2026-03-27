@@ -505,10 +505,18 @@ class IATO_MCP_Setup_Wizard {
 		if ( is_wp_error( $result ) ) {
 			// Save policy locally even if IATO API fails, so user can proceed.
 			update_option( 'iato_mcp_local_policy', $policy );
+		}
+
+		// Sync to settings page options.
+		update_option( 'iato_mcp_autopilot_enabled', true );
+		update_option( 'iato_mcp_governance_policy', $policy );
+
+		update_option( 'iato_mcp_wizard_step', 3 );
+
+		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( $result->get_error_message() . ' Policy saved locally — you can skip to the next step.' );
 		}
 
-		update_option( 'iato_mcp_wizard_step', 3 );
 		wp_send_json_success( [ 'step' => 3 ] );
 	}
 
@@ -526,6 +534,7 @@ class IATO_MCP_Setup_Wizard {
 			IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, [ 'is_active' => false ] );
 		}
 
+		update_option( 'iato_mcp_autopilot_enabled', false );
 		update_option( 'iato_mcp_wizard_step', 3 );
 		wp_send_json_success( [ 'step' => 3 ] );
 	}
