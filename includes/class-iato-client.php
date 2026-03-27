@@ -370,11 +370,16 @@ class IATO_MCP_IATO_Client {
 		}
 
 		$result = self::list_workspaces();
-		if ( is_wp_error( $result ) || empty( $result['data'] ) ) {
+		if ( is_wp_error( $result ) ) {
 			return '';
 		}
 
-		$first = $result['data'][0];
+		$ws_list = $result['workspaces'] ?? $result['data'] ?? $result;
+		if ( empty( $ws_list ) || ! isset( $ws_list[0] ) ) {
+			return '';
+		}
+
+		$first = $ws_list[0];
 		$id    = $first['id'] ?? '';
 		if ( ! empty( $id ) ) {
 			update_option( 'iato_mcp_workspace_id', sanitize_text_field( $id ) );
