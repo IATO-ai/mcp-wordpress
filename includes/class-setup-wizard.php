@@ -514,33 +514,27 @@ class IATO_MCP_Setup_Wizard {
 		$policy_with_ws = array_merge( $policy, [ 'workspace_id' => (int) $workspace_id ] );
 
 		$attempts = [
-			// 1. POST /workspaces/{id}/governance-policy (current)
+			// 1. GET workspace — does it still exist?
+			[
+				'method' => 'GET',
+				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id,
+				'body'   => null,
+			],
+			// 2. GET all workspaces — what's available?
+			[
+				'method' => 'GET',
+				'url'    => 'https://iato.ai/api/workspaces',
+				'body'   => null,
+			],
+			// 3. Minimal POST — just is_active to isolate body issue
 			[
 				'method' => 'POST',
 				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy',
-				'body'   => $policy,
+				'body'   => [ 'is_active' => true ],
 			],
-			// 2. PUT /workspaces/{id}/governance-policy
-			[
-				'method' => 'PUT',
-				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy',
-				'body'   => $policy,
-			],
-			// 3. POST /governance-policy with workspace_id in body
+			// 4. Full POST with all fields
 			[
 				'method' => 'POST',
-				'url'    => 'https://iato.ai/api/governance-policy',
-				'body'   => $policy_with_ws,
-			],
-			// 4. PUT /governance-policy with workspace_id in body
-			[
-				'method' => 'PUT',
-				'url'    => 'https://iato.ai/api/governance-policy',
-				'body'   => $policy_with_ws,
-			],
-			// 5. PATCH /workspaces/{id}/governance-policy
-			[
-				'method' => 'PATCH',
 				'url'    => 'https://iato.ai/api/workspaces/' . $workspace_id . '/governance-policy',
 				'body'   => $policy,
 			],
@@ -548,12 +542,15 @@ class IATO_MCP_Setup_Wizard {
 
 		$results = [];
 		foreach ( $attempts as $i => $attempt ) {
-			$raw = wp_remote_request( $attempt['url'], [
+			$args = [
 				'method'  => $attempt['method'],
 				'timeout' => 15,
 				'headers' => $headers,
-				'body'    => wp_json_encode( $attempt['body'] ),
-			] );
+			];
+			if ( $attempt['body'] !== null ) {
+				$args['body'] = wp_json_encode( $attempt['body'] );
+			}
+			$raw = wp_remote_request( $attempt['url'], $args );
 
 			$results[] = [
 				'attempt'       => $i + 1,
