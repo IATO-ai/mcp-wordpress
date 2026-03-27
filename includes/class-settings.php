@@ -166,6 +166,7 @@ class IATO_MCP_Settings {
 		$value = sanitize_text_field( $value );
 
 		if ( '' === $value ) {
+			delete_option( 'iato_mcp_api_key_valid' );
 			return '';
 		}
 
@@ -179,6 +180,7 @@ class IATO_MCP_Settings {
 		] );
 
 		if ( is_wp_error( $response ) ) {
+			update_option( 'iato_mcp_api_key_valid', false );
 			add_settings_error(
 				'iato_mcp_api_key',
 				'iato_mcp_api_key_error',
@@ -190,6 +192,7 @@ class IATO_MCP_Settings {
 
 		$code = wp_remote_retrieve_response_code( $response );
 		if ( 200 !== $code ) {
+			update_option( 'iato_mcp_api_key_valid', false );
 			add_settings_error(
 				'iato_mcp_api_key',
 				'iato_mcp_api_key_invalid',
@@ -200,6 +203,7 @@ class IATO_MCP_Settings {
 			return $value;
 		}
 
+		update_option( 'iato_mcp_api_key_valid', true );
 		add_settings_error(
 			'iato_mcp_api_key',
 			'iato_mcp_api_key_valid',
@@ -343,8 +347,12 @@ class IATO_MCP_Settings {
 							<span class="dashicons dashicons-cloud"></span>
 							<h2><?php esc_html_e( 'IATO Platform', 'iato-mcp' ); ?></h2>
 						</div>
-						<?php if ( $iato_api_key ) : ?>
+						<?php
+						$api_valid = (bool) get_option( 'iato_mcp_api_key_valid', false );
+						if ( $iato_api_key && $api_valid ) : ?>
 							<span class="iato-badge iato-badge--success"><?php esc_html_e( 'Connected', 'iato-mcp' ); ?></span>
+						<?php elseif ( $iato_api_key ) : ?>
+							<span class="iato-badge iato-badge--danger"><?php esc_html_e( 'Key Invalid', 'iato-mcp' ); ?></span>
 						<?php else : ?>
 							<span class="iato-badge iato-badge--neutral"><?php esc_html_e( 'Not connected', 'iato-mcp' ); ?></span>
 						<?php endif; ?>
@@ -583,6 +591,18 @@ class IATO_MCP_Settings {
 			.iato-badge--neutral {
 				color: var(--iato-neutral);
 				background: var(--iato-neutral-bg);
+			}
+			.iato-badge--danger {
+				color: var(--iato-danger);
+				background: var(--iato-danger-bg);
+			}
+			.iato-badge--danger::before {
+				content: '';
+				display: inline-block;
+				width: 7px;
+				height: 7px;
+				background: var(--iato-danger);
+				border-radius: 50%;
 			}
 
 			/* ── Field Rows ────────────────────────────────────── */
