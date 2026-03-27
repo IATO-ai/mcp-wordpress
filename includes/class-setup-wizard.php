@@ -561,8 +561,8 @@ class IATO_MCP_Setup_Wizard {
 				'response_body' => is_wp_error( $raw ) ? $raw->get_error_message() : wp_remote_retrieve_body( $raw ),
 			];
 
-			// If we got a 2xx, stop trying.
-			if ( ! is_wp_error( $raw ) ) {
+			// Only stop early on 2xx for POST/PUT (not GET diagnostics).
+			if ( $attempt['method'] !== 'GET' && ! is_wp_error( $raw ) ) {
 				$code = wp_remote_retrieve_response_code( $raw );
 				if ( $code >= 200 && $code < 300 ) {
 					break;
