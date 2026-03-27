@@ -359,6 +359,31 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
+	 * Resolve workspace ID — returns stored option or auto-detects from API.
+	 *
+	 * @return string Workspace ID or empty string on failure.
+	 */
+	public static function resolve_workspace_id(): string {
+		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		if ( ! empty( $workspace_id ) ) {
+			return $workspace_id;
+		}
+
+		$result = self::list_workspaces();
+		if ( is_wp_error( $result ) || empty( $result['data'] ) ) {
+			return '';
+		}
+
+		$first = $result['data'][0];
+		$id    = $first['id'] ?? '';
+		if ( ! empty( $id ) ) {
+			update_option( 'iato_mcp_workspace_id', sanitize_text_field( $id ) );
+		}
+
+		return (string) $id;
+	}
+
+	/**
 	 * GET /workspaces/{id}
 	 *
 	 * @param string $workspace_id

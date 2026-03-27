@@ -43,7 +43,7 @@ class IATO_MCP_Dashboard_Widget {
 	 */
 	public static function render(): void {
 		$api_key      = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$workspace_id = ! empty( $api_key ) ? IATO_MCP_IATO_Client::resolve_workspace_id() : '';
 
 		if ( empty( $api_key ) || empty( $workspace_id ) ) {
 			self::render_empty_state();
@@ -347,7 +347,7 @@ class IATO_MCP_Dashboard_Widget {
 		}
 
 		$schedule_id  = sanitize_text_field( get_option( 'iato_mcp_schedule_id', '' ) );
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$workspace_id = IATO_MCP_IATO_Client::resolve_workspace_id();
 
 		if ( empty( $schedule_id ) ) {
 			wp_send_json_error( 'No schedule configured. Set one up in Settings > IATO MCP.' );
