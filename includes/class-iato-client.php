@@ -421,101 +421,44 @@ class IATO_MCP_IATO_Client {
 		return self::post( "/workspaces/{$workspace_id}/governance-policy", $policy );
 	}
 
-	// ── Change Queue endpoints ───────────────────────────────────────────────
+	// ── Autopilot Queue endpoints ───────────────────────────────────────────
 
 	/**
-	 * GET /change-queue — list change queue items.
+	 * GET /autopilot/{workspace_id}/queue — list autopilot queue items.
 	 *
 	 * @param string $workspace_id
-	 * @param array  $params       Optional: status, site_url, limit, page.
+	 * @param array  $params       Optional: status, limit, page.
 	 * @return array|WP_Error
 	 */
-	public static function get_change_queue( string $workspace_id, array $params = [] ): array|WP_Error {
-		$query = array_merge( [ 'workspace_id' => $workspace_id ], $params );
-		return self::get( '/change-queue', $query );
+	public static function get_queue( string $workspace_id, array $params = [] ): array|WP_Error {
+		return self::get( "/autopilot/{$workspace_id}/queue", $params );
 	}
 
 	/**
-	 * POST /change-queue/{id}/approve
+	 * PUT /autopilot/{workspace_id}/queue/{item_id} — update queue item status.
 	 *
-	 * @param string $change_id
+	 * @param string $workspace_id
+	 * @param string $item_id
+	 * @param string $status  'approved' or 'dismissed'.
 	 * @return array|WP_Error
 	 */
-	public static function approve_change( string $change_id ): array|WP_Error {
-		return self::post( "/change-queue/{$change_id}/approve" );
-	}
-
-	/**
-	 * POST /change-queue/{id}/reject
-	 *
-	 * @param string $change_id
-	 * @return array|WP_Error
-	 */
-	public static function reject_change( string $change_id ): array|WP_Error {
-		return self::post( "/change-queue/{$change_id}/reject" );
-	}
-
-	/**
-	 * POST /change-queue/{id}/mark-fixed
-	 *
-	 * @param string $change_id
-	 * @param string $notes
-	 * @return array|WP_Error
-	 */
-	public static function mark_as_fixed( string $change_id, string $notes = '' ): array|WP_Error {
-		$body = [];
-		if ( '' !== $notes ) {
-			$body['notes'] = $notes;
-		}
-		return self::post( "/change-queue/{$change_id}/mark-fixed", $body );
-	}
-
-	/**
-	 * POST /change-queue/batch/{id}/approve
-	 *
-	 * @param string $batch_id
-	 * @return array|WP_Error
-	 */
-	public static function approve_batch( string $batch_id ): array|WP_Error {
-		return self::post( "/change-queue/batch/{$batch_id}/approve" );
-	}
-
-	/**
-	 * POST /change-queue/batch/{id}/reject
-	 *
-	 * @param string $batch_id
-	 * @return array|WP_Error
-	 */
-	public static function reject_batch( string $batch_id ): array|WP_Error {
-		return self::post( "/change-queue/batch/{$batch_id}/reject" );
-	}
-
-	/**
-	 * POST /change-queue/batch/{id}/mark-fixed
-	 *
-	 * @param string $batch_id
-	 * @param string $notes
-	 * @return array|WP_Error
-	 */
-	public static function mark_batch_as_fixed( string $batch_id, string $notes = '' ): array|WP_Error {
-		$body = [];
-		if ( '' !== $notes ) {
-			$body['notes'] = $notes;
-		}
-		return self::post( "/change-queue/batch/{$batch_id}/mark-fixed", $body );
+	public static function update_queue_item( string $workspace_id, string $item_id, string $status ): array|WP_Error {
+		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", [
+			'status' => $status,
+		] );
 	}
 
 	// ── Activity Log endpoints ───────────────────────────────────────────────
 
 	/**
-	 * GET /workspaces/{id}/activity-log
+	 * GET /autopilot/{id}/activity-log
 	 *
 	 * @param string $workspace_id
 	 * @param array  $params       Optional: action, limit, page.
 	 * @return array|WP_Error
 	 */
 	public static function get_activity_log( string $workspace_id, array $params = [] ): array|WP_Error {
-		return self::get( "/workspaces/{$workspace_id}/activity-log", $params );
+		return self::get( "/autopilot/{$workspace_id}/activity-log", $params );
 	}
 
 	// ── Schedule endpoints ───────────────────────────────────────────────────
@@ -597,6 +540,33 @@ class IATO_MCP_IATO_Client {
 		}
 
 		$response = wp_remote_post( self::BASE_URL . $path, [
+			'timeout' => self::TIMEOUT,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $key,
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+			],
+			'body' => wp_json_encode( $body ),
+		] );
+
+		return self::parse_response( $response );
+	}
+
+	/**
+	 * PUT request to the IATO API.
+	 *
+	 * @param string $path Path relative to base URL.
+	 * @param array  $body JSON body.
+	 * @return array|WP_Error Decoded JSON body or WP_Error.
+	 */
+	private static function put( string $path, array $body = [] ): array|WP_Error {
+		$key = self::api_key();
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
+
+		$response = wp_remote_request( self::BASE_URL . $path, [
+			'method'  => 'PUT',
 			'timeout' => self::TIMEOUT,
 			'headers' => [
 				'Authorization' => 'Bearer ' . $key,
