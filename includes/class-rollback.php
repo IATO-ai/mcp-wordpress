@@ -107,6 +107,55 @@ class IATO_MCP_Rollback {
 	}
 
 	/**
+	 * Perform a rollback by change_id (for internal use, e.g. AJAX handlers).
+	 *
+	 * @param string $change_id The wr_ prefixed change receipt ID.
+	 * @return array|WP_Error Success array with rollback details, or WP_Error.
+	 */
+	public static function rollback_by_id( string $change_id ): array|WP_Error {
+		$receipt = IATO_MCP_Change_Receipt::get( $change_id );
+		if ( ! $receipt ) {
+			return new WP_Error( 'not_found', 'change_id not found.' );
+		}
+
+		if ( ! empty( $receipt['rolled_back_at'] ) ) {
+			return new WP_Error( 'already_rolled_back', 'Already rolled back at ' . $receipt['rolled_back_at'] );
+		}
+
+		$post_id      = $receipt['post_id'] ? (int) $receipt['post_id'] : null;
+		$before_value = $receipt['before_value'];
+
+		$result = self::dispatch_rollback( $receipt['target_type'], $receipt['field'], $post_id, $before_value );
+
+		// Handle create_term special case.
+		if ( is_wp_error( $result ) && '__internal__' === $result->get_error_message() ) {
+			$after_data = json_decode( $receipt['after_value'] ?? '{}', true );
+			if ( is_array( $after_data ) && ! empty( $after_data['term_id'] ) && ! empty( $after_data['taxonomy'] ) ) {
+				$del    = wp_delete_term( (int) $after_data['term_id'], $after_data['taxonomy'] );
+				$result = is_wp_error( $del ) ? $del : true;
+			} else {
+				return new WP_Error( 'rollback_failed', 'Cannot rollback create_term: missing term data.' );
+			}
+		}
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		IATO_MCP_Change_Receipt::mark_rolled_back( $change_id );
+
+		return [
+			'success'        => true,
+			'change_id'      => $change_id,
+			'post_id'        => $post_id,
+			'target_type'    => $receipt['target_type'],
+			'field'          => $receipt['field'],
+			'restored_value' => $before_value,
+			'rolled_back_at' => gmdate( 'c' ),
+		];
+	}
+
+	/**
 	 * Dispatch the rollback action based on target_type and field.
 	 *
 	 * @param string   $target_type

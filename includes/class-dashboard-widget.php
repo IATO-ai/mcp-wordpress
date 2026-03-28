@@ -327,13 +327,13 @@ class IATO_MCP_Dashboard_Widget {
 		}
 
 		// Review queue items.
-		$queue_result = IATO_MCP_IATO_Client::get_change_queue( $workspace_id, [
-			'status'   => 'pending_review',
-			'site_url' => site_url(),
-			'limit'    => 5,
+		$queue_result = IATO_MCP_IATO_Client::get_queue( $workspace_id, [
+			'status' => 'pending_review',
+			'limit'  => 5,
 		] );
 		if ( ! is_wp_error( $queue_result ) ) {
-			$items = $queue_result['items'] ?? $queue_result['data'] ?? [];
+			$inner = $queue_result['data'] ?? $queue_result;
+			$items = $inner['items'] ?? [];
 			if ( is_array( $items ) ) {
 				$data['review_items'] = $items;
 			}

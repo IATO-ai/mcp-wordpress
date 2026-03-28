@@ -1,6 +1,7 @@
 <?php
 /**
- * Review Queue Admin Page — surfaces pending IATO change queue items in wp-admin.
+ * Review Queue Admin Page — surfaces pending IATO autopilot queue items
+ * and activity history with rollback in wp-admin.
  *
  * All IATO API calls are proxied server-side (API key never exposed to browser).
  *
@@ -17,9 +18,8 @@ class IATO_MCP_Review_Queue {
 	public static function init(): void {
 		add_action( 'admin_menu', [ __CLASS__, 'register_page' ] );
 
-		// AJAX handlers.
+		// AJAX handler.
 		add_action( 'wp_ajax_iato_mcp_review_action', [ __CLASS__, 'ajax_action' ] );
-		add_action( 'wp_ajax_iato_mcp_review_bulk', [ __CLASS__, 'ajax_bulk' ] );
 	}
 
 	/**
@@ -60,11 +60,19 @@ class IATO_MCP_Review_Queue {
 				.iato-rq { max-width: 1100px; font-family: 'DM Sans', system-ui, sans-serif; }
 				.iato-rq-notice { padding: 12px 16px; border-left: 4px solid #eda145; background: rgba(237,161,69,0.12); margin: 16px 0; border-radius: 8px; }
 				.iato-rq-notice a { color: #5a89f4; }
+
+				/* Tabs */
+				.iato-rq-tabs { display: flex; gap: 0; margin: 16px 0 0; border-bottom: 2px solid #e5e7eb; }
+				.iato-rq-tab { padding: 10px 20px; font-size: 14px; font-weight: 500; color: #6b7280; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; background: none; border-top: none; border-left: none; border-right: none; font-family: inherit; }
+				.iato-rq-tab:hover { color: #111827; }
+				.iato-rq-tab.active { color: #4b72cc; border-bottom-color: #4b72cc; font-weight: 600; }
+				.iato-rq-tab .tab-count { background: #e5e7eb; color: #6b7280; padding: 2px 8px; border-radius: 99px; font-size: 12px; margin-left: 6px; }
+				.iato-rq-tab.active .tab-count { background: rgba(75,114,204,0.12); color: #4b72cc; }
+
 				.iato-rq-actions-bar { display: flex; justify-content: space-between; align-items: center; margin: 16px 0; flex-wrap: wrap; gap: 8px; }
 				.iato-rq-filters { display: flex; gap: 8px; }
 				.iato-rq-filters select { padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; transition: border-color 0.15s, box-shadow 0.15s; }
 				.iato-rq-filters select:focus { border-color: #5a89f4; box-shadow: 0 0 0 2px rgba(90,137,244,0.1); outline: none; }
-				.iato-rq-bulk .button { margin-left: 4px; border-radius: 8px; transition: all 0.2s; }
 				.iato-rq-group { margin-bottom: 24px; }
 				.iato-rq-group-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f3f4f6; border: 1px solid #e5e7eb; border-bottom: none; border-radius: 12px 12px 0 0; cursor: pointer; transition: background 0.15s; }
 				.iato-rq-group-header:hover { background: #e5e7eb; }
@@ -78,11 +86,20 @@ class IATO_MCP_Review_Queue {
 				.iato-rq-item-info .page-url { font-weight: 600; color: #111827; margin-bottom: 4px; }
 				.iato-rq-item-info .current { color: #6b7280; font-size: 13px; }
 				.iato-rq-item-info .proposed { color: #111827; font-size: 13px; margin-top: 4px; padding: 8px; background: rgba(90,137,244,0.08); border-radius: 8px; }
-				.iato-rq-item-info .confidence { display: inline-flex; align-items: center; background: rgba(237,161,69,0.12); color: #eda145; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 600; margin-top: 6px; }
+				.iato-rq-item-info .item-meta { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; color: #9ca3af; }
 				.iato-rq-item-actions { display: flex; gap: 4px; flex-shrink: 0; align-items: flex-start; }
 				.iato-rq-item-actions .button-small { font-size: 12px; border-radius: 8px; transition: all 0.2s; }
 				.iato-rq-item-actions .button-primary { background: #4b72cc; border-color: #4b72cc; box-shadow: 0 0 24px rgba(90,137,244,0.18); }
 				.iato-rq-item-actions .button-primary:hover { background: #3f64b8; border-color: #3f64b8; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+
+				/* Status badges */
+				.iato-status-badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+				.iato-status-badge.approved { background: rgba(34,197,94,0.12); color: #16a34a; }
+				.iato-status-badge.applied { background: rgba(90,137,244,0.12); color: #4b72cc; }
+				.iato-status-badge.dismissed { background: #f3f4f6; color: #9ca3af; }
+				.iato-status-badge.rolled_back { background: rgba(237,161,69,0.12); color: #d97706; }
+				.iato-status-badge.pending_review { background: rgba(237,161,69,0.12); color: #eda145; }
+
 				.iato-rq-empty { text-align: center; padding: 60px 20px; color: #6b7280; }
 				.iato-rq-empty h2 { color: #111827; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
 				.iato-rq-upsell { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin-bottom: 20px; text-align: center; }
@@ -92,6 +109,10 @@ class IATO_MCP_Review_Queue {
 				.iato-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e5e7eb; border-top-color: #5a89f4; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; }
 				@keyframes iato-spin { to { transform: rotate(360deg); } }
 				.iato-rq-loading { text-align: center; padding: 40px; color: #6b7280; }
+
+				/* Undo / rollback button */
+				.iato-rq-item-actions .button-undo { color: #d97706; border-color: #d97706; }
+				.iato-rq-item-actions .button-undo:hover { background: rgba(217,119,6,0.08); }
 			</style>
 
 			<div class="iato-rq">
@@ -130,22 +151,30 @@ class IATO_MCP_Review_Queue {
 					</div>
 				<?php else : ?>
 
-					<div class="iato-rq-notice">
-						<?php esc_html_e( 'Showing all pending items for this workspace.', 'iato-mcp' ); ?>
-						<a href="https://iato.ai" target="_blank"><?php esc_html_e( 'Learn more', 'iato-mcp' ); ?></a>
+					<!-- Tabs -->
+					<div class="iato-rq-tabs">
+						<button class="iato-rq-tab active" data-tab="pending" id="rq-tab-pending">
+							<?php esc_html_e( 'Pending Review', 'iato-mcp' ); ?>
+							<span class="tab-count" id="rq-pending-count">-</span>
+						</button>
+						<button class="iato-rq-tab" data-tab="history" id="rq-tab-history">
+							<?php esc_html_e( 'History', 'iato-mcp' ); ?>
+						</button>
 					</div>
 
-					<!-- Filters and bulk actions -->
+					<!-- Filters -->
 					<div class="iato-rq-actions-bar">
 						<div class="iato-rq-filters">
 							<select id="rq-filter-type">
 								<option value=""><?php esc_html_e( 'All Types', 'iato-mcp' ); ?></option>
 							</select>
-						</div>
-						<div class="iato-rq-bulk">
-							<button class="button" id="rq-approve-all"><?php esc_html_e( 'Approve All', 'iato-mcp' ); ?></button>
-							<button class="button" id="rq-reject-all"><?php esc_html_e( 'Reject All', 'iato-mcp' ); ?></button>
-							<button class="button" id="rq-fix-all"><?php esc_html_e( 'Mark All Fixed', 'iato-mcp' ); ?></button>
+							<select id="rq-filter-status" style="display:none;">
+								<option value=""><?php esc_html_e( 'All Statuses', 'iato-mcp' ); ?></option>
+								<option value="approved"><?php esc_html_e( 'Approved', 'iato-mcp' ); ?></option>
+								<option value="applied"><?php esc_html_e( 'Applied', 'iato-mcp' ); ?></option>
+								<option value="dismissed"><?php esc_html_e( 'Dismissed', 'iato-mcp' ); ?></option>
+								<option value="rolled_back"><?php esc_html_e( 'Rolled Back', 'iato-mcp' ); ?></option>
+							</select>
 						</div>
 					</div>
 
@@ -158,9 +187,32 @@ class IATO_MCP_Review_Queue {
 						const nonce = <?php echo wp_json_encode( $nonce ); ?>;
 						const ajaxurl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 						const workspaceId = <?php echo wp_json_encode( $workspace_id ); ?>;
-						const siteUrl = <?php echo wp_json_encode( site_url() ); ?>;
+						let currentTab = 'pending';
+						let historyItems = [];
+
+						// ── Tab switching ──────────────────────────────────
+
+						document.querySelectorAll('.iato-rq-tab').forEach(tab => {
+							tab.addEventListener('click', function() {
+								document.querySelectorAll('.iato-rq-tab').forEach(t => t.classList.remove('active'));
+								this.classList.add('active');
+								currentTab = this.dataset.tab;
+
+								const statusFilter = document.getElementById('rq-filter-status');
+								if (currentTab === 'history') {
+									statusFilter.style.display = '';
+									loadHistory();
+								} else {
+									statusFilter.style.display = 'none';
+									loadQueue();
+								}
+							});
+						});
+
+						// ── Pending Review ──────────────────────────────────
 
 						function loadQueue() {
+							document.getElementById('rq-content').innerHTML = '<div class="iato-rq-loading"><span class="iato-spinner"></span> Loading...</div>';
 							fetch(ajaxurl, {
 								method: 'POST',
 								headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -169,13 +221,15 @@ class IATO_MCP_Review_Queue {
 									_wpnonce: nonce,
 									op: 'list',
 									workspace_id: workspaceId,
-									site_url: siteUrl,
 								})
 							})
 							.then(r => r.json())
 							.then(r => {
 								if (!r.success) { document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>' + (r.data || 'Failed to load.') + '</p></div>'; return; }
-								renderQueue(r.data.items || []);
+								const items = r.data.items || [];
+								const total = r.data.total || items.length;
+								document.getElementById('rq-pending-count').textContent = total;
+								renderQueue(items);
 							})
 							.catch(() => {
 								document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>Failed to load review queue.</p></div>';
@@ -189,7 +243,71 @@ class IATO_MCP_Review_Queue {
 								return;
 							}
 
-							// Group by issue type.
+							const groups = {};
+							items.forEach(item => {
+								const type = item.issue_type || 'other';
+								if (!groups[type]) groups[type] = [];
+								groups[type].push(item);
+							});
+
+							let html = '';
+							for (const [type, groupItems] of Object.entries(groups)) {
+								html += '<div class="iato-rq-group" data-type="' + type + '">';
+								html += '<div class="iato-rq-group-header"><h3>' + escHtml(type.replace(/_/g, ' ')) + '</h3><span class="count">' + groupItems.length + ' items</span></div>';
+								html += '<div class="iato-rq-items">';
+								groupItems.forEach(item => {
+									const cid = item.id || '';
+									html += '<div class="iato-rq-item" data-id="' + cid + '">';
+									html += '<div class="iato-rq-item-info">';
+									html += '<div class="page-url">' + escHtml(item.page_url || '') + '</div>';
+									html += '<div class="current">Current: ' + escHtml(item.before_value || '(none)') + '</div>';
+									html += '<div class="proposed">Proposed: ' + escHtml(item.proposed_value || '') + '</div>';
+									html += '</div>';
+									html += '<div class="iato-rq-item-actions">';
+									html += '<button class="button button-small" onclick="rqAction(\'dismiss\',\'' + cid + '\',this)">Dismiss</button>';
+									html += '<button class="button button-primary button-small" onclick="rqAction(\'approve\',\'' + cid + '\',this)">Approve</button>';
+									html += '</div></div>';
+								});
+								html += '</div></div>';
+							}
+							container.innerHTML = html;
+
+							buildFilterOptions(items, 'rq-filter-type');
+							applyFilters();
+						}
+
+						// ── Activity History ──────────────────────────────────
+
+						function loadHistory() {
+							document.getElementById('rq-content').innerHTML = '<div class="iato-rq-loading"><span class="iato-spinner"></span> Loading history...</div>';
+							fetch(ajaxurl, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+								body: new URLSearchParams({
+									action: 'iato_mcp_review_action',
+									_wpnonce: nonce,
+									op: 'history',
+									workspace_id: workspaceId,
+								})
+							})
+							.then(r => r.json())
+							.then(r => {
+								if (!r.success) { document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>' + (r.data || 'Failed to load history.') + '</p></div>'; return; }
+								historyItems = r.data.items || r.data || [];
+								renderHistory(historyItems);
+							})
+							.catch(() => {
+								document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>Failed to load activity history.</p></div>';
+							});
+						}
+
+						function renderHistory(items) {
+							const container = document.getElementById('rq-content');
+							if (!items.length) {
+								container.innerHTML = '<div class="iato-rq-empty"><h2>No history yet</h2><p>Activity will appear here once Autopilot starts processing items.</p></div>';
+								return;
+							}
+
 							const groups = {};
 							items.forEach(item => {
 								const type = item.issue_type || item.field || 'other';
@@ -203,40 +321,42 @@ class IATO_MCP_Review_Queue {
 								html += '<div class="iato-rq-group-header"><h3>' + escHtml(type.replace(/_/g, ' ')) + '</h3><span class="count">' + groupItems.length + ' items</span></div>';
 								html += '<div class="iato-rq-items">';
 								groupItems.forEach(item => {
-									const cid = item.change_id || item.id || '';
-									html += '<div class="iato-rq-item" data-id="' + cid + '">';
+									const status = item.status || 'unknown';
+									const changeId = item.change_id || '';
+									html += '<div class="iato-rq-item" data-id="' + (item.id || '') + '" data-status="' + status + '">';
 									html += '<div class="iato-rq-item-info">';
-									html += '<div class="page-url">' + escHtml(item.page_url || item.url || '') + '</div>';
-									html += '<div class="current">Current: ' + escHtml(item.current_value || '(none)') + '</div>';
-									html += '<div class="proposed">Proposed: ' + escHtml(item.proposed_value || item.value || '') + '</div>';
-									if (item.confidence) html += '<span class="confidence">' + item.confidence + '%</span>';
+									html += '<div class="page-url">' + escHtml(item.page_url || '') + '</div>';
+									html += '<div class="current">Before: ' + escHtml(item.before_value || '(none)') + '</div>';
+									html += '<div class="proposed">After: ' + escHtml(item.after_value || item.proposed_value || '') + '</div>';
+									html += '<div class="item-meta">';
+									html += '<span class="iato-status-badge ' + status + '">' + escHtml(status.replace(/_/g, ' ')) + '</span>';
+									if (item.applied_at) html += '<span>' + timeAgo(item.applied_at) + '</span>';
+									html += '</div>';
 									html += '</div>';
 									html += '<div class="iato-rq-item-actions">';
-									if (item.post_id) html += '<a href="' + <?php echo wp_json_encode( admin_url( 'post.php?action=edit&post=' ) ); ?> + item.post_id + '" class="button button-small">Edit Post</a>';
-									html += '<button class="button button-small" onclick="rqAction(\'mark_fixed\',\'' + cid + '\',this)">Mark as Fixed</button>';
-									html += '<button class="button button-small" onclick="rqAction(\'reject\',\'' + cid + '\',this)">Reject</button>';
-									html += '<button class="button button-primary button-small" onclick="rqAction(\'approve\',\'' + cid + '\',this)">Approve</button>';
+									if (status === 'applied' && changeId) {
+										html += '<button class="button button-small button-undo" onclick="rqRollback(\'' + escAttr(changeId) + '\',this)">Undo</button>';
+									}
 									html += '</div></div>';
 								});
 								html += '</div></div>';
 							}
 							container.innerHTML = html;
 
-							// Build filter options dynamically from item types.
-							buildFilterOptions(items);
-
-							// Apply type filter.
-							applyFilter();
+							buildFilterOptions(items, 'rq-filter-type');
+							applyFilters();
 						}
 
-						function buildFilterOptions(items) {
+						// ── Shared Utilities ──────────────────────────────────
+
+						function buildFilterOptions(items, selectId) {
 							const types = new Set();
 							items.forEach(item => {
 								types.add(item.issue_type || item.field || 'other');
 							});
-							const select = document.getElementById('rq-filter-type');
+							const select = document.getElementById(selectId);
 							const current = select.value;
-							select.length = 1; // Keep "All Types" only.
+							select.length = 1;
 							const labels = {
 								title: 'Title', meta_description: 'Meta Description',
 								alt_text: 'Alt Text', canonical: 'Canonical', h1: 'H1',
@@ -253,25 +373,30 @@ class IATO_MCP_Review_Queue {
 							if (current) select.value = current;
 						}
 
-						function applyFilter() {
-							const filter = document.getElementById('rq-filter-type').value;
+						function applyFilters() {
+							const typeFilter = document.getElementById('rq-filter-type').value;
+							const statusFilter = document.getElementById('rq-filter-status').value;
+
 							document.querySelectorAll('.iato-rq-group').forEach(g => {
-								g.style.display = (!filter || g.dataset.type === filter) ? '' : 'none';
+								if (typeFilter && g.dataset.type !== typeFilter) { g.style.display = 'none'; return; }
+								g.style.display = '';
+
+								if (currentTab === 'history' && statusFilter) {
+									g.querySelectorAll('.iato-rq-item').forEach(item => {
+										item.style.display = item.dataset.status === statusFilter ? '' : 'none';
+									});
+								} else {
+									g.querySelectorAll('.iato-rq-item').forEach(item => { item.style.display = ''; });
+								}
 							});
 						}
-						document.getElementById('rq-filter-type').addEventListener('change', applyFilter);
+
+						document.getElementById('rq-filter-type').addEventListener('change', applyFilters);
+						document.getElementById('rq-filter-status').addEventListener('change', applyFilters);
+
+						// ── Actions ──────────────────────────────────
 
 						window.rqAction = function(op, changeId, btn) {
-							if (op === 'mark_fixed') {
-								const notes = prompt('Optional notes:');
-								if (notes === null) return;
-								doAction(op, changeId, btn, notes);
-							} else {
-								doAction(op, changeId, btn);
-							}
-						};
-
-						function doAction(op, changeId, btn, notes) {
 							if (btn) btn.disabled = true;
 							fetch(ajaxurl, {
 								method: 'POST',
@@ -281,7 +406,7 @@ class IATO_MCP_Review_Queue {
 									_wpnonce: nonce,
 									op: op,
 									change_id: changeId,
-									notes: notes || '',
+									workspace_id: workspaceId,
 								})
 							})
 							.then(r => r.json())
@@ -294,36 +419,53 @@ class IATO_MCP_Review_Queue {
 									if (btn) btn.disabled = false;
 								}
 							});
+						};
+
+						window.rqRollback = function(changeId, btn) {
+							if (!confirm('Undo this change? The original value will be restored.')) return;
+							if (btn) btn.disabled = true;
+							btn.textContent = 'Undoing...';
+							fetch(ajaxurl, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+								body: new URLSearchParams({
+									action: 'iato_mcp_review_action',
+									_wpnonce: nonce,
+									op: 'rollback',
+									change_id: changeId,
+									workspace_id: workspaceId,
+								})
+							})
+							.then(r => r.json())
+							.then(r => {
+								if (r.success) {
+									const row = btn.closest('.iato-rq-item');
+									if (row) {
+										row.dataset.status = 'rolled_back';
+										const badge = row.querySelector('.iato-status-badge');
+										if (badge) { badge.className = 'iato-status-badge rolled_back'; badge.textContent = 'rolled back'; }
+										btn.remove();
+									}
+								} else {
+									alert(r.data || 'Rollback failed.');
+									btn.disabled = false;
+									btn.textContent = 'Undo';
+								}
+							});
+						};
+
+						function timeAgo(dateStr) {
+							const now = new Date();
+							const d = new Date(dateStr);
+							const diff = Math.floor((now - d) / 1000);
+							if (diff < 60) return 'just now';
+							if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+							if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+							return Math.floor(diff / 86400) + 'd ago';
 						}
 
-						// Bulk actions.
-						['approve-all', 'reject-all', 'fix-all'].forEach(id => {
-							document.getElementById('rq-' + id).addEventListener('click', function() {
-								const opMap = { 'approve-all': 'approve_batch', 'reject-all': 'reject_batch', 'fix-all': 'mark_batch_fixed' };
-								let notes = '';
-								if (id === 'fix-all') notes = prompt('Optional notes for all items:') || '';
-								this.disabled = true;
-								fetch(ajaxurl, {
-									method: 'POST',
-									headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-									body: new URLSearchParams({
-										action: 'iato_mcp_review_bulk',
-										_wpnonce: nonce,
-										op: opMap[id],
-										workspace_id: workspaceId,
-										notes: notes,
-									})
-								})
-								.then(r => r.json())
-								.then(r => {
-									this.disabled = false;
-									if (r.success) loadQueue();
-									else alert(r.data || 'Bulk action failed.');
-								});
-							});
-						});
-
-						function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+						function escHtml(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+						function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 
 						loadQueue();
 					})();
@@ -338,7 +480,7 @@ class IATO_MCP_Review_Queue {
 	// ── AJAX Handlers ────────────────────────────────────────────────────────
 
 	/**
-	 * Handle individual item actions + list fetch.
+	 * Handle queue actions: list, approve, dismiss, history, rollback.
 	 */
 	public static function ajax_action(): void {
 		check_ajax_referer( 'iato_mcp_review', '_wpnonce' );
@@ -346,90 +488,66 @@ class IATO_MCP_Review_Queue {
 			wp_send_json_error( 'Unauthorized.' );
 		}
 
-		$op        = sanitize_text_field( wp_unslash( $_POST['op'] ?? '' ) );
-		$change_id = sanitize_text_field( wp_unslash( $_POST['change_id'] ?? '' ) );
-		$notes     = sanitize_textarea_field( wp_unslash( $_POST['notes'] ?? '' ) );
+		$op           = sanitize_text_field( wp_unslash( $_POST['op'] ?? '' ) );
+		$change_id    = sanitize_text_field( wp_unslash( $_POST['change_id'] ?? '' ) );
+		$workspace_id = sanitize_text_field( wp_unslash( $_POST['workspace_id'] ?? '' ) );
+
+		if ( empty( $workspace_id ) ) {
+			wp_send_json_error( 'workspace_id required.' );
+		}
 
 		switch ( $op ) {
 			case 'list':
-				$workspace_id = sanitize_text_field( wp_unslash( $_POST['workspace_id'] ?? '' ) );
-				$site_url     = esc_url_raw( wp_unslash( $_POST['site_url'] ?? '' ) );
-
-				if ( empty( $workspace_id ) ) {
-					wp_send_json_error( 'workspace_id required.' );
-				}
-
-				$result = IATO_MCP_IATO_Client::get_change_queue( $workspace_id, [
-					'status'   => 'pending_review',
-					'site_url' => $site_url,
+				$result = IATO_MCP_IATO_Client::get_queue( $workspace_id, [
+					'status' => 'pending_review',
 				] );
 
 				if ( is_wp_error( $result ) ) {
 					wp_send_json_error( $result->get_error_message() );
 				}
 
-				wp_send_json_success( $result );
+				// IATO returns { success, data: { items, total } }. Extract inner data
+				// so JS receives { items: [...], total: N } via wp_send_json_success().
+				$data = $result['data'] ?? $result;
+				wp_send_json_success( $data );
+				break;
+
+			case 'history':
+				$result = IATO_MCP_IATO_Client::get_activity_log( $workspace_id, [
+					'limit' => 100,
+				] );
+
+				if ( is_wp_error( $result ) ) {
+					wp_send_json_error( $result->get_error_message() );
+				}
+
+				$data = $result['data'] ?? $result;
+				wp_send_json_success( $data );
 				break;
 
 			case 'approve':
-				if ( empty( $change_id ) ) wp_send_json_error( 'change_id required.' );
-				$result = IATO_MCP_IATO_Client::approve_change( $change_id );
+				if ( empty( $change_id ) ) wp_send_json_error( 'item id required.' );
+				$result = IATO_MCP_IATO_Client::update_queue_item( $workspace_id, $change_id, 'approved' );
 				break;
 
-			case 'reject':
-				if ( empty( $change_id ) ) wp_send_json_error( 'change_id required.' );
-				$result = IATO_MCP_IATO_Client::reject_change( $change_id );
+			case 'dismiss':
+				if ( empty( $change_id ) ) wp_send_json_error( 'item id required.' );
+				$result = IATO_MCP_IATO_Client::update_queue_item( $workspace_id, $change_id, 'dismissed' );
 				break;
 
-			case 'mark_fixed':
+			case 'rollback':
 				if ( empty( $change_id ) ) wp_send_json_error( 'change_id required.' );
-				$result = IATO_MCP_IATO_Client::mark_as_fixed( $change_id, $notes );
-				break;
+				$result = IATO_MCP_Rollback::rollback_by_id( $change_id );
+
+				if ( is_wp_error( $result ) ) {
+					wp_send_json_error( $result->get_error_message() );
+				}
+
+				wp_send_json_success( $result );
+				return;
 
 			default:
 				wp_send_json_error( 'Unknown operation.' );
-				return;
-		}
-
-		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( $result->get_error_message() );
-		}
-
-		wp_send_json_success( $result );
-	}
-
-	/**
-	 * Handle bulk actions.
-	 */
-	public static function ajax_bulk(): void {
-		check_ajax_referer( 'iato_mcp_review', '_wpnonce' );
-		if ( ! current_user_can( 'edit_posts' ) ) {
-			wp_send_json_error( 'Unauthorized.' );
-		}
-
-		$op           = sanitize_text_field( wp_unslash( $_POST['op'] ?? '' ) );
-		$workspace_id = sanitize_text_field( wp_unslash( $_POST['workspace_id'] ?? '' ) );
-		$notes        = sanitize_textarea_field( wp_unslash( $_POST['notes'] ?? '' ) );
-
-		if ( empty( $workspace_id ) ) {
-			wp_send_json_error( 'workspace_id required.' );
-		}
-
-		// Use workspace_id as batch_id (IATO batches by workspace for pending items).
-		$batch_id = $workspace_id;
-
-		switch ( $op ) {
-			case 'approve_batch':
-				$result = IATO_MCP_IATO_Client::approve_batch( $batch_id );
-				break;
-			case 'reject_batch':
-				$result = IATO_MCP_IATO_Client::reject_batch( $batch_id );
-				break;
-			case 'mark_batch_fixed':
-				$result = IATO_MCP_IATO_Client::mark_batch_as_fixed( $batch_id, $notes );
-				break;
-			default:
-				wp_send_json_error( 'Unknown bulk operation.' );
 				return;
 		}
 
