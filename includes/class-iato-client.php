@@ -451,14 +451,14 @@ class IATO_MCP_IATO_Client {
 	// ── Activity Log endpoints ───────────────────────────────────────────────
 
 	/**
-	 * GET /autopilot/{id}/activity-log
+	 * GET /autopilot/{id}/activity
 	 *
 	 * @param string $workspace_id
 	 * @param array  $params       Optional: action, limit, page.
 	 * @return array|WP_Error
 	 */
 	public static function get_activity_log( string $workspace_id, array $params = [] ): array|WP_Error {
-		return self::get( "/autopilot/{$workspace_id}/activity-log", $params );
+		return self::get( "/autopilot/{$workspace_id}/activity", $params );
 	}
 
 	// ── Schedule endpoints ───────────────────────────────────────────────────

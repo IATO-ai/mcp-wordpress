@@ -523,6 +523,11 @@ class IATO_MCP_Review_Queue {
 					wp_send_json_error( $result->get_error_message() );
 				}
 
+				// Guard against API error responses that slip through as arrays.
+				if ( ! empty( $result['code'] ) && 'NOT_FOUND' === ( $result['code'] ?? '' ) ) {
+					wp_send_json_error( $result['message'] ?? 'Activity endpoint not found.' );
+				}
+
 				$data = $result['data'] ?? $result;
 				wp_send_json_success( $data );
 				break;
