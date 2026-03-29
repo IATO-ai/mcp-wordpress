@@ -293,7 +293,8 @@ class IATO_MCP_Review_Queue {
 							.then(r => r.json())
 							.then(r => {
 								if (!r.success) { document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>' + (r.data || 'Failed to load history.') + '</p></div>'; return; }
-								historyItems = r.data.items || r.data || [];
+								const d = r.data || {};
+								historyItems = Array.isArray(d) ? d : (d.items || (Array.isArray(d.data) ? d.data : []));
 								renderHistory(historyItems);
 							})
 							.catch(() => {
@@ -464,8 +465,9 @@ class IATO_MCP_Review_Queue {
 							return Math.floor(diff / 86400) + 'd ago';
 						}
 
-						function escHtml(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-						function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+						function displayVal(v) { if (v === null || v === undefined) return ''; if (typeof v === 'object') return JSON.stringify(v); return String(v); }
+						function escHtml(s) { const str = displayVal(s); if (!str) return ''; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+						function escAttr(s) { return displayVal(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 
 						loadQueue();
 					})();
