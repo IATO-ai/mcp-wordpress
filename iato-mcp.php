@@ -82,6 +82,15 @@ function iato_mcp_activate() {
 	IATO_MCP_Auth::maybe_generate_key();
 	IATO_MCP_Change_Receipt::create_table();
 	update_option( 'iato_mcp_show_wizard', true );
+
+	// Clear stale autopilot queue from prior installs.
+	$api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
+	if ( $api_key !== '' ) {
+		$workspace_id = get_option( 'iato_mcp_workspace_id', '' );
+		if ( ! empty( $workspace_id ) ) {
+			IATO_MCP_IATO_Client::bulk_reject_all_pending( $workspace_id );
+		}
+	}
 }
 register_activation_hook( __FILE__, 'iato_mcp_activate' );
 
