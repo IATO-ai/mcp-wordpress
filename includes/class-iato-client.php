@@ -555,11 +555,11 @@ class IATO_MCP_IATO_Client {
 				}
 				$dismissed += count( $items );
 			} else {
-				// No batch_id — reject individually via POST endpoint.
+				// No batch_id — reject individually via PUT endpoint.
 				foreach ( $items as $item ) {
-					$item_id = $item['id'] ?? 0;
-					if ( $item_id ) {
-						$res = self::reject_change( (int) $item_id, 'Bulk clear from WordPress plugin' );
+					$item_id = $item['id'] ?? '';
+					if ( $item_id !== '' ) {
+						$res = self::update_queue_item( $workspace_id, (string) $item_id, 'rejected' );
 						if ( ! is_wp_error( $res ) ) {
 							$dismissed++;
 						}
