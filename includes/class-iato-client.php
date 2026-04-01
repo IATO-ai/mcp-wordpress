@@ -449,6 +449,21 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
+	 * POST /autopilot/changes/{change_id}/reject — reject a single queue item.
+	 *
+	 * @param int    $change_id Change queue item ID.
+	 * @param string $reason    Optional reason.
+	 * @return array|WP_Error
+	 */
+	public static function reject_change( int $change_id, string $reason = '' ): array|WP_Error {
+		$body = [];
+		if ( $reason !== '' ) {
+			$body['reason'] = $reason;
+		}
+		return self::post( "/autopilot/changes/{$change_id}/reject", $body );
+	}
+
+	/**
 	 * POST /autopilot/batches/{batch_id}/reject — bulk-reject all pending items in a batch.
 	 *
 	 * @param string $batch_id Batch UUID.
@@ -540,11 +555,11 @@ class IATO_MCP_IATO_Client {
 				}
 				$dismissed += count( $items );
 			} else {
-				// No batch_id — dismiss individually.
+				// No batch_id — reject individually via POST endpoint.
 				foreach ( $items as $item ) {
-					$item_id = $item['id'] ?? '';
-					if ( $item_id !== '' ) {
-						$res = self::update_queue_item( $workspace_id, (string) $item_id, 'dismissed' );
+					$item_id = $item['id'] ?? 0;
+					if ( $item_id ) {
+						$res = self::reject_change( (int) $item_id, 'Bulk clear from WordPress plugin' );
 						if ( ! is_wp_error( $res ) ) {
 							$dismissed++;
 						}
