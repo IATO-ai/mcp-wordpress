@@ -99,6 +99,9 @@ class IATO_MCP_Review_Queue {
 				.iato-status-badge.dismissed { background: #f3f4f6; color: #9ca3af; }
 				.iato-status-badge.rolled_back { background: rgba(237,161,69,0.12); color: #d97706; }
 				.iato-status-badge.pending_review { background: rgba(237,161,69,0.12); color: #eda145; }
+				.iato-status-badge.pending { background: rgba(237,161,69,0.12); color: #eda145; }
+				.iato-status-badge.rejected { background: rgba(239,68,68,0.12); color: #dc2626; }
+				.iato-status-badge.failed { background: rgba(239,68,68,0.12); color: #dc2626; }
 
 				.iato-rq-empty { text-align: center; padding: 60px 20px; color: #6b7280; }
 				.iato-rq-empty h2 { color: #111827; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
@@ -113,6 +116,14 @@ class IATO_MCP_Review_Queue {
 				/* Undo / rollback button */
 				.iato-rq-item-actions .button-undo { color: #d97706; border-color: #d97706; }
 				.iato-rq-item-actions .button-undo:hover { background: rgba(217,119,6,0.08); }
+
+				/* Pagination */
+				.iato-rq-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 16px 0; margin-top: 8px; }
+				.iato-rq-pagination button { padding: 6px 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; font-family: 'DM Sans', system-ui, sans-serif; font-size: 13px; color: #374151; cursor: pointer; transition: all 0.15s; }
+				.iato-rq-pagination button:hover:not(:disabled) { border-color: #4b72cc; color: #4b72cc; background: rgba(75,114,204,0.04); }
+				.iato-rq-pagination button:disabled { opacity: 0.4; cursor: default; }
+				.iato-rq-pagination .page-info { font-size: 13px; color: #6b7280; }
+				.iato-rq-pagination .page-info strong { color: #111827; }
 			</style>
 
 			<div class="iato-rq">
@@ -159,6 +170,7 @@ class IATO_MCP_Review_Queue {
 						</button>
 						<button class="iato-rq-tab" data-tab="history" id="rq-tab-history">
 							<?php esc_html_e( 'History', 'iato-mcp' ); ?>
+							<span class="tab-count" id="rq-history-count"></span>
 						</button>
 					</div>
 
@@ -170,10 +182,13 @@ class IATO_MCP_Review_Queue {
 							</select>
 							<select id="rq-filter-status" style="display:none;">
 								<option value=""><?php esc_html_e( 'All Statuses', 'iato-mcp' ); ?></option>
+								<option value="pending"><?php esc_html_e( 'Pending', 'iato-mcp' ); ?></option>
 								<option value="approved"><?php esc_html_e( 'Approved', 'iato-mcp' ); ?></option>
 								<option value="applied"><?php esc_html_e( 'Applied', 'iato-mcp' ); ?></option>
 								<option value="dismissed"><?php esc_html_e( 'Dismissed', 'iato-mcp' ); ?></option>
+								<option value="rejected"><?php esc_html_e( 'Rejected', 'iato-mcp' ); ?></option>
 								<option value="rolled_back"><?php esc_html_e( 'Rolled Back', 'iato-mcp' ); ?></option>
+								<option value="failed"><?php esc_html_e( 'Failed', 'iato-mcp' ); ?></option>
 							</select>
 						</div>
 					</div>
@@ -189,6 +204,8 @@ class IATO_MCP_Review_Queue {
 						const workspaceId = <?php echo wp_json_encode( $workspace_id ); ?>;
 						let currentTab = 'pending';
 						let historyItems = [];
+						let queuePage = 1, queuePages = 1, queueTotal = 0;
+						let historyPage = 1, historyPages = 1, historyTotal = 0;
 
 						// ── Tab switching ──────────────────────────────────
 
@@ -201,9 +218,11 @@ class IATO_MCP_Review_Queue {
 								const statusFilter = document.getElementById('rq-filter-status');
 								if (currentTab === 'history') {
 									statusFilter.style.display = '';
+									historyPage = 1;
 									loadHistory();
 								} else {
 									statusFilter.style.display = 'none';
+									queuePage = 1;
 									loadQueue();
 								}
 							});
@@ -221,14 +240,18 @@ class IATO_MCP_Review_Queue {
 									_wpnonce: nonce,
 									op: 'list',
 									workspace_id: workspaceId,
+									page: queuePage,
 								})
 							})
 							.then(r => r.json())
 							.then(r => {
 								if (!r.success) { document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>' + (r.data || 'Failed to load.') + '</p></div>'; return; }
-								const items = r.data.items || [];
-								const total = r.data.total || items.length;
-								document.getElementById('rq-pending-count').textContent = total;
+								const d = r.data || {};
+								const items = d.items || [];
+								queueTotal = d.total || items.length;
+								queuePages = d.pages || 1;
+								queuePage = d.page || queuePage;
+								document.getElementById('rq-pending-count').textContent = queueTotal;
 								renderQueue(items);
 							})
 							.catch(() => {
@@ -238,7 +261,7 @@ class IATO_MCP_Review_Queue {
 
 						function renderQueue(items) {
 							const container = document.getElementById('rq-content');
-							if (!items.length) {
+							if (!items.length && queuePage === 1) {
 								container.innerHTML = '<div class="iato-rq-empty"><h2>All clear!</h2><p>No pending items for review.</p></div>';
 								return;
 							}
@@ -270,31 +293,45 @@ class IATO_MCP_Review_Queue {
 								});
 								html += '</div></div>';
 							}
+
+							html += renderPagination(queuePage, queuePages, queueTotal, 'queue');
 							container.innerHTML = html;
 
 							buildFilterOptions(items, 'rq-filter-type');
 							applyFilters();
+
+							// Bind pagination buttons
+							bindPaginationEvents('queue');
 						}
 
 						// ── Activity History ──────────────────────────────────
 
 						function loadHistory() {
 							document.getElementById('rq-content').innerHTML = '<div class="iato-rq-loading"><span class="iato-spinner"></span> Loading history...</div>';
+							const statusVal = document.getElementById('rq-filter-status').value;
+							const params = {
+								action: 'iato_mcp_review_action',
+								_wpnonce: nonce,
+								op: 'history',
+								workspace_id: workspaceId,
+								page: historyPage,
+							};
+							if (statusVal) params.status_filter = statusVal;
+
 							fetch(ajaxurl, {
 								method: 'POST',
 								headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-								body: new URLSearchParams({
-									action: 'iato_mcp_review_action',
-									_wpnonce: nonce,
-									op: 'history',
-									workspace_id: workspaceId,
-								})
+								body: new URLSearchParams(params)
 							})
 							.then(r => r.json())
 							.then(r => {
 								if (!r.success) { document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><p>' + (r.data || 'Failed to load history.') + '</p></div>'; return; }
 								const d = r.data || {};
-								historyItems = Array.isArray(d) ? d : (d.items || (Array.isArray(d.data) ? d.data : []));
+								historyItems = Array.isArray(d) ? d : (d.entries || d.items || (Array.isArray(d.data) ? d.data : []));
+								historyTotal = d.total || historyItems.length;
+								historyPages = d.pages || 1;
+								historyPage = d.page || historyPage;
+								document.getElementById('rq-history-count').textContent = historyTotal;
 								renderHistory(historyItems);
 							})
 							.catch(() => {
@@ -304,48 +341,70 @@ class IATO_MCP_Review_Queue {
 
 						function renderHistory(items) {
 							const container = document.getElementById('rq-content');
-							if (!items.length) {
+							if (!items.length && historyPage === 1) {
 								container.innerHTML = '<div class="iato-rq-empty"><h2>No history yet</h2><p>Activity will appear here once Autopilot starts processing items.</p></div>';
 								return;
 							}
 
-							const groups = {};
+							let html = '';
 							items.forEach(item => {
-								const type = item.issue_type || item.field || 'other';
-								if (!groups[type]) groups[type] = [];
-								groups[type].push(item);
+								const status = item.action || item.status || 'unknown';
+								const changeId = item.change_queue_id || item.change_id || item.id || '';
+								html += '<div class="iato-rq-item" data-id="' + (item.id || '') + '" data-status="' + status + '">';
+								html += '<div class="iato-rq-item-info">';
+								html += '<div class="page-url">' + escHtml(item.page_url || '') + '</div>';
+								html += '<div class="current">';
+								html += '<span style="font-weight:500;color:#374151;">' + escHtml((item.issue_type || '').replace(/_/g, ' ')) + '</span>';
+								if (item.field && item.field !== 'unknown') html += ' &middot; ' + escHtml(item.field);
+								html += '</div>';
+								if (item.before_value || item.after_value) {
+									html += '<div class="current">Before: ' + escHtml(item.before_value || '(none)') + '</div>';
+									html += '<div class="proposed">After: ' + escHtml(item.after_value || item.proposed_value || '(none)') + '</div>';
+								}
+								html += '<div class="item-meta">';
+								html += '<span class="iato-status-badge ' + status + '">' + escHtml(status.replace(/_/g, ' ')) + '</span>';
+								html += '<span>' + escHtml(item.source || '') + '</span>';
+								if (item.created_at) html += '<span>' + timeAgo(item.created_at) + '</span>';
+								html += '</div>';
+								html += '</div>';
+								html += '<div class="iato-rq-item-actions">';
+								if (status === 'applied' && changeId) {
+									html += '<button class="button button-small button-undo" onclick="rqRollback(\'' + escAttr(changeId) + '\',this)">Undo</button>';
+								}
+								html += '</div></div>';
 							});
 
-							let html = '';
-							for (const [type, groupItems] of Object.entries(groups)) {
-								html += '<div class="iato-rq-group" data-type="' + type + '">';
-								html += '<div class="iato-rq-group-header"><h3>' + escHtml(type.replace(/_/g, ' ')) + '</h3><span class="count">' + groupItems.length + ' items</span></div>';
-								html += '<div class="iato-rq-items">';
-								groupItems.forEach(item => {
-									const status = item.status || 'unknown';
-									const changeId = item.change_id || '';
-									html += '<div class="iato-rq-item" data-id="' + (item.id || '') + '" data-status="' + status + '">';
-									html += '<div class="iato-rq-item-info">';
-									html += '<div class="page-url">' + escHtml(item.page_url || '') + '</div>';
-									html += '<div class="current">Before: ' + escHtml(item.before_value || '(none)') + '</div>';
-									html += '<div class="proposed">After: ' + escHtml(item.after_value || item.proposed_value || '') + '</div>';
-									html += '<div class="item-meta">';
-									html += '<span class="iato-status-badge ' + status + '">' + escHtml(status.replace(/_/g, ' ')) + '</span>';
-									if (item.applied_at) html += '<span>' + timeAgo(item.applied_at) + '</span>';
-									html += '</div>';
-									html += '</div>';
-									html += '<div class="iato-rq-item-actions">';
-									if (status === 'applied' && changeId) {
-										html += '<button class="button button-small button-undo" onclick="rqRollback(\'' + escAttr(changeId) + '\',this)">Undo</button>';
-									}
-									html += '</div></div>';
-								});
-								html += '</div></div>';
-							}
+							html += renderPagination(historyPage, historyPages, historyTotal, 'history');
 							container.innerHTML = html;
 
-							buildFilterOptions(items, 'rq-filter-type');
-							applyFilters();
+							bindPaginationEvents('history');
+						}
+
+						// ── Pagination ──────────────────────────────────
+
+						function renderPagination(page, pages, total, tabName) {
+							if (pages <= 1) return '';
+							let html = '<div class="iato-rq-pagination" data-tab="' + tabName + '">';
+							html += '<button class="pg-prev"' + (page <= 1 ? ' disabled' : '') + '>&laquo; Previous</button>';
+							html += '<span class="page-info">Page <strong>' + page + '</strong> of <strong>' + pages + '</strong> &middot; ' + total.toLocaleString() + ' total</span>';
+							html += '<button class="pg-next"' + (page >= pages ? ' disabled' : '') + '>Next &raquo;</button>';
+							html += '</div>';
+							return html;
+						}
+
+						function bindPaginationEvents(tabName) {
+							const pagination = document.querySelector('.iato-rq-pagination[data-tab="' + tabName + '"]');
+							if (!pagination) return;
+							const prev = pagination.querySelector('.pg-prev');
+							const next = pagination.querySelector('.pg-next');
+							if (prev) prev.addEventListener('click', function() {
+								if (tabName === 'queue' && queuePage > 1) { queuePage--; loadQueue(); }
+								if (tabName === 'history' && historyPage > 1) { historyPage--; loadHistory(); }
+							});
+							if (next) next.addEventListener('click', function() {
+								if (tabName === 'queue' && queuePage < queuePages) { queuePage++; loadQueue(); }
+								if (tabName === 'history' && historyPage < historyPages) { historyPage++; loadHistory(); }
+							});
 						}
 
 						// ── Shared Utilities ──────────────────────────────────
@@ -363,7 +422,9 @@ class IATO_MCP_Review_Queue {
 								alt_text: 'Alt Text', canonical: 'Canonical', h1: 'H1',
 								content: 'Content', navigation: 'Navigation', menu: 'Navigation',
 								taxonomy: 'Taxonomy', redirect: 'Redirects', link: 'Links',
-								structure: 'Structure'
+								structure: 'Structure', nofollow_meta: 'Nofollow Meta',
+								short_title: 'Short Title', missing_meta_description: 'Missing Meta Description',
+								missing_alt_text: 'Missing Alt Text',
 							};
 							Array.from(types).sort().forEach(type => {
 								const opt = document.createElement('option');
@@ -393,7 +454,12 @@ class IATO_MCP_Review_Queue {
 						}
 
 						document.getElementById('rq-filter-type').addEventListener('change', applyFilters);
-						document.getElementById('rq-filter-status').addEventListener('change', applyFilters);
+						document.getElementById('rq-filter-status').addEventListener('change', function() {
+							if (currentTab === 'history') {
+								historyPage = 1;
+								loadHistory();
+							}
+						});
 
 						// ── Actions ──────────────────────────────────
 
@@ -493,6 +559,7 @@ class IATO_MCP_Review_Queue {
 		$op           = sanitize_text_field( wp_unslash( $_POST['op'] ?? '' ) );
 		$change_id    = sanitize_text_field( wp_unslash( $_POST['change_id'] ?? '' ) );
 		$workspace_id = sanitize_text_field( wp_unslash( $_POST['workspace_id'] ?? '' ) );
+		$page         = max( 1, intval( $_POST['page'] ?? 1 ) );
 
 		if ( empty( $workspace_id ) ) {
 			wp_send_json_error( 'workspace_id required.' );
@@ -502,22 +569,32 @@ class IATO_MCP_Review_Queue {
 			case 'list':
 				$result = IATO_MCP_IATO_Client::get_queue( $workspace_id, [
 					'status' => 'pending_review',
+					'limit'  => 50,
+					'page'   => $page,
 				] );
 
 				if ( is_wp_error( $result ) ) {
 					wp_send_json_error( $result->get_error_message() );
 				}
 
-				// IATO returns { success, data: { items, total } }. Extract inner data
-				// so JS receives { items: [...], total: N } via wp_send_json_success().
+				// IATO returns { success, data: { items, total, page, pages } }.
+				// Extract inner data so JS receives it directly via wp_send_json_success().
 				$data = $result['data'] ?? $result;
 				wp_send_json_success( $data );
 				break;
 
 			case 'history':
-				$result = IATO_MCP_IATO_Client::get_activity_log( $workspace_id, [
-					'limit' => 100,
-				] );
+				$params = [
+					'limit' => 50,
+					'page'  => $page,
+				];
+
+				$status_filter = sanitize_text_field( wp_unslash( $_POST['status_filter'] ?? '' ) );
+				if ( ! empty( $status_filter ) ) {
+					$params['action'] = $status_filter;
+				}
+
+				$result = IATO_MCP_IATO_Client::get_activity_log( $workspace_id, $params );
 
 				if ( is_wp_error( $result ) ) {
 					wp_send_json_error( $result->get_error_message() );
