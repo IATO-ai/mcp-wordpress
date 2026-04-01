@@ -760,7 +760,7 @@ class IATO_MCP_Review_Queue {
 
 			case 'dismiss':
 				if ( empty( $change_id ) ) wp_send_json_error( 'item id required.' );
-				$result = IATO_MCP_IATO_Client::reject_change( (int) $change_id );
+				$result = IATO_MCP_IATO_Client::update_queue_item( $workspace_id, $change_id, 'rejected' );
 				break;
 
 			case 'mark_fixed':
