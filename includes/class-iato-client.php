@@ -448,6 +448,101 @@ class IATO_MCP_IATO_Client {
 		] );
 	}
 
+	/**
+	 * POST /autopilot/batches/{batch_id}/reject — bulk-reject all pending items in a batch.
+	 *
+	 * @param string $batch_id Batch UUID.
+	 * @return array|WP_Error
+	 */
+	public static function reject_batch( string $batch_id ): array|WP_Error {
+		return self::post( "/autopilot/batches/{$batch_id}/reject" );
+	}
+
+	/**
+	 * PUT /autopilot/{workspace_id}/queue/{item_id} — mark a single item as manually fixed.
+	 *
+	 * @param string $workspace_id
+	 * @param string $item_id
+	 * @param string $notes Optional notes.
+	 * @return array|WP_Error
+	 */
+	public static function mark_as_fixed( string $workspace_id, string $item_id, string $notes = '' ): array|WP_Error {
+		$body = [ 'status' => 'manually_fixed' ];
+		if ( $notes !== '' ) {
+			$body['notes'] = $notes;
+		}
+		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", $body );
+	}
+
+	/**
+	 * POST /autopilot/batches/{batch_id}/mark-fixed — bulk mark batch as manually fixed.
+	 *
+	 * @param string $batch_id Batch UUID.
+	 * @param string $notes    Optional notes.
+	 * @return array|WP_Error
+	 */
+	public static function mark_batch_as_fixed( string $batch_id, string $notes = '' ): array|WP_Error {
+		$body = [];
+		if ( $notes !== '' ) {
+			$body['notes'] = $notes;
+		}
+		return self::post( "/autopilot/batches/{$batch_id}/mark-fixed", $body );
+	}
+
+	/**
+	 * Bulk-reject all pending_review items for a workspace.
+	 *
+	 * Fetches all pending items page by page, collects unique batch IDs,
+	 * then calls reject_batch() for each.
+	 *
+	 * @param string $workspace_id
+	 * @return array{ batches_rejected: int, items_total: int }|WP_Error
+	 */
+	public static function bulk_reject_all_pending( string $workspace_id ): array|WP_Error {
+		$batch_ids = [];
+		$page      = 1;
+		$total     = 0;
+
+		do {
+			$result = self::get_queue( $workspace_id, [
+				'status' => 'pending_review',
+				'limit'  => 50,
+				'page'   => $page,
+			] );
+
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+
+			$data  = $result['data'] ?? $result;
+			$items = $data['items'] ?? [];
+			$pages = $data['pages'] ?? 1;
+			$total = $data['total'] ?? 0;
+
+			foreach ( $items as $item ) {
+				$bid = $item['batch_id'] ?? '';
+				if ( $bid !== '' ) {
+					$batch_ids[ $bid ] = true;
+				}
+			}
+
+			$page++;
+		} while ( $page <= $pages );
+
+		$rejected = 0;
+		foreach ( array_keys( $batch_ids ) as $bid ) {
+			$res = self::reject_batch( $bid );
+			if ( ! is_wp_error( $res ) ) {
+				$rejected++;
+			}
+		}
+
+		return [
+			'batches_rejected' => $rejected,
+			'items_total'      => $total,
+		];
+	}
+
 	// ── Activity Log endpoints ───────────────────────────────────────────────
 
 	/**

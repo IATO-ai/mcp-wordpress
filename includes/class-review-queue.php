@@ -74,11 +74,28 @@ class IATO_MCP_Review_Queue {
 				.iato-rq-filters select { padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; transition: border-color 0.15s, box-shadow 0.15s; }
 				.iato-rq-filters select:focus { border-color: #5a89f4; box-shadow: 0 0 0 2px rgba(90,137,244,0.1); outline: none; }
 				.iato-rq-group { margin-bottom: 24px; }
-				.iato-rq-group-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f3f4f6; border: 1px solid #e5e7eb; border-bottom: none; border-radius: 12px 12px 0 0; cursor: pointer; transition: background 0.15s; }
+				.iato-rq-group-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 12px 12px 0 0; cursor: pointer; transition: background 0.15s; user-select: none; }
+				.iato-rq-group.collapsed .iato-rq-group-header { border-radius: 12px; }
 				.iato-rq-group-header:hover { background: #e5e7eb; }
+				.iato-rq-group-header-left { display: flex; align-items: center; gap: 8px; }
 				.iato-rq-group-header h3 { margin: 0; font-size: 14px; color: #111827; text-transform: capitalize; }
 				.iato-rq-group-header .count { color: #6b7280; font-size: 13px; }
-				.iato-rq-items { border: 1px solid #e5e7eb; border-radius: 0 0 12px 12px; background: #fff; }
+				.iato-rq-group-header .chevron { transition: transform 0.2s; font-size: 12px; color: #6b7280; }
+				.iato-rq-group.collapsed .chevron { transform: rotate(-90deg); }
+				.iato-rq-group-header .group-summary { font-size: 12px; color: #9ca3af; margin-left: 8px; }
+				.iato-rq-group-header-right { display: flex; align-items: center; gap: 8px; }
+				.iato-rq-group-header-right .button-small { font-size: 11px; border-radius: 6px; }
+				.iato-rq-items { border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px; background: #fff; }
+				.iato-rq-group.collapsed .iato-rq-items { display: none; }
+
+				/* Manual fix badge */
+				.iato-manual-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background: rgba(237,161,69,0.12); color: #d97706; }
+				.iato-manual-instructions { font-size: 12px; color: #6b7280; margin-top: 4px; font-style: italic; }
+
+				/* Clear All banner */
+				.iato-rq-clear-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: rgba(237,161,69,0.08); border: 1px solid rgba(237,161,69,0.2); border-radius: 8px; margin-bottom: 16px; font-size: 13px; color: #92400e; }
+				.iato-rq-clear-bar .button { font-size: 12px; border-radius: 6px; color: #dc2626; border-color: #dc2626; }
+				.iato-rq-clear-bar .button:hover { background: rgba(220,38,38,0.08); }
 				.iato-rq-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px; border-bottom: 1px solid #e5e7eb; gap: 16px; transition: background 0.15s; }
 				.iato-rq-item:hover { background: #f9fafb; }
 				.iato-rq-item:last-child { border-bottom: none; }
@@ -259,6 +276,15 @@ class IATO_MCP_Review_Queue {
 							});
 						}
 
+						// Manual-fix explanation fallbacks by issue type
+						const manualExplanations = {
+							nofollow_meta: 'This page has a nofollow meta tag. Check Settings \u2192 Reading \u2192 "Discourage search engines" or your SEO plugin\'s indexing settings.',
+							h1_missing: 'This page has no H1 heading. Add one in the page editor or page builder.',
+							h1_duplicate: 'This page has multiple H1 headings. Keep only one and change others to H2.',
+							canonical: 'The canonical URL needs manual review. Check your SEO plugin\'s canonical settings for this page.',
+							noindex: 'This page is set to noindex. Check your SEO plugin or Settings \u2192 Reading if this is unintentional.',
+						};
+
 						function renderQueue(items) {
 							const container = document.getElementById('rq-content');
 							if (!items.length && queuePage === 1) {
@@ -274,21 +300,69 @@ class IATO_MCP_Review_Queue {
 							});
 
 							let html = '';
+
+							// Clear All bar
+							if (queueTotal > 0) {
+								html += '<div class="iato-rq-clear-bar">';
+								html += '<span>' + queueTotal.toLocaleString() + ' pending items across all pages. Items persist on the IATO platform between plugin installs.</span>';
+								html += '<button class="button button-small" onclick="rqClearAll(this)">Clear All Pending</button>';
+								html += '</div>';
+							}
+
 							for (const [type, groupItems] of Object.entries(groups)) {
-								html += '<div class="iato-rq-group" data-type="' + type + '">';
-								html += '<div class="iato-rq-group-header"><h3>' + escHtml(type.replace(/_/g, ' ')) + '</h3><span class="count">' + groupItems.length + ' items</span></div>';
+								const allManual = groupItems.every(i => !i.proposed_value);
+								const collapsed = groupItems.length > 5 ? ' collapsed' : '';
+								const ids = groupItems.map(i => i.id || '').filter(Boolean);
+
+								html += '<div class="iato-rq-group' + collapsed + '" data-type="' + type + '">';
+
+								// Group header
+								html += '<div class="iato-rq-group-header" onclick="rqToggleGroup(this)">';
+								html += '<div class="iato-rq-group-header-left">';
+								html += '<span class="chevron">&#9660;</span>';
+								html += '<h3>' + escHtml(type.replace(/_/g, ' ')) + '</h3>';
+								html += '<span class="count">' + groupItems.length + ' items</span>';
+								if (allManual) {
+									html += '<span class="group-summary">&mdash; manual fix required</span>';
+								}
+								html += '</div>';
+								html += '<div class="iato-rq-group-header-right" onclick="event.stopPropagation()">';
+								if (allManual) {
+									html += '<button class="button button-small" onclick="rqBulkAction(\'mark_fixed\',' + JSON.stringify(ids) + ',this)">Mark All Fixed</button>';
+								} else {
+									html += '<button class="button button-primary button-small" onclick="rqBulkAction(\'approve\',' + JSON.stringify(ids) + ',this)">Approve All</button>';
+								}
+								html += '<button class="button button-small" onclick="rqBulkAction(\'dismiss\',' + JSON.stringify(ids) + ',this)">Dismiss All</button>';
+								html += '</div>';
+								html += '</div>';
+
+								// Items
 								html += '<div class="iato-rq-items">';
 								groupItems.forEach(item => {
 									const cid = item.id || '';
+									const isManual = !item.proposed_value;
+
 									html += '<div class="iato-rq-item" data-id="' + cid + '">';
 									html += '<div class="iato-rq-item-info">';
 									html += '<div class="page-url">' + escHtml(item.page_url || '') + '</div>';
 									html += '<div class="current">Current: ' + escHtml(item.before_value || '(none)') + '</div>';
-									html += '<div class="proposed">Proposed: ' + escHtml(item.proposed_value || '') + '</div>';
+
+									if (isManual) {
+										html += '<div class="iato-manual-badge">Manual Fix Required</div>';
+										const explanation = item.manual_instructions || manualExplanations[type] || 'This issue cannot be auto-fixed and requires manual attention.';
+										html += '<div class="iato-manual-instructions">' + escHtml(explanation) + '</div>';
+									} else {
+										html += '<div class="proposed">Proposed: ' + escHtml(item.proposed_value) + '</div>';
+									}
+
 									html += '</div>';
 									html += '<div class="iato-rq-item-actions">';
 									html += '<button class="button button-small" onclick="rqAction(\'dismiss\',\'' + cid + '\',this)">Dismiss</button>';
-									html += '<button class="button button-primary button-small" onclick="rqAction(\'approve\',\'' + cid + '\',this)">Approve</button>';
+									if (isManual) {
+										html += '<button class="button button-small" style="color:#16a34a;border-color:#16a34a;" onclick="rqAction(\'mark_fixed\',\'' + cid + '\',this)">Mark Fixed</button>';
+									} else {
+										html += '<button class="button button-primary button-small" onclick="rqAction(\'approve\',\'' + cid + '\',this)">Approve</button>';
+									}
 									html += '</div></div>';
 								});
 								html += '</div></div>';
@@ -463,6 +537,74 @@ class IATO_MCP_Review_Queue {
 
 						// ── Actions ──────────────────────────────────
 
+						// Toggle group collapse
+						window.rqToggleGroup = function(header) {
+							header.closest('.iato-rq-group').classList.toggle('collapsed');
+						};
+
+						// Bulk action on a group
+						window.rqBulkAction = function(op, ids, btn) {
+							const label = op === 'approve' ? 'approve' : op === 'mark_fixed' ? 'mark as fixed' : 'dismiss';
+							if (!confirm('Are you sure you want to ' + label + ' all ' + ids.length + ' items in this group?')) return;
+							if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
+
+							let completed = 0;
+							const total = ids.length;
+							const group = btn ? btn.closest('.iato-rq-group') : null;
+
+							ids.forEach(cid => {
+								fetch(ajaxurl, {
+									method: 'POST',
+									headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+									body: new URLSearchParams({
+										action: 'iato_mcp_review_action',
+										_wpnonce: nonce,
+										op: op,
+										change_id: cid,
+										workspace_id: workspaceId,
+									})
+								})
+								.then(r => r.json())
+								.then(() => {
+									completed++;
+									if (completed >= total && group) {
+										group.remove();
+										queueTotal = Math.max(0, queueTotal - total);
+										document.getElementById('rq-pending-count').textContent = queueTotal;
+									}
+								});
+							});
+						};
+
+						// Clear all pending items
+						window.rqClearAll = function(btn) {
+							if (!confirm('Clear all ' + queueTotal.toLocaleString() + ' pending items? This cannot be undone.')) return;
+							if (btn) { btn.disabled = true; btn.textContent = 'Clearing...'; }
+
+							fetch(ajaxurl, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+								body: new URLSearchParams({
+									action: 'iato_mcp_review_action',
+									_wpnonce: nonce,
+									op: 'clear_all',
+									workspace_id: workspaceId,
+								})
+							})
+							.then(r => r.json())
+							.then(r => {
+								if (r.success) {
+									queueTotal = 0;
+									queuePage = 1;
+									document.getElementById('rq-pending-count').textContent = '0';
+									document.getElementById('rq-content').innerHTML = '<div class="iato-rq-empty"><h2>All clear!</h2><p>All pending items have been cleared.</p></div>';
+								} else {
+									alert(r.data || 'Failed to clear queue.');
+									if (btn) { btn.disabled = false; btn.textContent = 'Clear All Pending'; }
+								}
+							});
+						};
+
 						window.rqAction = function(op, changeId, btn) {
 							if (btn) btn.disabled = true;
 							fetch(ajaxurl, {
@@ -481,6 +623,8 @@ class IATO_MCP_Review_Queue {
 								if (r.success) {
 									const row = btn ? btn.closest('.iato-rq-item') : null;
 									if (row) row.remove();
+									queueTotal = Math.max(0, queueTotal - 1);
+									document.getElementById('rq-pending-count').textContent = queueTotal;
 								} else {
 									alert(r.data || 'Action failed.');
 									if (btn) btn.disabled = false;
@@ -618,6 +762,21 @@ class IATO_MCP_Review_Queue {
 				if ( empty( $change_id ) ) wp_send_json_error( 'item id required.' );
 				$result = IATO_MCP_IATO_Client::update_queue_item( $workspace_id, $change_id, 'dismissed' );
 				break;
+
+			case 'mark_fixed':
+				if ( empty( $change_id ) ) wp_send_json_error( 'item id required.' );
+				$result = IATO_MCP_IATO_Client::mark_as_fixed( $workspace_id, $change_id );
+				break;
+
+			case 'clear_all':
+				$result = IATO_MCP_IATO_Client::bulk_reject_all_pending( $workspace_id );
+
+				if ( is_wp_error( $result ) ) {
+					wp_send_json_error( $result->get_error_message() );
+				}
+
+				wp_send_json_success( $result );
+				return;
 
 			case 'rollback':
 				if ( empty( $change_id ) ) wp_send_json_error( 'change_id required.' );
