@@ -499,15 +499,16 @@ class IATO_MCP_IATO_Client {
 	 * @return array{ batches_rejected: int, items_total: int }|WP_Error
 	 */
 	public static function bulk_reject_all_pending( string $workspace_id ): array|WP_Error {
-		$batch_ids = [];
-		$page      = 1;
+		$dismissed = 0;
 		$total     = 0;
+		$page      = 1;
 
 		do {
+			// Always fetch page 1 since dismissed items drop off the list.
 			$result = self::get_queue( $workspace_id, [
 				'status' => 'pending_review',
 				'limit'  => 50,
-				'page'   => $page,
+				'page'   => 1,
 			] );
 
 			if ( is_wp_error( $result ) ) {
@@ -516,9 +517,16 @@ class IATO_MCP_IATO_Client {
 
 			$data  = $result['data'] ?? $result;
 			$items = $data['items'] ?? [];
-			$pages = $data['pages'] ?? 1;
-			$total = $data['total'] ?? 0;
+			if ( $page === 1 ) {
+				$total = $data['total'] ?? 0;
+			}
 
+			if ( empty( $items ) ) {
+				break;
+			}
+
+			// Try batch reject first if batch_id is present.
+			$batch_ids = [];
 			foreach ( $items as $item ) {
 				$bid = $item['batch_id'] ?? '';
 				if ( $bid !== '' ) {
@@ -526,20 +534,34 @@ class IATO_MCP_IATO_Client {
 				}
 			}
 
-			$page++;
-		} while ( $page <= $pages );
-
-		$rejected = 0;
-		foreach ( array_keys( $batch_ids ) as $bid ) {
-			$res = self::reject_batch( $bid );
-			if ( ! is_wp_error( $res ) ) {
-				$rejected++;
+			if ( ! empty( $batch_ids ) ) {
+				foreach ( array_keys( $batch_ids ) as $bid ) {
+					self::reject_batch( $bid );
+				}
+				$dismissed += count( $items );
+			} else {
+				// No batch_id — dismiss individually.
+				foreach ( $items as $item ) {
+					$item_id = $item['id'] ?? '';
+					if ( $item_id !== '' ) {
+						$res = self::update_queue_item( $workspace_id, (string) $item_id, 'dismissed' );
+						if ( ! is_wp_error( $res ) ) {
+							$dismissed++;
+						}
+					}
+				}
 			}
-		}
+
+			$page++;
+			// Safety: don't loop forever.
+			if ( $page > 200 ) {
+				break;
+			}
+		} while ( true );
 
 		return [
-			'batches_rejected' => $rejected,
-			'items_total'      => $total,
+			'items_dismissed' => $dismissed,
+			'items_total'     => $total,
 		];
 	}
 
