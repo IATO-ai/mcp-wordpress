@@ -544,28 +544,51 @@ class IATO_MCP_Settings {
 
 					<div class="iato-policy-section" id="iato-policy-section" style="<?php echo ! $autopilot_enabled ? 'display:none' : ''; ?>">
 
-						<h3 class="iato-section-title"><?php esc_html_e( 'Auto-Fix Rules', 'iato-mcp' ); ?></h3>
-						<p class="iato-hint" style="margin-bottom:12px"><?php esc_html_e( 'Choose which issue types Autopilot can fix automatically. Unchecked types will be sent to the Review Queue.', 'iato-mcp' ); ?></p>
+						<?php
+						$auto_fixable_rules = [
+							'title_too_short'            => __( 'Short SEO titles', 'iato-mcp' ),
+							'title_too_long'             => __( 'Long SEO titles', 'iato-mcp' ),
+							'missing_meta_description'   => __( 'Missing meta descriptions', 'iato-mcp' ),
+							'missing_alt_text'           => __( 'Missing image alt text', 'iato-mcp' ),
+							'missing_canonical'          => __( 'Missing canonical URLs', 'iato-mcp' ),
+							'missing_structured_data'    => __( 'Missing structured data', 'iato-mcp' ),
+							'missing_taxonomy'           => __( 'Missing taxonomy assignments', 'iato-mcp' ),
+						];
+						$review_only_rules = [
+							'missing_h1'                 => __( 'Missing H1 headings', 'iato-mcp' ),
+							'thin_content'               => __( 'Thin content pages', 'iato-mcp' ),
+							'broken_links'               => __( 'Broken links', 'iato-mcp' ),
+							'orphan_pages'               => __( 'Orphan pages', 'iato-mcp' ),
+							'duplicate_content'          => __( 'Duplicate content', 'iato-mcp' ),
+							'sitemap_node_missing_title' => __( 'Missing sitemap node titles', 'iato-mcp' ),
+							'slow_response'              => __( 'Slow page response', 'iato-mcp' ),
+						];
+						?>
+
+						<h3 class="iato-section-title"><?php esc_html_e( 'Auto-Fixable Rules', 'iato-mcp' ); ?></h3>
+						<p class="iato-hint" style="margin-bottom:12px"><?php esc_html_e( 'These issues can be automatically fixed by Autopilot. Unchecked types will be sent to the Review Queue instead.', 'iato-mcp' ); ?></p>
 
 						<div class="iato-policy-rules">
-							<?php
-							$rule_labels = [
-								'title_too_short'            => __( 'Short SEO titles', 'iato-mcp' ),
-								'title_too_long'             => __( 'Long SEO titles', 'iato-mcp' ),
-								'missing_meta_description'   => __( 'Missing meta descriptions', 'iato-mcp' ),
-								'missing_alt_text'           => __( 'Missing image alt text', 'iato-mcp' ),
-								'missing_canonical'          => __( 'Missing canonical URLs', 'iato-mcp' ),
-								'missing_h1'                 => __( 'Missing H1 headings', 'iato-mcp' ),
-								'missing_structured_data'    => __( 'Missing structured data', 'iato-mcp' ),
-								'missing_taxonomy'           => __( 'Missing taxonomy assignments', 'iato-mcp' ),
-								'sitemap_node_missing_title' => __( 'Missing sitemap node titles', 'iato-mcp' ),
-								'thin_content'               => __( 'Thin content pages', 'iato-mcp' ),
-								'broken_links'               => __( 'Broken links', 'iato-mcp' ),
-								'orphan_pages'               => __( 'Orphan pages', 'iato-mcp' ),
-								'duplicate_content'          => __( 'Duplicate content', 'iato-mcp' ),
-								'slow_response'              => __( 'Slow page response', 'iato-mcp' ),
-							];
-							foreach ( $rule_labels as $rule_key => $rule_label ) :
+							<?php foreach ( $auto_fixable_rules as $rule_key => $rule_label ) :
+								$rule_active = ( ( $policy_rules[ $rule_key ]['action'] ?? 'needs_review' ) === 'auto_fix' );
+							?>
+								<label class="iato-tool-item">
+									<div class="iato-toggle">
+										<input type="checkbox" name="iato_mcp_governance_policy[rules][<?php echo esc_attr( $rule_key ); ?>]" value="1" <?php checked( $rule_active ); ?> />
+										<span class="iato-toggle-slider" role="switch" aria-checked="<?php echo $rule_active ? 'true' : 'false'; ?>"></span>
+									</div>
+									<div class="iato-tool-info">
+										<span class="iato-tool-desc"><?php echo esc_html( $rule_label ); ?></span>
+									</div>
+								</label>
+							<?php endforeach; ?>
+						</div>
+
+						<h3 class="iato-section-title" style="margin-top:20px"><?php esc_html_e( 'Review Only', 'iato-mcp' ); ?></h3>
+						<p class="iato-hint" style="margin-bottom:12px"><?php esc_html_e( 'These issues are flagged for review but require manual fixes. Toggle on to have Autopilot flag them automatically.', 'iato-mcp' ); ?></p>
+
+						<div class="iato-policy-rules">
+							<?php foreach ( $review_only_rules as $rule_key => $rule_label ) :
 								$rule_active = ( ( $policy_rules[ $rule_key ]['action'] ?? 'needs_review' ) === 'auto_fix' );
 							?>
 								<label class="iato-tool-item">
