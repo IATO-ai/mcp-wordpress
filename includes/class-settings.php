@@ -97,12 +97,17 @@ class IATO_MCP_Settings {
 		'Comments'   => [ 'get_comments' ],
 	];
 
+	/** Page hook suffix returned by add_options_page(). */
+	private static string $page_hook = '';
+
 	public static function init(): void {
 		add_action( 'admin_menu', [ self::class, 'add_menu' ] );
 		add_action( 'admin_init', [ self::class, 'register_settings' ] );
+		add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_assets' ] );
 		add_action( 'admin_notices', [ self::class, 'setup_wizard_notice' ] );
 		add_action( 'admin_post_iato_mcp_dismiss_wizard', [ self::class, 'dismiss_wizard' ] );
 		add_action( 'admin_post_iato_mcp_regenerate_key', [ self::class, 'handle_regenerate_key' ] );
+		add_action( 'wp_ajax_iato_mcp_resync_policy', [ self::class, 'ajax_resync_policy' ] );
 	}
 
 	/**
@@ -122,7 +127,7 @@ class IATO_MCP_Settings {
 	// ── Admin Menu ───────────────────────────────────────────────────────────────
 
 	public static function add_menu(): void {
-		add_options_page(
+		self::$page_hook = (string) add_options_page(
 			__( 'IATO MCP', 'iato-mcp' ),
 			__( 'IATO MCP', 'iato-mcp' ),
 			'manage_options',
@@ -177,7 +182,9 @@ class IATO_MCP_Settings {
 	 * Sanitize and validate the IATO API key on save.
 	 */
 	public static function sanitize_api_key( string $value ): string {
-		$value = sanitize_text_field( $value );
+		// API keys may contain characters that sanitize_text_field strips (e.g. +, =).
+		// Instead, trim whitespace and remove control characters / HTML tags.
+		$value = trim( wp_strip_all_tags( $value ) );
 
 		if ( '' === $value ) {
 			delete_option( 'iato_mcp_api_key_valid' );
@@ -268,8 +275,23 @@ class IATO_MCP_Settings {
 	/** Allowed AI tone values. */
 	private const ALLOWED_TONES = [ 'professional', 'casual', 'technical', 'friendly' ];
 
-	/** Allowed auto-fix rule types. */
-	private const ALLOWED_RULE_TYPES = [ 'title', 'meta_description', 'alt_text', 'canonical' ];
+	/** All governance policy rule keys (must match IATO API). */
+	private const ALLOWED_RULE_TYPES = [
+		'missing_meta_description',
+		'missing_alt_text',
+		'title_too_short',
+		'title_too_long',
+		'missing_canonical',
+		'sitemap_node_missing_title',
+		'missing_h1',
+		'thin_content',
+		'broken_links',
+		'orphan_pages',
+		'duplicate_content',
+		'missing_taxonomy',
+		'missing_structured_data',
+		'slow_response',
+	];
 
 	/**
 	 * Sanitize governance policy array and sync to IATO API.
@@ -337,8 +359,8 @@ class IATO_MCP_Settings {
 		if ( empty( $governance_policy ) && $iato_api_key && $api_valid && $workspace_id ) {
 			$remote_policy = IATO_MCP_IATO_Client::get_governance_policy( $workspace_id );
 			if ( ! is_wp_error( $remote_policy ) && is_array( $remote_policy ) ) {
-				$governance_policy = $remote_policy;
-				$autopilot_enabled = ! empty( $remote_policy['is_active'] );
+				$governance_policy = $remote_policy['data'] ?? $remote_policy;
+				$autopilot_enabled = ! empty( $governance_policy['is_active'] );
 				update_option( 'iato_mcp_governance_policy', $governance_policy );
 				update_option( 'iato_mcp_autopilot_enabled', $autopilot_enabled );
 				update_option( 'iato_mcp_policy_synced_at', current_time( 'mysql' ) );
@@ -380,8 +402,6 @@ class IATO_MCP_Settings {
 		$enabled_count = $all_on ? count( self::TOOL_NAMES ) : count( $enabled );
 		$total_count   = count( self::TOOL_NAMES );
 
-		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
-		self::render_styles();
 		?>
 		<div class="iato-wrap">
 			<div class="iato-header">
@@ -530,10 +550,20 @@ class IATO_MCP_Settings {
 						<div class="iato-policy-rules">
 							<?php
 							$rule_labels = [
-								'title'            => __( 'Auto-fix missing/poor SEO titles', 'iato-mcp' ),
-								'meta_description' => __( 'Auto-fix missing meta descriptions', 'iato-mcp' ),
-								'alt_text'         => __( 'Auto-fix missing image alt text', 'iato-mcp' ),
-								'canonical'        => __( 'Auto-fix canonical URL issues', 'iato-mcp' ),
+								'title_too_short'            => __( 'Short SEO titles', 'iato-mcp' ),
+								'title_too_long'             => __( 'Long SEO titles', 'iato-mcp' ),
+								'missing_meta_description'   => __( 'Missing meta descriptions', 'iato-mcp' ),
+								'missing_alt_text'           => __( 'Missing image alt text', 'iato-mcp' ),
+								'missing_canonical'          => __( 'Missing canonical URLs', 'iato-mcp' ),
+								'missing_h1'                 => __( 'Missing H1 headings', 'iato-mcp' ),
+								'missing_structured_data'    => __( 'Missing structured data', 'iato-mcp' ),
+								'missing_taxonomy'           => __( 'Missing taxonomy assignments', 'iato-mcp' ),
+								'sitemap_node_missing_title' => __( 'Missing sitemap node titles', 'iato-mcp' ),
+								'thin_content'               => __( 'Thin content pages', 'iato-mcp' ),
+								'broken_links'               => __( 'Broken links', 'iato-mcp' ),
+								'orphan_pages'               => __( 'Orphan pages', 'iato-mcp' ),
+								'duplicate_content'          => __( 'Duplicate content', 'iato-mcp' ),
+								'slow_response'              => __( 'Slow page response', 'iato-mcp' ),
 							];
 							foreach ( $rule_labels as $rule_key => $rule_label ) :
 								$rule_active = ( ( $policy_rules[ $rule_key ]['action'] ?? 'needs_review' ) === 'auto_fix' );
@@ -573,18 +603,26 @@ class IATO_MCP_Settings {
 						</div>
 					</div>
 
-					<?php if ( $policy_synced_at ) : ?>
-						<p class="iato-hint" style="margin-top:12px">
-							<?php
-							/* translators: %s: date/time of last sync */
-							printf( esc_html__( 'Last synced with IATO: %s', 'iato-mcp' ), esc_html( $policy_synced_at ) );
-							?>
-						</p>
-					<?php elseif ( $iato_api_key && ! $api_valid ) : ?>
-						<p class="iato-hint" style="margin-top:12px;color:var(--iato-warning)"><?php esc_html_e( 'Local only — IATO API key is invalid.', 'iato-mcp' ); ?></p>
-					<?php elseif ( ! $iato_api_key ) : ?>
-						<p class="iato-hint" style="margin-top:12px"><?php esc_html_e( 'Local only — connect IATO API to sync.', 'iato-mcp' ); ?></p>
-					<?php endif; ?>
+					<div class="iato-sync-row" style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+						<?php if ( $iato_api_key && $api_valid && $workspace_id ) : ?>
+							<button type="button" id="iato-resync-btn" class="iato-btn" style="background:var(--iato-primary-light);color:var(--iato-primary);">
+								<span class="dashicons dashicons-update"></span>
+								<?php esc_html_e( 'Re-sync from IATO', 'iato-mcp' ); ?>
+							</button>
+						<?php endif; ?>
+						<?php if ( $policy_synced_at ) : ?>
+							<span class="iato-hint" id="iato-last-synced" style="margin:0">
+								<?php
+								/* translators: %s: date/time of last sync */
+								printf( esc_html__( 'Last synced: %s', 'iato-mcp' ), esc_html( $policy_synced_at ) );
+								?>
+							</span>
+						<?php elseif ( $iato_api_key && ! $api_valid ) : ?>
+							<span class="iato-hint" style="margin:0;color:var(--iato-warning)"><?php esc_html_e( 'Local only — IATO API key is invalid.', 'iato-mcp' ); ?></span>
+						<?php elseif ( ! $iato_api_key ) : ?>
+							<span class="iato-hint" style="margin:0"><?php esc_html_e( 'Local only — connect IATO API to sync.', 'iato-mcp' ); ?></span>
+						<?php endif; ?>
+					</div>
 				</div>
 
 				<!-- Card 4: Tools -->
@@ -642,15 +680,38 @@ class IATO_MCP_Settings {
 			</form>
 		</div>
 
-		<?php self::render_scripts(); ?>
 		<?php
+	}
+
+	// ── Asset Enqueue ────────────────────────────────────────────────────────────
+
+	/**
+	 * Enqueue inline CSS and JS for the settings page only.
+	 */
+	public static function enqueue_assets( string $hook ): void {
+		if ( self::$page_hook === '' || $hook !== self::$page_hook ) {
+			return;
+		}
+
+		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
+
+		wp_register_style( 'iato-mcp-admin-settings', false, [], IATO_MCP_VERSION );
+		wp_enqueue_style( 'iato-mcp-admin-settings' );
+		wp_add_inline_style( 'iato-mcp-admin-settings', self::get_inline_styles() );
+
+		wp_register_script( 'iato-mcp-admin-settings', false, [], IATO_MCP_VERSION, true );
+		wp_enqueue_script( 'iato-mcp-admin-settings' );
+		wp_add_inline_script( 'iato-mcp-admin-settings', self::get_inline_scripts() );
+		wp_localize_script( 'iato-mcp-admin-settings', 'iatoMcpSettings', [
+			'ajaxUrl'    => admin_url( 'admin-ajax.php' ),
+			'resyncNonce' => wp_create_nonce( 'iato_mcp_resync_policy' ),
+		] );
 	}
 
 	// ── Styles ───────────────────────────────────────────────────────────────────
 
-	private static function render_styles(): void {
-		?>
-		<style>
+	private static function get_inline_styles(): string {
+		return <<<'CSS'
 			/* ── Reset & Variables ──────────────────────────────── */
 			.iato-wrap {
 				--iato-primary: #5a89f4;
@@ -1258,21 +1319,36 @@ class IATO_MCP_Settings {
 				box-shadow: 0 0 36px rgba(90,137,244,0.3);
 			}
 
+			/* ── Re-sync button ──────────────────────────────── */
+			.iato-btn:hover {
+				opacity: 0.85;
+			}
+			.iato-btn:disabled {
+				opacity: 0.6;
+				cursor: wait;
+			}
+			@keyframes spin {
+				from { transform: rotate(0deg); }
+				to { transform: rotate(360deg); }
+			}
+
 			/* ── WordPress overrides ─────────────────────────── */
 			.iato-wrap .notice {
 				margin-left: 0;
 				margin-right: 0;
 			}
-		</style>
-		<?php
+CSS;
 	}
 
 	// ── Scripts ──────────────────────────────────────────────────────────────────
 
-	private static function render_scripts(): void {
-		?>
-		<script>
+	private static function get_inline_scripts(): string {
+		$copied_text = esc_js( __( 'Copied!', 'iato-mcp' ) );
+
+		return <<<JS
 		(function() {
+			var copiedText = '{$copied_text}';
+
 			// Copy to clipboard
 			document.querySelectorAll('.iato-copy-btn').forEach(function(btn) {
 				btn.addEventListener('click', function(e) {
@@ -1291,7 +1367,7 @@ class IATO_MCP_Settings {
 						var icon = btn.querySelector('.dashicons');
 						if (label) {
 							var orig = label.textContent;
-							label.textContent = '<?php echo esc_js( __( 'Copied!', 'iato-mcp' ) ); ?>';
+							label.textContent = copiedText;
 							setTimeout(function() { label.textContent = orig; btn.classList.remove('copied'); }, 2000);
 						} else if (icon) {
 							icon.className = 'dashicons dashicons-yes';
@@ -1375,9 +1451,80 @@ class IATO_MCP_Settings {
 					policySection.style.display = this.checked ? '' : 'none';
 				});
 			}
+
+			// Re-sync from IATO button
+			var resyncBtn = document.getElementById('iato-resync-btn');
+			if (resyncBtn && typeof iatoMcpSettings !== 'undefined') {
+				resyncBtn.addEventListener('click', function() {
+					var btn = this;
+					var icon = btn.querySelector('.dashicons');
+					btn.disabled = true;
+					if (icon) icon.style.animation = 'spin 1s linear infinite';
+
+					var formData = new FormData();
+					formData.append('action', 'iato_mcp_resync_policy');
+					formData.append('nonce', iatoMcpSettings.resyncNonce);
+
+					fetch(iatoMcpSettings.ajaxUrl, {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+					.then(function(r) { return r.json(); })
+					.then(function(resp) {
+						if (resp.success) {
+							window.location.reload();
+						} else {
+							alert(resp.data && resp.data.message ? resp.data.message : 'Sync failed.');
+							btn.disabled = false;
+							if (icon) icon.style.animation = '';
+						}
+					})
+					.catch(function() {
+						alert('Network error — could not reach server.');
+						btn.disabled = false;
+						if (icon) icon.style.animation = '';
+					});
+				});
+			}
 		})();
-		</script>
-		<?php
+JS;
+	}
+
+	// ── AJAX: Re-sync Governance Policy ─────────────────────────────────────────
+
+	/**
+	 * Re-fetch governance policy from the IATO API and update local options.
+	 */
+	public static function ajax_resync_policy(): void {
+		check_ajax_referer( 'iato_mcp_resync_policy', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Unauthorized.', 'iato-mcp' ) ] );
+		}
+
+		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		if ( ! $workspace_id ) {
+			wp_send_json_error( [ 'message' => __( 'No workspace ID configured.', 'iato-mcp' ) ] );
+		}
+
+		$result = IATO_MCP_IATO_Client::get_governance_policy( $workspace_id );
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( [ 'message' => $result->get_error_message() ] );
+		}
+
+		// Unwrap: API may return { data: { ... } } or flat object.
+		$policy = $result['data'] ?? $result;
+
+		// Update autopilot enabled state.
+		$autopilot_enabled = ! empty( $policy['is_active'] );
+		update_option( 'iato_mcp_autopilot_enabled', $autopilot_enabled );
+
+		// Update governance policy.
+		update_option( 'iato_mcp_governance_policy', $policy );
+		update_option( 'iato_mcp_policy_synced_at', current_time( 'mysql' ) );
+
+		wp_send_json_success( [ 'message' => __( 'Policy synced from IATO.', 'iato-mcp' ) ] );
 	}
 
 	// ── Setup Wizard Notice ──────────────────────────────────────────────────────
