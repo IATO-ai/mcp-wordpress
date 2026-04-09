@@ -450,7 +450,8 @@ CSS;
 		post('iato_mcp_wizard_crawl', { workspace_id: workspaceId }, this)
 			.then(function(r) {
 				if (r.success) {
-					document.getElementById('crawl-status').innerHTML = '<div class="iato-notice success">Crawl started! It will complete in the background.</div>';
+					var syncMsg = r.data.pages_synced ? ' ' + r.data.pages_synced + ' pages synced to IATO.' : '';
+					document.getElementById('crawl-status').innerHTML = '<div class="iato-notice success">Crawl started!' + syncMsg + ' It will complete in the background.</div>';
 					post('iato_mcp_wizard_complete', {}).then(function() {
 						setTimeout(function() {
 							document.querySelectorAll('.iato-wizard-card').forEach(function(c) { c.style.display = 'none'; });
@@ -661,7 +662,114 @@ JS;
 			update_option( 'iato_mcp_crawl_id', $crawl_id );
 		}
 
-		wp_send_json_success( [ 'crawl_id' => $crawl_id ] );
+		// Auto-sync WordPress pages to IATO so Autopilot has wp_post_id mappings.
+		$sync_result = self::auto_sync_pages();
+
+		wp_send_json_success( [
+			'crawl_id'     => $crawl_id,
+			'pages_synced' => $sync_result['created'] ?? 0,
+			'pages_total'  => $sync_result['total'] ?? 0,
+		] );
+	}
+
+	/**
+	 * Automatically sync WordPress posts/pages to IATO sitemap nodes.
+	 *
+	 * Resolves the sitemap_id from the workspace, then creates IATO nodes
+	 * for every published post/page with wp_post_id and wp_post_type so the
+	 * platform can map Autopilot fixes back to WordPress.
+	 *
+	 * @return array{created: int, skipped: int, total: int, sitemap_id: int}
+	 */
+	private static function auto_sync_pages(): array {
+		$empty = [ 'created' => 0, 'skipped' => 0, 'total' => 0, 'sitemap_id' => 0 ];
+
+		// Resolve workspace → sitemap.
+		$workspace_id = IATO_MCP_IATO_Client::resolve_workspace_id();
+		if ( empty( $workspace_id ) ) {
+			return $empty;
+		}
+
+		$sitemaps = IATO_MCP_IATO_Client::list_sitemaps( (int) $workspace_id );
+		if ( is_wp_error( $sitemaps ) ) {
+			return $empty;
+		}
+
+		$sitemap_list = $sitemaps['sitemaps'] ?? $sitemaps['data'] ?? $sitemaps;
+		if ( empty( $sitemap_list ) || ! is_array( $sitemap_list ) ) {
+			return $empty;
+		}
+
+		$sitemap_id = (int) ( $sitemap_list[0]['id'] ?? $sitemap_list[0]['sitemap_id'] ?? 0 );
+		if ( ! $sitemap_id ) {
+			return $empty;
+		}
+
+		update_option( 'iato_mcp_sitemap_id', $sitemap_id );
+
+		// Fetch existing IATO nodes for dedup.
+		$nodes_response = IATO_MCP_IATO_Client::get_sitemap_nodes( $sitemap_id );
+		$existing_urls  = [];
+		if ( ! is_wp_error( $nodes_response ) ) {
+			$nodes = $nodes_response['nodes'] ?? $nodes_response['data'] ?? $nodes_response;
+			if ( is_array( $nodes ) ) {
+				foreach ( $nodes as $node ) {
+					$url = $node['url'] ?? '';
+					if ( $url ) {
+						$existing_urls[ untrailingslashit( $url ) ] = true;
+					}
+				}
+			}
+		}
+
+		// Query all published posts and pages.
+		$posts = get_posts( [
+			'post_type'   => [ 'post', 'page' ],
+			'post_status' => 'publish',
+			'numberposts' => 500,
+			'orderby'     => 'date',
+			'order'       => 'DESC',
+		] );
+
+		$created = 0;
+		$skipped = 0;
+
+		foreach ( $posts as $post ) {
+			$url = untrailingslashit( get_permalink( $post ) );
+
+			if ( isset( $existing_urls[ $url ] ) ) {
+				++$skipped;
+				continue;
+			}
+
+			$page_type = match ( $post->post_type ) {
+				'post' => 'article',
+				'page' => 'landing',
+				default => $post->post_type,
+			};
+
+			$result = IATO_MCP_IATO_Client::create_sitemap_node(
+				$sitemap_id,
+				$post->post_title,
+				$url,
+				null,
+				'page',
+				$page_type,
+				$post->ID,
+				$post->post_type
+			);
+
+			if ( ! is_wp_error( $result ) ) {
+				++$created;
+			}
+		}
+
+		return [
+			'created'    => $created,
+			'skipped'    => $skipped,
+			'total'      => count( $posts ),
+			'sitemap_id' => $sitemap_id,
+		];
 	}
 
 	/**
