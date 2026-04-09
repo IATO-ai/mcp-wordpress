@@ -435,46 +435,53 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
-	 * PUT /autopilot/{workspace_id}/queue/{item_id} — update queue item status.
+	 * Update a queue item status, trying multiple endpoint patterns.
+	 *
+	 * Attempts:
+	 * 1. POST /autopilot/{workspace_id}/queue/{item_id}/{action}  (action-based)
+	 * 2. PUT  /autopilot/{workspace_id}/queue/{item_id}           (status field)
 	 *
 	 * @param string $workspace_id
 	 * @param string $item_id
-	 * @param string $status  'approved' or 'dismissed'.
+	 * @param string $status  'approved', 'rejected', or 'manually_fixed'.
 	 * @return array|WP_Error
 	 */
 	public static function update_queue_item( string $workspace_id, string $item_id, string $status ): array|WP_Error {
+		// Map status to action verb for POST endpoints.
+		$action_map = [
+			'approved'       => 'approve',
+			'rejected'       => 'reject',
+			'manually_fixed' => 'mark-fixed',
+		];
+
+		$action = $action_map[ $status ] ?? null;
+
+		// Try action-based POST endpoint first.
+		if ( $action ) {
+			$result = self::post( "/autopilot/{$workspace_id}/queue/{$item_id}/{$action}" );
+			if ( ! is_wp_error( $result ) ) {
+				return $result;
+			}
+		}
+
+		// Fallback: PUT with status field.
 		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", [
 			'status' => $status,
 		] );
 	}
 
 	/**
-	 * POST /autopilot/changes/{change_id}/reject — reject a single queue item.
-	 *
-	 * @param int    $change_id Change queue item ID.
-	 * @param string $reason    Optional reason.
-	 * @return array|WP_Error
-	 */
-	public static function reject_change( int $change_id, string $reason = '' ): array|WP_Error {
-		$body = [];
-		if ( $reason !== '' ) {
-			$body['reason'] = $reason;
-		}
-		return self::post( "/autopilot/changes/{$change_id}/reject", $body );
-	}
-
-	/**
-	 * POST /autopilot/batches/{batch_id}/reject — bulk-reject all pending items in a batch.
+	 * POST /autopilot/batch/{batch_id}/reject — bulk-reject all pending items in a batch.
 	 *
 	 * @param string $batch_id Batch UUID.
 	 * @return array|WP_Error
 	 */
 	public static function reject_batch( string $batch_id ): array|WP_Error {
-		return self::post( "/autopilot/batches/{$batch_id}/reject" );
+		return self::post( "/autopilot/batch/{$batch_id}/reject" );
 	}
 
 	/**
-	 * PUT /autopilot/{workspace_id}/queue/{item_id} — mark a single item as manually fixed.
+	 * Mark a single item as manually fixed.
 	 *
 	 * @param string $workspace_id
 	 * @param string $item_id
@@ -482,11 +489,23 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function mark_as_fixed( string $workspace_id, string $item_id, string $notes = '' ): array|WP_Error {
-		$body = [ 'status' => 'manually_fixed' ];
+		$body = [];
 		if ( $notes !== '' ) {
 			$body['notes'] = $notes;
 		}
-		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", $body );
+
+		// Try action-based POST endpoint.
+		$result = self::post( "/autopilot/{$workspace_id}/queue/{$item_id}/mark-fixed", $body );
+		if ( ! is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		// Fallback: PUT with status field.
+		$put_body = [ 'status' => 'manually_fixed' ];
+		if ( $notes !== '' ) {
+			$put_body['notes'] = $notes;
+		}
+		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", $put_body );
 	}
 
 	/**
@@ -514,12 +533,14 @@ class IATO_MCP_IATO_Client {
 	 * @return array{ batches_rejected: int, items_total: int }|WP_Error
 	 */
 	public static function bulk_reject_all_pending( string $workspace_id ): array|WP_Error {
-		$dismissed = 0;
-		$total     = 0;
-		$page      = 1;
+		$dismissed  = 0;
+		$errors     = 0;
+		$total      = 0;
+		$iteration  = 0;
+		$last_error = '';
 
 		do {
-			// Always fetch page 1 since dismissed items drop off the list.
+			// Always fetch page 1 since rejected items drop off the list.
 			$result = self::get_queue( $workspace_id, [
 				'status' => 'pending_review',
 				'limit'  => 50,
@@ -527,12 +548,15 @@ class IATO_MCP_IATO_Client {
 			] );
 
 			if ( is_wp_error( $result ) ) {
+				if ( $dismissed > 0 ) {
+					break; // Return partial results.
+				}
 				return $result;
 			}
 
 			$data  = $result['data'] ?? $result;
 			$items = $data['items'] ?? [];
-			if ( $page === 1 ) {
+			if ( $iteration === 0 ) {
 				$total = $data['total'] ?? 0;
 			}
 
@@ -551,33 +575,60 @@ class IATO_MCP_IATO_Client {
 
 			if ( ! empty( $batch_ids ) ) {
 				foreach ( array_keys( $batch_ids ) as $bid ) {
-					self::reject_batch( $bid );
+					$res = self::reject_batch( $bid );
+					if ( is_wp_error( $res ) ) {
+						$last_error = $res->get_error_message();
+						// Batch reject failed — fall through to individual.
+						$batch_ids = [];
+						break;
+					}
 				}
+			}
+
+			if ( ! empty( $batch_ids ) ) {
 				$dismissed += count( $items );
 			} else {
-				// No batch_id — reject individually via PUT endpoint.
+				// No batch_id or batch reject failed — reject individually.
 				foreach ( $items as $item ) {
 					$item_id = $item['id'] ?? '';
-					if ( $item_id !== '' ) {
-						$res = self::update_queue_item( $workspace_id, (string) $item_id, 'rejected' );
-						if ( ! is_wp_error( $res ) ) {
-							$dismissed++;
+					if ( $item_id === '' ) {
+						continue;
+					}
+					$res = self::update_queue_item( $workspace_id, (string) $item_id, 'rejected' );
+					if ( ! is_wp_error( $res ) ) {
+						$dismissed++;
+					} else {
+						$errors++;
+						$last_error = $res->get_error_message();
+						// If every item in this page fails, stop looping.
+						if ( $errors >= count( $items ) ) {
+							break 2;
 						}
 					}
 				}
 			}
 
-			$page++;
-			// Safety: don't loop forever.
-			if ( $page > 200 ) {
+			$iteration++;
+			if ( $iteration > 200 ) {
 				break;
 			}
 		} while ( true );
 
-		return [
+		$response = [
 			'items_dismissed' => $dismissed,
 			'items_total'     => $total,
 		];
+
+		if ( $dismissed === 0 && $last_error !== '' ) {
+			return new WP_Error( 'reject_failed', 'Could not reject items: ' . $last_error );
+		}
+
+		if ( $errors > 0 ) {
+			$response['errors'] = $errors;
+			$response['last_error'] = $last_error;
+		}
+
+		return $response;
 	}
 
 	// ── Activity Log endpoints ───────────────────────────────────────────────
@@ -732,6 +783,13 @@ class IATO_MCP_IATO_Client {
 
 		if ( ! is_array( $body ) ) {
 			return new WP_Error( 'iato_api_error', 'Invalid JSON response from IATO API' );
+		}
+
+		// IATO sometimes returns HTTP 200 with success:false in the body.
+		if ( isset( $body['success'] ) && false === $body['success'] ) {
+			$message = $body['data']['message'] ?? $body['message'] ?? $body['error'] ?? 'IATO API returned an error';
+			$err_code = $body['data']['code'] ?? $body['code'] ?? 'iato_api_error';
+			return new WP_Error( $err_code, $message, [ 'status' => $code, 'body' => $body ] );
 		}
 
 		return $body;
