@@ -1,5 +1,5 @@
 === IATO MCP ===
-Contributors: iato
+Contributors: iatoai
 Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.0
 Tested up to: 6.9

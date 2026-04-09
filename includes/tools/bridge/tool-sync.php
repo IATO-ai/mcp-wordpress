@@ -184,7 +184,9 @@ IATO_MCP_Server::register_tool(
 					$url,
 					null,
 					'page',
-					$page_type
+					$page_type,
+					$post->ID,
+					$post->post_type
 				);
 
 				if ( is_wp_error( $result ) ) {

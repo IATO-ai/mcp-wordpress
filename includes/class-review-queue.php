@@ -588,7 +588,7 @@ CSS;
 		if (showRejected) return items;
 		return items.filter(function(item) {
 			var s = item.action || item.status || '';
-			return s !== 'pending' && s !== 'rejected';
+			return s !== 'rejected';
 		});
 	}
 

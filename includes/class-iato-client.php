@@ -214,7 +214,7 @@ class IATO_MCP_IATO_Client {
 	 * @param string|null $page_type     'home'|'landing'|'article'|'product'|etc.
 	 * @return array|WP_Error
 	 */
-	public static function create_sitemap_node( int $sitemap_id, string $title, ?string $url = null, ?int $parent_node_id = null, string $node_type = 'page', ?string $page_type = null ): array|WP_Error {
+	public static function create_sitemap_node( int $sitemap_id, string $title, ?string $url = null, ?int $parent_node_id = null, string $node_type = 'page', ?string $page_type = null, ?int $wp_post_id = null, ?string $wp_post_type = null ): array|WP_Error {
 		$body = [ 'title' => $title, 'node_type' => $node_type ];
 		if ( null !== $url ) {
 			$body['url'] = $url;
@@ -224,6 +224,12 @@ class IATO_MCP_IATO_Client {
 		}
 		if ( null !== $page_type ) {
 			$body['page_type'] = $page_type;
+		}
+		if ( null !== $wp_post_id ) {
+			$body['wp_post_id'] = $wp_post_id;
+		}
+		if ( null !== $wp_post_type ) {
+			$body['wp_post_type'] = $wp_post_type;
 		}
 		return self::post( "/sitemaps/{$sitemap_id}/nodes", $body );
 	}

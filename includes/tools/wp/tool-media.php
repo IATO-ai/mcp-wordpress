@@ -84,8 +84,9 @@ IATO_MCP_Server::register_tool(
 		$cap_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
-		$attachment_id = absint( $args['id'] ?? 0 );
-		$alt           = sanitize_text_field( $args['alt'] ?? '' );
+		// Accept both schema names (id/alt) and Autopilot names (attachment_id/alt_text).
+		$attachment_id = absint( $args['id'] ?? $args['attachment_id'] ?? 0 );
+		$alt           = sanitize_text_field( $args['alt'] ?? $args['alt_text'] ?? '' );
 
 		if ( ! $attachment_id ) return new WP_Error( 'missing_id', 'Attachment ID required' );
 
