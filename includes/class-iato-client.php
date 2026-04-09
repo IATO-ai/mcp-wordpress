@@ -407,18 +407,18 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function get_governance_policy( string $workspace_id ): array|WP_Error {
-		return self::get( "/workspaces/{$workspace_id}/governance-policy" );
+		return self::get( "/autopilot/{$workspace_id}/policy" );
 	}
 
 	/**
-	 * POST /workspaces/{id}/governance-policy
+	 * PUT /autopilot/{id}/policy — partial upsert.
 	 *
 	 * @param string $workspace_id
 	 * @param array  $policy
 	 * @return array|WP_Error
 	 */
 	public static function update_governance_policy( string $workspace_id, array $policy ): array|WP_Error {
-		return self::post( "/workspaces/{$workspace_id}/governance-policy", $policy );
+		return self::put( "/autopilot/{$workspace_id}/policy", $policy );
 	}
 
 	// ── Autopilot Queue endpoints ───────────────────────────────────────────
