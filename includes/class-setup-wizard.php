@@ -14,12 +14,16 @@ defined( 'ABSPATH' ) || exit;
 
 class IATO_MCP_Setup_Wizard {
 
+	/** Page hook suffix for enqueue check. */
+	private static string $page_hook = '';
+
 	/**
 	 * Register hooks.
 	 */
 	public static function init(): void {
 		add_action( 'admin_menu', [ __CLASS__, 'register_page' ] );
 		add_action( 'admin_init', [ __CLASS__, 'maybe_redirect' ] );
+		add_action( 'admin_enqueue_scripts', [ __CLASS__, 'enqueue_assets' ] );
 
 		// AJAX handlers for each step.
 		add_action( 'wp_ajax_iato_mcp_wizard_connect', [ __CLASS__, 'ajax_connect' ] );
@@ -34,7 +38,7 @@ class IATO_MCP_Setup_Wizard {
 	 * Register hidden admin page (no menu entry).
 	 */
 	public static function register_page(): void {
-		add_submenu_page(
+		self::$page_hook = (string) add_submenu_page(
 			null, // No parent = hidden page.
 			__( 'IATO Setup', 'iato-mcp' ),
 			__( 'IATO Setup', 'iato-mcp' ),
@@ -42,6 +46,25 @@ class IATO_MCP_Setup_Wizard {
 			'iato-mcp-setup',
 			[ __CLASS__, 'render' ]
 		);
+	}
+
+	/**
+	 * Enqueue inline CSS/JS for the wizard page only.
+	 */
+	public static function enqueue_assets( string $hook ): void {
+		if ( self::$page_hook === '' || $hook !== self::$page_hook ) {
+			return;
+		}
+
+		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
+
+		wp_register_style( 'iato-mcp-setup-wizard', false, [], IATO_MCP_VERSION );
+		wp_enqueue_style( 'iato-mcp-setup-wizard' );
+		wp_add_inline_style( 'iato-mcp-setup-wizard', self::get_inline_styles() );
+
+		wp_register_script( 'iato-mcp-setup-wizard', false, [], IATO_MCP_VERSION, true );
+		wp_enqueue_script( 'iato-mcp-setup-wizard' );
+		wp_add_inline_script( 'iato-mcp-setup-wizard', self::get_inline_scripts() );
 	}
 
 	/**
@@ -86,46 +109,17 @@ class IATO_MCP_Setup_Wizard {
 		$api_key       = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		$nonce         = wp_create_nonce( 'iato_mcp_wizard' );
 
-		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
+		wp_localize_script( 'iato-mcp-setup-wizard', 'iatoWizard', [
+			'nonce'       => $nonce,
+			'ajaxurl'     => admin_url( 'admin-ajax.php' ),
+			'currentStep' => $current_step,
+			'workspaceId' => $workspace_id,
+			'siteUrl'     => site_url(),
+		] );
 
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'IATO Autopilot Setup', 'iato-mcp' ); ?></h1>
-
-			<style>
-				.iato-wizard { max-width: 680px; margin: 30px auto; font-family: 'DM Sans', system-ui, sans-serif; }
-				.iato-wizard-steps { display: flex; gap: 8px; margin-bottom: 30px; }
-				.iato-wizard-steps .step { flex: 1; padding: 12px; text-align: center; background: #f3f4f6; border-radius: 8px; font-size: 13px; color: #6b7280; transition: all 0.2s; }
-				.iato-wizard-steps .step.active { background: #5a89f4; color: #fff; font-weight: 600; }
-				.iato-wizard-steps .step.done { background: #38d68e; color: #fff; }
-				.iato-wizard-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin-bottom: 20px; transition: background 0.2s, box-shadow 0.2s; }
-				.iato-wizard-card h2 { margin-top: 0; color: #111827; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
-				.iato-wizard-card p { color: #6b7280; }
-				.iato-wizard-card label { display: block; margin-bottom: 8px; font-weight: 600; color: #111827; }
-				.iato-wizard-card input[type="text"],
-				.iato-wizard-card input[type="password"],
-				.iato-wizard-card select { width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; font-family: 'DM Sans', system-ui, sans-serif; transition: border-color 0.15s, box-shadow 0.15s; }
-				.iato-wizard-card input[type="text"]:focus,
-				.iato-wizard-card input[type="password"]:focus,
-				.iato-wizard-card select:focus { border-color: #5a89f4; box-shadow: 0 0 0 2px rgba(90,137,244,0.1); outline: none; }
-				.iato-wizard-card .field-group { margin-bottom: 16px; }
-				.iato-wizard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
-				.iato-wizard-actions .skip { color: #6b7280; text-decoration: none; font-size: 13px; cursor: pointer; transition: color 0.2s; }
-				.iato-wizard-actions .skip:hover { color: #5a89f4; }
-				.iato-wizard-actions .button-primary { background: #4b72cc; border-color: #4b72cc; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
-				.iato-wizard-actions .button-primary:hover { background: #3f64b8; border-color: #3f64b8; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
-				.iato-notice { padding: 12px 16px; border-left: 4px solid #eda145; background: rgba(237,161,69,0.12); margin-bottom: 16px; border-radius: 8px; }
-				.iato-notice.success { border-color: #38d68e; background: rgba(56,214,142,0.12); }
-				.iato-notice.error { border-color: #ef4444; background: rgba(239,68,68,0.12); }
-				.iato-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #5a89f4; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; margin-left: 8px; }
-				@keyframes iato-spin { to { transform: rotate(360deg); } }
-				.iato-completion { text-align: center; padding: 40px 20px; }
-				.iato-completion .checkmark { font-size: 48px; margin-bottom: 16px; }
-				.iato-completion h2 { color: #38d68e; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
-				.iato-cta { display: inline-block; padding: 8px 20px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13.5px; margin-top: 16px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
-				.iato-cta:hover { background: #3f64b8; color: #fff; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
-			</style>
-
 			<div class="iato-wizard">
 				<!-- Step indicator -->
 				<div class="iato-wizard-steps">
@@ -176,12 +170,27 @@ class IATO_MCP_Setup_Wizard {
 					<h2><?php esc_html_e( 'Configure Autopilot Policy', 'iato-mcp' ); ?></h2>
 					<p><?php esc_html_e( 'Set rules for what Autopilot can fix automatically vs. what requires your review.', 'iato-mcp' ); ?></p>
 
-					<div class="field-group">
-						<label><input type="checkbox" id="policy-auto-title" checked /> <?php esc_html_e( 'Auto-fix missing/poor SEO titles', 'iato-mcp' ); ?></label>
-						<label><input type="checkbox" id="policy-auto-desc" checked /> <?php esc_html_e( 'Auto-fix missing meta descriptions', 'iato-mcp' ); ?></label>
-						<label><input type="checkbox" id="policy-auto-alt" checked /> <?php esc_html_e( 'Auto-fix missing image alt text', 'iato-mcp' ); ?></label>
-						<label><input type="checkbox" id="policy-auto-canonical" /> <?php esc_html_e( 'Auto-fix canonical URL issues', 'iato-mcp' ); ?></label>
-					</div>
+					<fieldset class="field-group">
+						<legend style="font-weight:600;margin-bottom:8px;color:#111827"><?php esc_html_e( 'Auto-Fixable Rules', 'iato-mcp' ); ?></legend>
+						<label><input type="checkbox" id="policy-title_too_short" checked /> <?php esc_html_e( 'Short SEO titles', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-title_too_long" checked /> <?php esc_html_e( 'Long SEO titles', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-missing_meta_description" checked /> <?php esc_html_e( 'Missing meta descriptions', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-missing_alt_text" checked /> <?php esc_html_e( 'Missing image alt text', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-missing_canonical" /> <?php esc_html_e( 'Missing canonical URLs', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-missing_structured_data" /> <?php esc_html_e( 'Missing structured data', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-missing_taxonomy" /> <?php esc_html_e( 'Missing taxonomy assignments', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-sitemap_node_missing_title" /> <?php esc_html_e( 'Missing sitemap node titles', 'iato-mcp' ); ?></label>
+					</fieldset>
+
+					<fieldset class="field-group">
+						<legend style="font-weight:600;margin-bottom:8px;color:#111827"><?php esc_html_e( 'Review Only', 'iato-mcp' ); ?></legend>
+						<label><input type="checkbox" id="policy-missing_h1" /> <?php esc_html_e( 'Missing H1 headings', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-thin_content" /> <?php esc_html_e( 'Thin content pages', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-broken_links" /> <?php esc_html_e( 'Broken links', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-orphan_pages" /> <?php esc_html_e( 'Orphan pages', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-duplicate_content" /> <?php esc_html_e( 'Duplicate content', 'iato-mcp' ); ?></label>
+						<label><input type="checkbox" id="policy-slow_response" /> <?php esc_html_e( 'Slow page response', 'iato-mcp' ); ?></label>
+					</fieldset>
 
 					<div class="field-group">
 						<label for="policy-tone"><?php esc_html_e( 'AI Writing Tone', 'iato-mcp' ); ?></label>
@@ -221,9 +230,11 @@ class IATO_MCP_Setup_Wizard {
 					<div class="field-group">
 						<label for="schedule-time"><?php esc_html_e( 'Preferred Time', 'iato-mcp' ); ?></label>
 						<select id="schedule-time">
-							<?php for ( $h = 0; $h < 24; $h++ ) : ?>
+							<?php for ( $h = 0; $h < 24; $h++ ) :
+								$display = ( 0 === $h ) ? '12:00 AM' : ( $h < 12 ? $h . ':00 AM' : ( 12 === $h ? '12:00 PM' : ( $h - 12 ) . ':00 PM' ) );
+							?>
 								<option value="<?php echo esc_attr( sprintf( '%02d:00', $h ) ); ?>" <?php echo 3 === $h ? 'selected' : ''; ?>>
-									<?php echo esc_html( sprintf( '%02d:00', $h ) ); ?>
+									<?php echo esc_html( $display ); ?>
 								</option>
 							<?php endfor; ?>
 						</select>
@@ -280,134 +291,179 @@ class IATO_MCP_Setup_Wizard {
 					</div>
 				</div>
 			</div>
-
-			<script>
-			(function(){
-				const nonce = <?php echo wp_json_encode( $nonce ); ?>;
-				const ajaxurl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
-				let currentStep = <?php echo (int) $current_step; ?>;
-				let workspaceId = <?php echo wp_json_encode( $workspace_id ); ?>;
-
-				function showMessage(msg, type) {
-					if (typeof msg === 'object' && msg !== null) {
-						msg = msg.message || msg.error || JSON.stringify(msg);
-					}
-					const el = document.getElementById('iato-wizard-message');
-					el.innerHTML = '<div class="iato-notice ' + type + '">' + msg + '</div>';
-					if (type !== 'error') setTimeout(() => el.innerHTML = '', 5000);
-				}
-
-				function goToStep(step) {
-					currentStep = step;
-					document.querySelectorAll('.iato-wizard-card').forEach(c => c.style.display = 'none');
-					const el = document.getElementById('step-' + step);
-					if (el) el.style.display = '';
-					document.querySelectorAll('.iato-wizard-steps .step').forEach((s, i) => {
-						s.className = 'step' + (i + 1 === step ? ' active' : (i + 1 < step ? ' done' : ''));
-					});
-				}
-
-				function post(action, data, btn) {
-					let originalHTML;
-					if (btn) { originalHTML = btn.innerHTML; btn.disabled = true; btn.innerHTML += '<span class="iato-spinner"></span>'; }
-					return fetch(ajaxurl, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-						body: new URLSearchParams(Object.assign({ action, _wpnonce: nonce }, data))
-					})
-					.then(r => r.json())
-					.then(r => { if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; } return r; })
-					.catch(e => { if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; } showMessage(e.message, 'error'); throw e; });
-				}
-
-				// Step 1: Connect
-				document.getElementById('btn-connect').addEventListener('click', function() {
-					const key = document.getElementById('iato-api-key').value.trim();
-					if (!key) { showMessage('Please enter your API key.', 'error'); return; }
-					post('iato_mcp_wizard_connect', { api_key: key, workspace_id: document.getElementById('iato-workspace').value }, this)
-						.then(r => {
-							if (r.success && r.data.workspaces) {
-								// Show workspace selector.
-								const sel = document.getElementById('iato-workspace');
-								sel.innerHTML = '';
-								r.data.workspaces.forEach(w => {
-									const opt = document.createElement('option');
-									opt.value = w.id; opt.textContent = w.name;
-									sel.appendChild(opt);
-								});
-								document.getElementById('workspace-select-group').style.display = '';
-								showMessage('Connected! Select a workspace and click again.', 'success');
-							} else if (r.success && r.data.step) {
-								workspaceId = r.data.workspace_id;
-								showMessage('Connected!', 'success');
-								goToStep(r.data.step);
-							} else {
-								showMessage(r.data || 'Connection failed.', 'error');
-							}
-						});
-				});
-
-				// Step 2: Save Policy
-				document.getElementById('btn-save-policy').addEventListener('click', function() {
-					post('iato_mcp_wizard_policy', {
-						workspace_id: workspaceId,
-						auto_fix_types: JSON.stringify({
-							title: document.getElementById('policy-auto-title').checked,
-							meta_description: document.getElementById('policy-auto-desc').checked,
-							alt_text: document.getElementById('policy-auto-alt').checked,
-							canonical: document.getElementById('policy-auto-canonical').checked,
-						}),
-						tone: document.getElementById('policy-tone').value,
-						brand_context: document.getElementById('policy-brand').value,
-					}, this).then(r => {
-						if (r.success) { showMessage('Policy saved!', 'success'); goToStep(3); }
-						else showMessage(r.data || 'Failed to save policy.', 'error');
-					});
-				});
-
-				// Step 2: Skip Policy
-				document.getElementById('btn-skip-policy').addEventListener('click', function() {
-					if (!confirm('Autopilot will be disabled until you configure a policy. All issues will go to the review queue. Continue?')) return;
-					post('iato_mcp_wizard_skip_policy', { workspace_id: workspaceId }, this)
-						.then(r => { if (r.success) goToStep(3); });
-				});
-
-				// Step 3: Save Schedule
-				document.getElementById('btn-save-schedule').addEventListener('click', function() {
-					post('iato_mcp_wizard_schedule', {
-						workspace_id: workspaceId,
-						frequency: document.getElementById('schedule-frequency').value,
-						time: document.getElementById('schedule-time').value,
-						timezone: document.getElementById('schedule-timezone').value,
-						site_url: <?php echo wp_json_encode( site_url() ); ?>,
-					}, this).then(r => {
-						if (r.success) { showMessage('Schedule created!', 'success'); goToStep(4); }
-						else showMessage(r.data || 'Failed to create schedule.', 'error');
-					});
-				});
-
-				// Step 4: Run Crawl
-				document.getElementById('btn-run-crawl').addEventListener('click', function() {
-					post('iato_mcp_wizard_crawl', { workspace_id: workspaceId }, this)
-						.then(r => {
-							if (r.success) {
-								document.getElementById('crawl-status').innerHTML = '<div class="iato-notice success">Crawl started! It will complete in the background.</div>';
-								// Complete the wizard.
-								post('iato_mcp_wizard_complete', {}).then(() => {
-									setTimeout(() => {
-										document.querySelectorAll('.iato-wizard-card').forEach(c => c.style.display = 'none');
-										document.getElementById('step-complete').style.display = '';
-									}, 1000);
-								});
-							} else {
-								showMessage(r.data || 'Failed to start crawl.', 'error');
-							}
-						});
-				});
-			})();
-			</script>
 		</div>
 		<?php
+	}
+
+	// ── Inline Assets ────────────────────────────────────────────────────────
+
+	private static function get_inline_styles(): string {
+		return <<<'CSS'
+.iato-wizard { max-width: 680px; margin: 30px auto; font-family: 'DM Sans', system-ui, sans-serif; }
+.iato-wizard-steps { display: flex; gap: 8px; margin-bottom: 30px; }
+.iato-wizard-steps .step { flex: 1; padding: 12px; text-align: center; background: #f3f4f6; border-radius: 8px; font-size: 13px; color: #6b7280; transition: all 0.2s; }
+.iato-wizard-steps .step.active { background: #5a89f4; color: #fff; font-weight: 600; }
+.iato-wizard-steps .step.done { background: #38d68e; color: #fff; }
+.iato-wizard-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin-bottom: 20px; transition: background 0.2s, box-shadow 0.2s; }
+.iato-wizard-card h2 { margin-top: 0; color: #111827; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+.iato-wizard-card p { color: #6b7280; }
+.iato-wizard-card label { display: block; margin-bottom: 8px; font-weight: 600; color: #111827; }
+.iato-wizard-card input[type="text"],
+.iato-wizard-card input[type="password"],
+.iato-wizard-card select { width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; font-family: 'DM Sans', system-ui, sans-serif; transition: border-color 0.15s, box-shadow 0.15s; }
+.iato-wizard-card input[type="text"]:focus,
+.iato-wizard-card input[type="password"]:focus,
+.iato-wizard-card select:focus { border-color: #5a89f4; box-shadow: 0 0 0 2px rgba(90,137,244,0.1); outline: none; }
+.iato-wizard-card .field-group { margin-bottom: 16px; }
+.iato-wizard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
+.iato-wizard-actions .skip { color: #6b7280; text-decoration: none; font-size: 13px; cursor: pointer; transition: color 0.2s; }
+.iato-wizard-actions .skip:hover { color: #5a89f4; }
+.iato-wizard-actions .button-primary { background: #4b72cc; border-color: #4b72cc; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
+.iato-wizard-actions .button-primary:hover { background: #3f64b8; border-color: #3f64b8; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+.iato-notice { padding: 12px 16px; border-left: 4px solid #eda145; background: rgba(237,161,69,0.12); margin-bottom: 16px; border-radius: 8px; }
+.iato-notice.success { border-color: #38d68e; background: rgba(56,214,142,0.12); }
+.iato-notice.error { border-color: #ef4444; background: rgba(239,68,68,0.12); }
+.iato-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #5a89f4; border-radius: 50%; animation: iato-spin 0.6s linear infinite; vertical-align: middle; margin-left: 8px; }
+@keyframes iato-spin { to { transform: rotate(360deg); } }
+.iato-completion { text-align: center; padding: 40px 20px; }
+.iato-completion .checkmark { font-size: 48px; margin-bottom: 16px; }
+.iato-completion h2 { color: #38d68e; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+.iato-cta { display: inline-block; padding: 8px 20px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13.5px; margin-top: 16px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
+.iato-cta:hover { background: #3f64b8; color: #fff; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+CSS;
+	}
+
+	private static function get_inline_scripts(): string {
+		return <<<'JS'
+(function(){
+	var nonce = iatoWizard.nonce;
+	var ajaxurl = iatoWizard.ajaxurl;
+	var currentStep = parseInt(iatoWizard.currentStep, 10);
+	var workspaceId = iatoWizard.workspaceId;
+	var siteUrl = iatoWizard.siteUrl;
+
+	function showMessage(msg, type) {
+		if (typeof msg === 'object' && msg !== null) {
+			msg = msg.message || msg.error || JSON.stringify(msg);
+		}
+		var el = document.getElementById('iato-wizard-message');
+		el.innerHTML = '<div class="iato-notice ' + type + '">' + msg + '</div>';
+		if (type !== 'error') setTimeout(function() { el.innerHTML = ''; }, 5000);
+	}
+
+	function goToStep(step) {
+		currentStep = step;
+		document.querySelectorAll('.iato-wizard-card').forEach(function(c) { c.style.display = 'none'; });
+		var el = document.getElementById('step-' + step);
+		if (el) el.style.display = '';
+		document.querySelectorAll('.iato-wizard-steps .step').forEach(function(s, i) {
+			s.className = 'step' + (i + 1 === step ? ' active' : (i + 1 < step ? ' done' : ''));
+		});
+	}
+
+	function post(action, data, btn) {
+		var originalHTML;
+		if (btn) { originalHTML = btn.innerHTML; btn.disabled = true; btn.innerHTML += '<span class="iato-spinner"></span>'; }
+		return fetch(ajaxurl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(Object.assign({ action: action, _wpnonce: nonce }, data))
+		})
+		.then(function(r) { return r.json(); })
+		.then(function(r) { if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; } return r; })
+		.catch(function(e) { if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; } showMessage(e.message, 'error'); throw e; });
+	}
+
+	// Step 1: Connect
+	document.getElementById('btn-connect').addEventListener('click', function() {
+		var key = document.getElementById('iato-api-key').value.trim();
+		if (!key) { showMessage('Please enter your API key.', 'error'); return; }
+		var self = this;
+		post('iato_mcp_wizard_connect', { api_key: key, workspace_id: document.getElementById('iato-workspace').value }, self)
+			.then(function(r) {
+				if (r.success && r.data.workspaces) {
+					var sel = document.getElementById('iato-workspace');
+					sel.innerHTML = '';
+					r.data.workspaces.forEach(function(w) {
+						var opt = document.createElement('option');
+						opt.value = w.id; opt.textContent = w.name;
+						sel.appendChild(opt);
+					});
+					document.getElementById('workspace-select-group').style.display = '';
+					showMessage('Connected! Select a workspace and click again.', 'success');
+				} else if (r.success && r.data.step) {
+					workspaceId = r.data.workspace_id;
+					showMessage('Connected!', 'success');
+					goToStep(r.data.step);
+				} else {
+					showMessage(r.data || 'Connection failed.', 'error');
+				}
+			});
+	});
+
+	// Step 2: Save Policy
+	document.getElementById('btn-save-policy').addEventListener('click', function() {
+		var ruleKeys = [
+			'title_too_short','title_too_long','missing_meta_description','missing_alt_text',
+			'missing_canonical','missing_structured_data','missing_taxonomy','sitemap_node_missing_title',
+			'missing_h1','thin_content','broken_links','orphan_pages','duplicate_content','slow_response'
+		];
+		var autoFixTypes = {};
+		ruleKeys.forEach(function(k) {
+			var el = document.getElementById('policy-' + k);
+			if (el) autoFixTypes[k] = el.checked;
+		});
+		post('iato_mcp_wizard_policy', {
+			workspace_id: workspaceId,
+			auto_fix_types: JSON.stringify(autoFixTypes),
+			tone: document.getElementById('policy-tone').value,
+			brand_context: document.getElementById('policy-brand').value,
+		}, this).then(function(r) {
+			if (r.success) { showMessage('Policy saved!', 'success'); goToStep(3); }
+			else showMessage(r.data || 'Failed to save policy.', 'error');
+		});
+	});
+
+	// Step 2: Skip Policy
+	document.getElementById('btn-skip-policy').addEventListener('click', function() {
+		if (!confirm('Autopilot will be disabled until you configure a policy. All issues will go to the review queue. Continue?')) return;
+		post('iato_mcp_wizard_skip_policy', { workspace_id: workspaceId }, this)
+			.then(function(r) { if (r.success) goToStep(3); });
+	});
+
+	// Step 3: Save Schedule
+	document.getElementById('btn-save-schedule').addEventListener('click', function() {
+		post('iato_mcp_wizard_schedule', {
+			workspace_id: workspaceId,
+			frequency: document.getElementById('schedule-frequency').value,
+			time: document.getElementById('schedule-time').value,
+			timezone: document.getElementById('schedule-timezone').value,
+			site_url: siteUrl,
+		}, this).then(function(r) {
+			if (r.success) { showMessage('Schedule created!', 'success'); goToStep(4); }
+			else showMessage(r.data || 'Failed to create schedule.', 'error');
+		});
+	});
+
+	// Step 4: Run Crawl
+	document.getElementById('btn-run-crawl').addEventListener('click', function() {
+		post('iato_mcp_wizard_crawl', { workspace_id: workspaceId }, this)
+			.then(function(r) {
+				if (r.success) {
+					document.getElementById('crawl-status').innerHTML = '<div class="iato-notice success">Crawl started! It will complete in the background.</div>';
+					post('iato_mcp_wizard_complete', {}).then(function() {
+						setTimeout(function() {
+							document.querySelectorAll('.iato-wizard-card').forEach(function(c) { c.style.display = 'none'; });
+							document.getElementById('step-complete').style.display = '';
+						}, 1000);
+					});
+				} else {
+					showMessage(r.data || 'Failed to start crawl.', 'error');
+				}
+			});
+	});
+})();
+JS;
 	}
 
 	// ── AJAX Handlers ────────────────────────────────────────────────────────
@@ -485,8 +541,12 @@ class IATO_MCP_Setup_Wizard {
 		}
 
 		// Convert checkbox booleans to IATO rules format.
-		$rules = [];
-		$issue_types = [ 'title', 'meta_description', 'alt_text', 'canonical' ];
+		$rules       = [];
+		$issue_types = [
+			'title_too_short', 'title_too_long', 'missing_meta_description', 'missing_alt_text',
+			'missing_canonical', 'missing_structured_data', 'missing_taxonomy', 'sitemap_node_missing_title',
+			'missing_h1', 'thin_content', 'broken_links', 'orphan_pages', 'duplicate_content', 'slow_response',
+		];
 		foreach ( $issue_types as $type ) {
 			$rules[ $type ] = [
 				'action' => ! empty( $auto_fix_types[ $type ] ) ? 'auto_fix' : 'needs_review',

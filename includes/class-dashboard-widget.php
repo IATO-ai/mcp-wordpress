@@ -56,45 +56,20 @@ class IATO_MCP_Dashboard_Widget {
 
 		wp_enqueue_style( 'iato-mcp-fonts', 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono&display=swap', [], null );
 
-		?>
-		<style>
-			.iato-widget { font-size: 13px; font-family: 'DM Sans', system-ui, sans-serif; }
-			.iato-widget-score { display: flex; gap: 24px; align-items: center; padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 12px; }
-			.iato-widget-score .score-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; color: #fff; flex-shrink: 0; }
-			.iato-widget-score .score-circle.green { background: #38d68e; }
-			.iato-widget-score .score-circle.amber { background: #eda145; }
-			.iato-widget-score .score-circle.red { background: #ef4444; }
-			.iato-widget-score .delta { font-size: 12px; color: #6b7280; margin-top: 4px; }
-			.iato-widget-score .delta.positive { color: #38d68e; }
-			.iato-widget-score .delta.negative { color: #ef4444; }
-			.iato-widget-issues { display: flex; gap: 16px; margin-bottom: 12px; }
-			.iato-widget-issues .issue-count { display: flex; align-items: center; gap: 4px; }
-			.iato-widget-issues .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-			.iato-widget-issues .dot.error { background: #ef4444; }
-			.iato-widget-issues .dot.warning { background: #eda145; }
-			.iato-widget-issues .dot.info { background: #0ea5e9; }
-			.iato-widget-section { padding: 12px 0; border-top: 1px solid #e5e7eb; }
-			.iato-widget-section h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.06em; font-weight: 600; }
-			.iato-widget-section ul { margin: 0; padding: 0; list-style: none; }
-			.iato-widget-section li { padding: 4px 0; display: flex; justify-content: space-between; font-size: 12px; }
-			.iato-widget-section li .field { color: #6b7280; }
-			.iato-widget-section li .time { color: #9ca3af; }
-			.iato-widget-section li .icon-fixed { color: #38d68e; }
-			.iato-widget-section li .icon-manual { color: #eda145; }
-			.iato-widget-freshness { display: flex; justify-content: space-between; align-items: center; padding-top: 12px; border-top: 1px solid #e5e7eb; }
-			.iato-widget-freshness .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-			.iato-widget-freshness .indicator.green { background: #38d68e; }
-			.iato-widget-freshness .indicator.amber { background: #eda145; }
-			.iato-widget-freshness .indicator.red { background: #ef4444; }
-			.iato-widget-run { margin-top: 12px; text-align: right; }
-			.iato-widget-run .button { border-radius: 8px; transition: all 0.2s; }
-			.iato-widget-empty { text-align: center; padding: 20px 10px; }
-			.iato-widget-empty .cta { display: inline-block; padding: 8px 20px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13.5px; margin-top: 12px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
-			.iato-widget-empty .cta:hover { background: #3f64b8; color: #fff; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
-			.iato-widget-links { text-align: right; font-size: 12px; margin-top: 8px; }
-			.iato-widget-links a { color: #5a89f4; }
-		</style>
+		wp_register_style( 'iato-mcp-dashboard-widget', false, [], IATO_MCP_VERSION );
+		wp_enqueue_style( 'iato-mcp-dashboard-widget' );
+		wp_add_inline_style( 'iato-mcp-dashboard-widget', self::get_inline_styles() );
 
+		wp_register_script( 'iato-mcp-dashboard-widget', false, [], IATO_MCP_VERSION, true );
+		wp_enqueue_script( 'iato-mcp-dashboard-widget' );
+		wp_localize_script( 'iato-mcp-dashboard-widget', 'iatoDashWidget', [
+			'nonce'      => $nonce,
+			'ajaxurl'    => admin_url( 'admin-ajax.php' ),
+			'runningTxt' => __( 'Running...', 'iato-mcp' ),
+		] );
+		wp_add_inline_script( 'iato-mcp-dashboard-widget', self::get_inline_scripts() );
+
+		?>
 		<div class="iato-widget">
 			<?php if ( isset( $data['error'] ) ) : ?>
 				<p style="color:#ef4444"><?php echo esc_html( $data['error'] ); ?></p>
@@ -195,25 +170,6 @@ class IATO_MCP_Dashboard_Widget {
 					<button class="button button-small" id="iato-run-audit"><?php esc_html_e( 'Run Audit Now', 'iato-mcp' ); ?></button>
 				</div>
 
-				<script>
-				document.getElementById('iato-run-audit').addEventListener('click', function() {
-					this.disabled = true;
-					this.textContent = '<?php echo esc_js( __( 'Running...', 'iato-mcp' ) ); ?>';
-					fetch(<?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-						body: new URLSearchParams({
-							action: 'iato_mcp_widget_run_audit',
-							_wpnonce: <?php echo wp_json_encode( $nonce ); ?>,
-						})
-					})
-					.then(r => r.json())
-					.then(r => {
-						if (r.success) location.reload();
-						else { alert(r.data || 'Failed.'); this.disabled = false; this.textContent = 'Run Audit Now'; }
-					});
-				});
-				</script>
 
 			<?php endif; ?>
 		</div>
@@ -340,6 +296,74 @@ class IATO_MCP_Dashboard_Widget {
 		}
 
 		return $data;
+	}
+
+	/**
+	 * Get inline CSS for the dashboard widget.
+	 */
+	private static function get_inline_styles(): string {
+		return <<<'CSS'
+.iato-widget { font-size: 13px; font-family: 'DM Sans', system-ui, sans-serif; }
+.iato-widget-score { display: flex; gap: 24px; align-items: center; padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 12px; }
+.iato-widget-score .score-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.iato-widget-score .score-circle.green { background: #38d68e; }
+.iato-widget-score .score-circle.amber { background: #eda145; }
+.iato-widget-score .score-circle.red { background: #ef4444; }
+.iato-widget-score .delta { font-size: 12px; color: #6b7280; margin-top: 4px; }
+.iato-widget-score .delta.positive { color: #38d68e; }
+.iato-widget-score .delta.negative { color: #ef4444; }
+.iato-widget-issues { display: flex; gap: 16px; margin-bottom: 12px; }
+.iato-widget-issues .issue-count { display: flex; align-items: center; gap: 4px; }
+.iato-widget-issues .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.iato-widget-issues .dot.error { background: #ef4444; }
+.iato-widget-issues .dot.warning { background: #eda145; }
+.iato-widget-issues .dot.info { background: #0ea5e9; }
+.iato-widget-section { padding: 12px 0; border-top: 1px solid #e5e7eb; }
+.iato-widget-section h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.06em; font-weight: 600; }
+.iato-widget-section ul { margin: 0; padding: 0; list-style: none; }
+.iato-widget-section li { padding: 4px 0; display: flex; justify-content: space-between; font-size: 12px; }
+.iato-widget-section li .field { color: #6b7280; }
+.iato-widget-section li .time { color: #9ca3af; }
+.iato-widget-section li .icon-fixed { color: #38d68e; }
+.iato-widget-section li .icon-manual { color: #eda145; }
+.iato-widget-freshness { display: flex; justify-content: space-between; align-items: center; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+.iato-widget-freshness .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.iato-widget-freshness .indicator.green { background: #38d68e; }
+.iato-widget-freshness .indicator.amber { background: #eda145; }
+.iato-widget-freshness .indicator.red { background: #ef4444; }
+.iato-widget-run { margin-top: 12px; text-align: right; }
+.iato-widget-run .button { border-radius: 8px; transition: all 0.2s; }
+.iato-widget-empty { text-align: center; padding: 20px 10px; }
+.iato-widget-empty .cta { display: inline-block; padding: 8px 20px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13.5px; margin-top: 12px; box-shadow: 0 0 24px rgba(90,137,244,0.18); transition: all 0.2s; }
+.iato-widget-empty .cta:hover { background: #3f64b8; color: #fff; box-shadow: 0 0 36px rgba(90,137,244,0.3); }
+.iato-widget-links { text-align: right; font-size: 12px; margin-top: 8px; }
+.iato-widget-links a { color: #5a89f4; }
+CSS;
+	}
+
+	/**
+	 * Get inline JS for the dashboard widget.
+	 */
+	private static function get_inline_scripts(): string {
+		return <<<'JS'
+document.getElementById('iato-run-audit').addEventListener('click', function() {
+	this.disabled = true;
+	this.textContent = iatoDashWidget.runningTxt;
+	fetch(iatoDashWidget.ajaxurl, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+		body: new URLSearchParams({
+			action: 'iato_mcp_widget_run_audit',
+			_wpnonce: iatoDashWidget.nonce,
+		})
+	})
+	.then(function(r) { return r.json(); })
+	.then(function(r) {
+		if (r.success) location.reload();
+		else { alert(r.data || 'Failed.'); this.disabled = false; this.textContent = 'Run Audit Now'; }
+	}.bind(this));
+});
+JS;
 	}
 
 	/**

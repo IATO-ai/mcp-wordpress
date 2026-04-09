@@ -188,7 +188,8 @@ IATO_MCP_Server::register_tool(
 		$cap_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
-		$post_id = absint( $args['id'] );
+		// Accept both schema name (id) and Autopilot name (post_id).
+		$post_id = absint( $args['id'] ?? $args['post_id'] ?? 0 );
 		$post    = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );

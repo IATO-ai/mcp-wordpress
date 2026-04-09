@@ -193,19 +193,11 @@ class IATO_MCP_OAuth {
 	/**
 	 * Minimal approval screen so the WP admin confirms the connection.
 	 */
-	private static function render_authorize_screen( string $client_name ): void {
-		$site_name = sanitize_text_field( get_bloginfo( 'name' ) );
-		?>
-		<!DOCTYPE html>
-		<html <?php language_attributes(); ?>>
-		<head>
-			<meta charset="utf-8">
-			<meta name="viewport" content="width=device-width, initial-scale=1">
-			<title><?php
-			/* translators: %s: site name */
-			printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) );
-		?></title>
-			<style>
+	/**
+	 * Return the inline CSS for the authorize screen.
+	 */
+	private static function get_authorize_styles(): string {
+		return <<<'CSS'
 				:root {
 					--iato-primary: #1e40af;
 					--iato-primary-hover: #1e3a8a;
@@ -357,7 +349,30 @@ class IATO_MCP_OAuth {
 					font-size: 12px;
 					color: var(--iato-text-muted);
 				}
-			</style>
+CSS;
+	}
+
+	/**
+	 * Minimal approval screen so the WP admin confirms the connection.
+	 */
+	private static function render_authorize_screen( string $client_name ): void {
+		$site_name = sanitize_text_field( get_bloginfo( 'name' ) );
+
+		// Enqueue inline styles via WP.
+		wp_register_style( 'iato-mcp-oauth', false, [], IATO_MCP_VERSION );
+		wp_enqueue_style( 'iato-mcp-oauth' );
+		wp_add_inline_style( 'iato-mcp-oauth', self::get_authorize_styles() );
+		?>
+		<!DOCTYPE html>
+		<html <?php language_attributes(); ?>>
+		<head>
+			<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1">
+			<title><?php
+			/* translators: %s: site name */
+			printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) );
+			?></title>
+			<?php wp_print_styles( 'iato-mcp-oauth' ); ?>
 		</head>
 		<body>
 			<div class="auth-card">

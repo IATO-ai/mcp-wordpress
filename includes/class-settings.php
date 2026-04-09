@@ -251,7 +251,7 @@ class IATO_MCP_Settings {
 	 */
 	public static function sanitize_autopilot_enabled( $value ): bool {
 		$enabled      = (bool) $value;
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$workspace_id = IATO_MCP_IATO_Client::resolve_workspace_id();
 
 		if ( $workspace_id ) {
 			$result = IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, [
@@ -323,7 +323,7 @@ class IATO_MCP_Settings {
 		];
 
 		// Sync to IATO API (best-effort).
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$workspace_id = IATO_MCP_IATO_Client::resolve_workspace_id();
 		if ( $workspace_id ) {
 			$result = IATO_MCP_IATO_Client::update_governance_policy( $workspace_id, $policy );
 			if ( ! is_wp_error( $result ) ) {
@@ -342,7 +342,7 @@ class IATO_MCP_Settings {
 		}
 
 		$mcp_key      = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
-		$endpoint     = site_url( '/wp-json/iato-mcp/v1/message' );
+		$endpoint     = rest_url( 'iato-mcp/v1/message' );
 		$iato_api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		$crawl_id     = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
 		$enabled      = get_option( 'iato_mcp_tools', [] );
@@ -352,7 +352,7 @@ class IATO_MCP_Settings {
 		$api_valid          = (bool) get_option( 'iato_mcp_api_key_valid', false );
 		$autopilot_enabled  = (bool) get_option( 'iato_mcp_autopilot_enabled', false );
 		$governance_policy  = get_option( 'iato_mcp_governance_policy', [] );
-		$workspace_id       = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$workspace_id       = IATO_MCP_IATO_Client::resolve_workspace_id();
 		$policy_synced_at   = get_option( 'iato_mcp_policy_synced_at', '' );
 
 		// Fetch from IATO API on first load if local cache is empty.
@@ -553,6 +553,7 @@ class IATO_MCP_Settings {
 							'missing_canonical'          => __( 'Missing canonical URLs', 'iato-mcp' ),
 							'missing_structured_data'    => __( 'Missing structured data', 'iato-mcp' ),
 							'missing_taxonomy'           => __( 'Missing taxonomy assignments', 'iato-mcp' ),
+							'sitemap_node_missing_title' => __( 'Missing sitemap node titles', 'iato-mcp' ),
 						];
 						$review_only_rules = [
 							'missing_h1'                 => __( 'Missing H1 headings', 'iato-mcp' ),
@@ -560,7 +561,6 @@ class IATO_MCP_Settings {
 							'broken_links'               => __( 'Broken links', 'iato-mcp' ),
 							'orphan_pages'               => __( 'Orphan pages', 'iato-mcp' ),
 							'duplicate_content'          => __( 'Duplicate content', 'iato-mcp' ),
-							'sitemap_node_missing_title' => __( 'Missing sitemap node titles', 'iato-mcp' ),
 							'slow_response'              => __( 'Slow page response', 'iato-mcp' ),
 						];
 						?>
@@ -1526,7 +1526,7 @@ JS;
 			wp_send_json_error( [ 'message' => __( 'Unauthorized.', 'iato-mcp' ) ] );
 		}
 
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$workspace_id = IATO_MCP_IATO_Client::resolve_workspace_id();
 		if ( ! $workspace_id ) {
 			wp_send_json_error( [ 'message' => __( 'No workspace ID configured.', 'iato-mcp' ) ] );
 		}
@@ -1564,14 +1564,13 @@ JS;
 		}
 
 		$key          = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
-		$site_url     = site_url();
 		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
 		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_wizard' ), 'iato_mcp_dismiss_wizard' );
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
 				'wordpress' => [
-					'url'     => $site_url . '/wp-json/iato-mcp/v1/message',
+					'url'     => rest_url( 'iato-mcp/v1/message' ),
 					'headers' => [
 						'Authorization' => 'Bearer ' . $key,
 					],
