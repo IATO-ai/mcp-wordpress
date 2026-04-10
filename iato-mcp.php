@@ -26,11 +26,13 @@ require_once IATO_MCP_DIR . 'includes/class-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-iato-client.php';
 require_once IATO_MCP_DIR . 'includes/class-seo-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
+require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
 require_once IATO_MCP_DIR . 'includes/class-review-queue.php';
+require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
 require_once IATO_MCP_DIR . 'includes/class-dashboard-widget.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 
@@ -71,6 +73,7 @@ function iato_mcp_init() {
 	IATO_MCP_Rollback::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Review_Queue::init();
+	IATO_MCP_Diagnostics::init();
 	IATO_MCP_Dashboard_Widget::init();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
@@ -81,15 +84,22 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
 function iato_mcp_activate() {
 	IATO_MCP_Auth::maybe_generate_key();
 	IATO_MCP_Change_Receipt::create_table();
+	IATO_MCP_Call_Log::create_table();
 	update_option( 'iato_mcp_show_wizard', true );
 
-	// Clear stale autopilot queue from prior installs.
-	$api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
-	if ( $api_key !== '' ) {
-		$workspace_id = get_option( 'iato_mcp_workspace_id', '' );
-		if ( ! empty( $workspace_id ) ) {
-			IATO_MCP_IATO_Client::bulk_reject_all_pending( $workspace_id );
+	// Clear stale autopilot queue ONLY on the very first install.
+	// Re-activation must never wipe real Autopilot items — users often
+	// deactivate/reactivate during troubleshooting and expect their data
+	// to survive.
+	if ( ! get_option( 'iato_mcp_initial_cleanup_done' ) ) {
+		$api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
+		if ( '' !== $api_key ) {
+			$workspace_id = get_option( 'iato_mcp_workspace_id', '' );
+			if ( ! empty( $workspace_id ) ) {
+				IATO_MCP_IATO_Client::bulk_reject_all_pending( $workspace_id );
+			}
 		}
+		update_option( 'iato_mcp_initial_cleanup_done', true );
 	}
 }
 register_activation_hook( __FILE__, 'iato_mcp_activate' );

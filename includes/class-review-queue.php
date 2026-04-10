@@ -74,9 +74,10 @@ class IATO_MCP_Review_Queue {
 		$nonce        = wp_create_nonce( 'iato_mcp_review' );
 
 		wp_localize_script( 'iato-mcp-review-queue', 'iatoRQ', [
-			'nonce'       => $nonce,
-			'ajaxurl'     => admin_url( 'admin-ajax.php' ),
-			'workspaceId' => $workspace_id,
+			'nonce'          => $nonce,
+			'ajaxurl'        => admin_url( 'admin-ajax.php' ),
+			'workspaceId'    => $workspace_id,
+			'diagnosticsUrl' => admin_url( 'admin.php?page=iato-mcp-diagnostics' ),
 		] );
 
 		?>
@@ -328,7 +329,7 @@ CSS;
 	function renderQueue(items) {
 		var container = document.getElementById('rq-content');
 		if (!items.length && queuePage === 1) {
-			container.innerHTML = '<div class="iato-rq-empty"><h2>All clear!</h2><p>No pending items for review.</p></div>';
+			container.innerHTML = '<div class="iato-rq-empty"><h2>All clear!</h2><p>No pending items for review.</p><p style="margin-top:16px"><a href="' + (iatoRQ.diagnosticsUrl || '#') + '">Open Diagnostics</a> to see what the IATO platform is returning.</p></div>';
 			return;
 		}
 
@@ -456,7 +457,7 @@ CSS;
 	function renderHistory(items) {
 		var container = document.getElementById('rq-content');
 		if (!items.length && historyPage === 1) {
-			container.innerHTML = '<div class="iato-rq-empty"><h2>No history yet</h2><p>Activity will appear here once Autopilot starts processing items.</p></div>';
+			container.innerHTML = '<div class="iato-rq-empty"><h2>No history yet</h2><p>Activity will appear here once Autopilot starts processing items.</p><p style="margin-top:16px">Not seeing what you expect? <a href="' + (iatoRQ.diagnosticsUrl || '#') + '">Open Diagnostics</a> to see what the IATO platform is returning and whether callbacks are reaching this site.</p></div>';
 			return;
 		}
 

@@ -120,6 +120,15 @@ class IATO_MCP_Server {
 		$method = $body['method'] ?? '';
 		$params = $body['params'] ?? [];
 
+		$started   = microtime( true );
+		$tool_name = null;
+		$args      = null;
+
+		if ( 'tools/call' === $method ) {
+			$tool_name = (string) ( $params['name'] ?? '' );
+			$args      = $params['arguments'] ?? [];
+		}
+
 		switch ( $method ) {
 			case 'initialize':
 				$result = self::handle_initialize( $params );
@@ -131,18 +140,91 @@ class IATO_MCP_Server {
 				$result = self::handle_tools_call( $params );
 				break;
 			default:
+				self::log_call(
+					$method,
+					$tool_name,
+					$args,
+					'error',
+					'method_not_found',
+					'Method not found',
+					$started
+				);
 				return self::error_response( $id, -32601, 'Method not found' );
 		}
 
 		if ( is_wp_error( $result ) ) {
+			self::log_call(
+				$method,
+				$tool_name,
+				$args,
+				'error',
+				$result->get_error_code(),
+				$result->get_error_message(),
+				$started
+			);
 			return self::error_response( $id, -32000, $result->get_error_message() );
 		}
+
+		// tools/call may return a tool-level error envelope with isError=true.
+		$tool_error = null;
+		if ( 'tools/call' === $method && is_array( $result ) && ! empty( $result['isError'] ) ) {
+			$tool_error = isset( $result['content'][0]['text'] )
+				? (string) $result['content'][0]['text']
+				: 'tool_error';
+		}
+
+		self::log_call(
+			$method,
+			$tool_name,
+			$args,
+			null === $tool_error ? 'success' : 'error',
+			null === $tool_error ? null : 'tool_error',
+			$tool_error,
+			$started
+		);
 
 		return new WP_REST_Response( [
 			'jsonrpc' => '2.0',
 			'id'      => $id,
 			'result'  => $result,
 		], 200 );
+	}
+
+	/**
+	 * Record a call log entry for an incoming MCP request.
+	 *
+	 * @param string      $method   JSON-RPC method (initialize, tools/list, tools/call, etc.).
+	 * @param string|null $tool     Tool name (only for tools/call).
+	 * @param mixed       $args     Raw arguments array (only for tools/call).
+	 * @param string      $status   'success' | 'error' | 'unauthorized'.
+	 * @param string|null $code     Optional error code.
+	 * @param string|null $message  Optional error message.
+	 * @param float       $started  Value from microtime(true) at request start.
+	 */
+	private static function log_call(
+		string $method,
+		?string $tool,
+		mixed $args,
+		string $status,
+		?string $code,
+		?string $message,
+		float $started
+	): void {
+		if ( ! class_exists( 'IATO_MCP_Call_Log' ) ) {
+			return;
+		}
+		$duration_ms = (int) round( ( microtime( true ) - $started ) * 1000 );
+
+		IATO_MCP_Call_Log::record( [
+			'rpc_method'      => $method,
+			'tool_name'       => $tool,
+			'request_args'    => is_array( $args ) ? $args : null,
+			'response_status' => $status,
+			'error_code'      => $code,
+			'error_message'   => $message,
+			'duration_ms'     => $duration_ms,
+			'auth_user_id'    => function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0,
+		] );
 	}
 
 	// ── Method handlers ────────────────────────────────────────────────────────
