@@ -31,6 +31,7 @@ class IATO_MCP_Diagnostics {
 		add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_assets' ] );
 		add_action( 'admin_post_iato_mcp_diag_clear_log', [ self::class, 'handle_clear_log' ] );
 		add_action( 'admin_post_iato_mcp_diag_test_conn', [ self::class, 'handle_test_connection' ] );
+		add_action( 'admin_post_iato_mcp_diag_sync_policy', [ self::class, 'handle_sync_policy' ] );
 	}
 
 	/**
@@ -204,9 +205,15 @@ CSS;
 
 		$crawls_raw = '' !== $workspace_id ? IATO_MCP_IATO_Client::list_crawls() : [];
 		$crawl_err  = is_wp_error( $crawls_raw ) ? $crawls_raw->get_error_message() : '';
-		$crawls     = is_wp_error( $crawls_raw ) ? [] : ( $crawls_raw['crawls'] ?? $crawls_raw['data'] ?? $crawls_raw );
-		if ( ! is_array( $crawls ) ) {
-			$crawls = [];
+
+		// Unwrap { success, data: { crawls: [...] } } or { crawls: [...] } or [...].
+		$crawls = [];
+		if ( ! is_wp_error( $crawls_raw ) && is_array( $crawls_raw ) ) {
+			$inner  = $crawls_raw['data'] ?? $crawls_raw;
+			$crawls = $inner['crawls'] ?? $inner['items'] ?? ( isset( $inner[0] ) ? $inner : [] );
+			if ( ! is_array( $crawls ) ) {
+				$crawls = [];
+			}
 		}
 
 		$latest = $crawls[0] ?? null;
@@ -266,11 +273,16 @@ CSS;
 			: new WP_Error( 'no_workspace', __( 'No workspace resolved. Configure the API key in Settings first.', 'iato-mcp' ) );
 
 		$err     = is_wp_error( $result ) ? $result->get_error_message() : '';
-		$entries = is_wp_error( $result ) ? [] : ( $result['entries'] ?? $result['data'] ?? $result );
-		if ( ! is_array( $entries ) ) {
-			$entries = [];
+		$entries = [];
+		$total   = 0;
+		if ( ! is_wp_error( $result ) && is_array( $result ) ) {
+			$inner   = $result['data'] ?? $result;
+			$entries = $inner['items'] ?? $inner['entries'] ?? [];
+			if ( ! is_array( $entries ) ) {
+				$entries = [];
+			}
+			$total = (int) ( $inner['total'] ?? $result['total'] ?? count( $entries ) );
 		}
-		$total = is_wp_error( $result ) ? 0 : (int) ( $result['total'] ?? count( $entries ) );
 
 		$status = empty( $entries ) ? 'warn' : 'ok';
 
@@ -294,19 +306,28 @@ CSS;
 							<th><?php esc_html_e( 'Time', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Action', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Issue type', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Field', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Page', 'iato-mcp' ); ?></th>
-							<th><?php esc_html_e( 'Source', 'iato-mcp' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
 					<?php foreach ( $entries as $entry ) : ?>
-						<?php $action = (string) ( $entry['action'] ?? $entry['status'] ?? 'unknown' ); ?>
+						<?php
+						if ( ! is_array( $entry ) ) {
+							continue;
+						}
+						$action = (string) ( $entry['action'] ?? $entry['status'] ?? 'unknown' );
+						$time   = (string) ( $entry['created_at'] ?? $entry['applied_at'] ?? $entry['timestamp'] ?? '' );
+						$issue  = (string) ( $entry['issue_type'] ?? $entry['type'] ?? '' );
+						$field  = (string) ( $entry['field'] ?? '' );
+						$page   = (string) ( $entry['page_url'] ?? $entry['url'] ?? '' );
+						?>
 						<tr>
-							<td><?php echo esc_html( (string) ( $entry['created_at'] ?? '' ) ); ?></td>
+							<td><?php echo esc_html( $time ); ?></td>
 							<td><span class="status-badge <?php echo esc_attr( $action ); ?>"><?php echo esc_html( $action ); ?></span></td>
-							<td><?php echo esc_html( (string) ( $entry['issue_type'] ?? '' ) ); ?></td>
-							<td><span class="truncate" title="<?php echo esc_attr( (string) ( $entry['page_url'] ?? '' ) ); ?>"><?php echo esc_html( (string) ( $entry['page_url'] ?? '' ) ); ?></span></td>
-							<td><?php echo esc_html( (string) ( $entry['source'] ?? '' ) ); ?></td>
+							<td><?php echo esc_html( $issue ); ?></td>
+							<td><?php echo esc_html( $field ); ?></td>
+							<td><span class="truncate" title="<?php echo esc_attr( $page ); ?>"><?php echo esc_html( $page ); ?></span></td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>
@@ -483,6 +504,21 @@ CSS;
 					</td>
 				</tr>
 			</table>
+
+			<?php if ( ! $match && '' === $remote_err && ! empty( $remote_keys ) ) : ?>
+				<div class="section-actions">
+					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+						<input type="hidden" name="action" value="iato_mcp_diag_sync_policy" />
+						<?php wp_nonce_field( 'iato_mcp_diag_sync_policy' ); ?>
+						<button type="submit" class="button button-primary">
+							<?php esc_html_e( 'Pull remote policy → local', 'iato-mcp' ); ?>
+						</button>
+					</form>
+					<p class="description" style="margin-top:8px">
+						<?php esc_html_e( 'Replaces the local policy with whatever the IATO platform currently has. Use this when the rule counts differ.', 'iato-mcp' ); ?>
+					</p>
+				</div>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
@@ -519,6 +555,66 @@ CSS;
 		set_transient(
 			'iato_mcp_diag_notice',
 			[ 'type' => 'success', 'message' => __( 'MCP call log cleared.', 'iato-mcp' ) ],
+			30
+		);
+
+		wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_SLUG ) );
+		exit;
+	}
+
+	public static function handle_sync_policy(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		check_admin_referer( 'iato_mcp_diag_sync_policy' );
+
+		$workspace_id = IATO_MCP_IATO_Client::resolve_workspace_id();
+		if ( '' === $workspace_id ) {
+			set_transient(
+				'iato_mcp_diag_notice',
+				[ 'type' => 'error', 'message' => __( 'Cannot sync policy: no workspace resolved.', 'iato-mcp' ) ],
+				30
+			);
+			wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_SLUG ) );
+			exit;
+		}
+
+		$remote = IATO_MCP_IATO_Client::get_governance_policy( $workspace_id );
+		if ( is_wp_error( $remote ) ) {
+			set_transient(
+				'iato_mcp_diag_notice',
+				[
+					'type'    => 'error',
+					'message' => sprintf(
+						/* translators: %s is the error message. */
+						__( 'Failed to fetch remote policy: %s', 'iato-mcp' ),
+						$remote->get_error_message()
+					),
+				],
+				30
+			);
+			wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_SLUG ) );
+			exit;
+		}
+
+		$policy = $remote['policy'] ?? $remote['data'] ?? $remote;
+		if ( ! is_array( $policy ) ) {
+			$policy = [];
+		}
+
+		update_option( 'iato_mcp_governance_policy', $policy );
+		update_option( 'iato_mcp_policy_synced_at', current_time( 'mysql', true ) );
+
+		set_transient(
+			'iato_mcp_diag_notice',
+			[
+				'type'    => 'success',
+				'message' => sprintf(
+					/* translators: %d is the number of rules pulled. */
+					_n( 'Pulled %d rule from remote policy.', 'Pulled %d rules from remote policy.', count( $policy ), 'iato-mcp' ),
+					count( $policy )
+				),
+			],
 			30
 		);
 
