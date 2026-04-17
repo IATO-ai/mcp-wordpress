@@ -279,11 +279,16 @@ class IATO_MCP_Server {
 		$result  = call_user_func( $handler, $arguments );
 
 		if ( is_wp_error( $result ) ) {
+			$err_msg = $result->get_error_message();
+			// MCP spec requires text to be a string — IATO API errors can leak objects.
+			if ( ! is_string( $err_msg ) ) {
+				$err_msg = is_array( $err_msg ) ? wp_json_encode( $err_msg ) : (string) $err_msg;
+			}
 			return [
 				'isError' => true,
 				'content' => [[
 					'type' => 'text',
-					'text' => $result->get_error_message(),
+					'text' => $err_msg,
 				]],
 			];
 		}

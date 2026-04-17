@@ -4,12 +4,12 @@
 .gitignore
 .distignore
 .DS_Store
+.claude/
 CLAUDE.md
 docs/
 *.docx
-IATO_black.png
-IATO__icon_black.png
-pull_request.png
+IATO-Phase2-WordPress.md
+
+# WP.org asset overrides (served from SVN, not in plugin ZIP)
 assets/icon-*.png
 assets/screenshot-*.png
-IATO-Phase2-WordPress.md

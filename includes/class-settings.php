@@ -406,7 +406,7 @@ class IATO_MCP_Settings {
 		<div class="iato-wrap">
 			<div class="iato-header">
 				<div class="iato-header-top">
-					<h1 class="iato-title"><img src="<?php echo esc_url( IATO_MCP_URL . 'assets/img/logo.png' ); ?>" alt="IATO" height="36" style="vertical-align: middle;" /> <span class="iato-title-mcp">MCP</span></h1>
+					<h1 class="iato-title"><?php echo iato_mcp_logo_svg( 36 ); ?> <span class="iato-title-mcp">MCP</span></h1>
 					<span class="iato-version">v<?php echo esc_html( IATO_MCP_VERSION ); ?></span>
 				</div>
 				<p class="iato-subtitle"><?php esc_html_e( 'Model Context Protocol server for WordPress', 'iato-mcp' ); ?></p>
@@ -1580,7 +1580,7 @@ JS;
 		?>
 		<div class="notice" style="border-left-color: #5a89f4; padding: 0; overflow: hidden;">
 			<div style="padding: 20px 24px;">
-				<h3 style="margin: 0 0 12px; font-size: 16px; color: #5a89f4;"><img src="<?php echo esc_url( IATO_MCP_URL . 'assets/img/logo.png' ); ?>" alt="IATO" height="28" style="vertical-align: middle; margin-right: 8px;" /><span style="vertical-align: middle;">MCP — Ready to Connect</span></h3>
+				<h3 style="margin: 0 0 12px; font-size: 16px; color: #5a89f4;"><?php echo iato_mcp_logo_svg( 28 ); ?><span style="vertical-align: middle; margin-left: 8px;">MCP — Ready to Connect</span></h3>
 				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
 					<div style="flex: 0 0 24px; text-align: center;">
 						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">1</span>

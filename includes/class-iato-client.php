@@ -793,8 +793,15 @@ class IATO_MCP_IATO_Client {
 
 		// IATO sometimes returns HTTP 200 with success:false in the body.
 		if ( isset( $body['success'] ) && false === $body['success'] ) {
-			$message = $body['data']['message'] ?? $body['message'] ?? $body['error'] ?? 'IATO API returned an error';
+			$message  = $body['data']['message'] ?? $body['message'] ?? $body['error'] ?? 'IATO API returned an error';
 			$err_code = $body['data']['code'] ?? $body['code'] ?? 'iato_api_error';
+			// Ensure message is always a string — IATO may return nested objects.
+			if ( ! is_string( $message ) ) {
+				$message = is_array( $message ) ? wp_json_encode( $message ) : (string) $message;
+			}
+			if ( ! is_string( $err_code ) ) {
+				$err_code = 'iato_api_error';
+			}
 			return new WP_Error( $err_code, $message, [ 'status' => $code, 'body' => $body ] );
 		}
 
