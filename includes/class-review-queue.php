@@ -36,7 +36,7 @@ class IATO_MCP_Review_Queue {
 			'edit_posts',
 			'iato-review-queue',
 			[ __CLASS__, 'render' ],
-			IATO_MCP_URL . 'icon-white.png',
+			'data:image/svg+xml;base64,' . base64_encode( '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><polygon points="128,78 68,188 188,188" fill="black" stroke="black" stroke-width="24" stroke-linejoin="round"/><circle cx="128" cy="52" r="36" fill="black"/><circle cx="52" cy="204" r="36" fill="black"/><circle cx="204" cy="204" r="36" fill="black"/></svg>' ),
 			80
 		);
 	}

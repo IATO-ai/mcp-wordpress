@@ -376,7 +376,7 @@ CSS;
 		</head>
 		<body>
 			<div class="auth-card">
-				<div class="auth-brand"><img src="<?php echo esc_url( IATO_MCP_URL . 'assets/img/logo.png' ); ?>" alt="IATO" /> <span>MCP</span></div>
+				<div class="auth-brand"><?php echo iato_mcp_logo_svg( 40 ); ?> <span>MCP</span></div>
 				<h2 class="auth-title"><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
 				<p class="auth-desc">
 					<?php

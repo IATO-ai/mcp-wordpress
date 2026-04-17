@@ -21,6 +21,32 @@ define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
 
+/**
+ * Return the IATO logo as an inline <img> tag using a base64 data URI.
+ *
+ * Some hosts block direct access to PNG files in the plugins directory,
+ * so we embed the logo to guarantee it always renders.
+ *
+ * @param int $height Height attribute in pixels (default 36).
+ * @return string <img> markup.
+ */
+function iato_mcp_logo_svg( int $height = 36 ): string {
+	static $data_uri = null;
+	if ( null === $data_uri ) {
+		$path = IATO_MCP_DIR . 'assets/img/logo.png';
+		if ( file_exists( $path ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+			$data_uri = 'data:image/png;base64,' . base64_encode( file_get_contents( $path ) );
+		} else {
+			$data_uri = '';
+		}
+	}
+	if ( '' === $data_uri ) {
+		return '<span style="font-weight:700;">IATO</span>';
+	}
+	return '<img src="' . esc_attr( $data_uri ) . '" alt="IATO" height="' . esc_attr( $height ) . '" style="vertical-align:middle;" />';
+}
+
 // Core classes
 require_once IATO_MCP_DIR . 'includes/class-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-iato-client.php';
