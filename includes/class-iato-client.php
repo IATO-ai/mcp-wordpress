@@ -28,10 +28,15 @@ class IATO_MCP_IATO_Client {
 	/**
 	 * GET /crawl/jobs — list crawl jobs.
 	 *
+	 * Scopes the list to the saved workspace so users only see crawls in their
+	 * own account. Without the filter the platform returns an empty list.
+	 *
 	 * @return array|WP_Error
 	 */
 	public static function list_crawls(): array|WP_Error {
-		return self::get( '/crawl/jobs' );
+		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		$query        = $workspace_id !== '' ? [ 'workspace_id' => $workspace_id ] : [];
+		return self::get( '/crawl/jobs', $query );
 	}
 
 	/**
@@ -360,6 +365,17 @@ class IATO_MCP_IATO_Client {
 			'url'       => $url,
 			'max_pages' => $max_pages,
 		] );
+
+		// Tag the new crawl with the user's workspace_id so it scopes correctly
+		// (and shows up in subsequent list_crawls calls). Read directly from the
+		// saved option — no API roundtrip — to avoid blocking on platform reachability.
+		if ( empty( $body['workspace_id'] ) ) {
+			$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+			if ( $workspace_id !== '' ) {
+				$body['workspace_id'] = $workspace_id;
+			}
+		}
+
 		return self::post( '/crawl/start', $body );
 	}
 
