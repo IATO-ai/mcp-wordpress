@@ -221,14 +221,21 @@ IATO_MCP_Server::register_tool(
 			return $applied;
 		}
 
+		// previous_revision echoed only when the caller passed if_revision (they
+		// already had it; adds ~75B per response otherwise).
+		$echo_prev = ( null !== $if_revision && '' !== $if_revision );
+
 		if ( $dry_run ) {
-			return IATO_MCP_Server::ok( [
-				'post_id'           => $post_id,
-				'dry_run'           => true,
-				'previous_revision' => $previous_revision,
-				'current_revision'  => null,
-				'applied_patch'     => $applied,
-			] );
+			$preview = [
+				'post_id'          => $post_id,
+				'dry_run'          => true,
+				'current_revision' => null,
+				'applied_patch'    => $applied,
+			];
+			if ( $echo_prev ) {
+				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
+			}
+			return IATO_MCP_Server::ok( $preview );
 		}
 
 		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $elements, $previous_revision );
@@ -238,12 +245,14 @@ IATO_MCP_Server::register_tool(
 
 		$response = [
 			'post_id'             => $post_id,
-			'previous_revision'   => $pipeline['previous_revision'],
 			'current_revision'    => $pipeline['current_revision'],
 			'applied_patch'       => $applied,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
 		];
+		if ( $echo_prev ) {
+			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
+		}
 
 		// One change receipt for the whole patch — packed field marks the post as
 		// the target since the patch may touch many widgets. Storage rows take

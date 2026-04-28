@@ -931,30 +931,41 @@ class IATO_MCP_Elementor_Adapter {
 			return $err;
 		}
 
+		// previous_revision is only echoed when the caller passed if_revision —
+		// they already had it (confirms what the server saw on the matched read),
+		// and clients that didn't pass if_revision don't need it on the wire.
+		$echo_prev = ( null !== $if_revision );
+
 		// Short-circuit no-op writes — same input + zero applied ops means
 		// nothing to do. Skip the round-trip through Document::save and
 		// avoid any whitespace-difference noise from re-encoding.
 		if ( empty( $applied_patch ) ) {
-			return [
+			$noop = [
 				'post_id'             => $post_id,
 				'widget_id'           => $widget_id,
-				'previous_revision'   => $previous_revision,
 				'current_revision'    => $previous_revision,
 				'applied_patch'       => [],
 				'content_updated'     => false,
 				'post_content_length' => strlen( (string) get_post_field( 'post_content', $post_id ) ),
 			];
+			if ( $echo_prev ) {
+				$noop = [ 'previous_revision' => $previous_revision ] + $noop;
+			}
+			return $noop;
 		}
 
 		if ( $dry_run ) {
-			return [
-				'post_id'           => $post_id,
-				'widget_id'         => $widget_id,
-				'dry_run'           => true,
-				'previous_revision' => $previous_revision,
-				'current_revision'  => null,
-				'applied_patch'     => $applied_patch,
+			$preview = [
+				'post_id'          => $post_id,
+				'widget_id'        => $widget_id,
+				'dry_run'          => true,
+				'current_revision' => null,
+				'applied_patch'    => $applied_patch,
 			];
+			if ( $echo_prev ) {
+				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
+			}
+			return $preview;
 		}
 
 		$pipeline = self::write_pipeline( $post_id, $elements, $previous_revision );
@@ -965,12 +976,14 @@ class IATO_MCP_Elementor_Adapter {
 		$response = [
 			'post_id'             => $post_id,
 			'widget_id'           => $widget_id,
-			'previous_revision'   => $pipeline['previous_revision'],
 			'current_revision'    => $pipeline['current_revision'],
 			'applied_patch'       => $applied_patch,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
 		];
+		if ( $echo_prev ) {
+			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
+		}
 
 		$receipt_field = 'elementor:' . $widget_id . ':' . self::truncate_pointer( $widget_path . '/settings' );
 		$receipt       = IATO_MCP_Change_Receipt::record(

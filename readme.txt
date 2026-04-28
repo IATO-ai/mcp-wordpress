@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.3.2
+Stable tag: 1.3.3
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -138,6 +138,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.3.3 =
+* Optimization: v2 write tools (`update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`) now elide `previous_revision` from per-result responses unless the caller passed `if_revision`. Rationale: a client that passed `if_revision` already knows the prior hash (echoing back confirms what the server saw on conflict), and a client that didn't pass it doesn't need it on the wire — they get `current_revision` to chain the next write. Saves ~93 bytes per result; brings the canonical 4-page H1-flip benchmark response under the v2 spec's <2 KB hard target on the `op: replace` path.
+
 = 1.3.2 =
 * Fix: v2 write tools (`update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`) used to echo a verbose `change_receipt` containing the entire `applied_patch` JSON-stringified into `before_value`. That duplicated the top-level `applied_patch` field on every response and pushed bulk-update payloads over the spec's <2 KB target on a 4-page sweep. The receipt's `before_value` was also semantically wrong (it should be the value being replaced, not the patch). Fixed both: storage rows now record the canonical `previous_revision` → `current_revision` pair, and the API response carries only the receipt id + metadata (`{change_id, target_type, field, applied_at}`). Full audit data still queryable from the `iato_change_receipts` table for rollback. Per-update savings ~0.6–0.8 KB; on a 4-page bulk sweep that's ~3 KB shaved off the wire.
 
@@ -204,6 +207,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.3.3 =
+Slims v2 write responses by ~93 bytes per result by eliding the previous_revision echo when the caller didn't pass if_revision. Lands the canonical 4-page bulk benchmark under the spec's <2 KB hard target.
 
 = 1.3.2 =
 Slims v2 write-tool responses by ~600 bytes per update by removing redundant change_receipt fields. Brings 4-page bulk sweeps under the 2 KB spec target. No API breakage — the slim receipt still carries the change_id for downstream lookup.
