@@ -103,8 +103,8 @@ On error, return `isError: true` with a message — never throw exceptions out o
 | `get_page_builder` / `get_elementor_data` / `update_elementor_data` | tools/wp/tool-page-builder.php | read / edit_posts |
 | `list_elementor_widgets` / `get_elementor_widget` | tools/wp/tool-elementor-widgets.php | read |
 | `update_elementor_widget` / `update_elementor_patch` | tools/wp/tool-elementor-widgets.php | edit_posts |
-| `update_elementor_widgets_bulk` | tools/wp/tool-elementor-bulk.php | edit_posts (re-checked per post) |
-| `find_elementor_widgets` | tools/wp/tool-elementor-bulk.php | read (permission-filtered per post) |
+| `update_elementor_widgets_bulk` | tools/wp/tool-elementor-bulk.php | edit_posts |
+| `find_elementor_widgets` | tools/wp/tool-elementor-bulk.php | read |
 | `set_heading_level` / `set_widget_setting` | tools/wp/tool-elementor-helpers.php | edit_posts |
 | `resolve_url` | tools/wp/tool-resolve-url.php | read |
 

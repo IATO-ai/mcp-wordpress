@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.3.0
+ * Version:     1.3.1
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.3.0' );
+define( 'IATO_MCP_VERSION', '1.3.1' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -106,8 +106,48 @@ function iato_mcp_init() {
 	IATO_MCP_Rollback::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
+	iato_mcp_maybe_run_migrations();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
+
+/**
+ * Run idempotent one-shot migrations gated by stored db_version.
+ *
+ * Activation hooks don't fire on plugin update, so any post-install
+ * data fix-ups have to live here. Each migration block compares against
+ * iato_mcp_db_version and bumps the option on success.
+ */
+function iato_mcp_maybe_run_migrations() {
+	$db_version = get_option( 'iato_mcp_db_version', '0' );
+
+	// 1.3.1: append v2 tool names to iato_mcp_tools so existing installs
+	// upgrading from 1.2.x don't see the new Elementor v2 tools auto-disabled
+	// (is_tool_enabled() returns false for any name not in the saved array).
+	if ( version_compare( $db_version, '1.3.1', '<' ) ) {
+		$saved = get_option( 'iato_mcp_tools', null );
+		if ( is_array( $saved ) && ! empty( $saved ) ) {
+			$new_v2 = [
+				'list_elementor_widgets',
+				'get_elementor_widget',
+				'update_elementor_widget',
+				'update_elementor_patch',
+				'update_elementor_widgets_bulk',
+				'find_elementor_widgets',
+				'set_heading_level',
+				'set_widget_setting',
+				'resolve_url',
+			];
+			$missing = array_diff( $new_v2, $saved );
+			if ( ! empty( $missing ) ) {
+				update_option( 'iato_mcp_tools', array_values( array_merge( $saved, $missing ) ), false );
+			}
+		}
+	}
+
+	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
+		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
+	}
+}
 
 /**
  * Activation hook — show setup wizard on first run.

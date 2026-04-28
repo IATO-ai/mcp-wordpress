@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.3.0
+Stable tag: 1.3.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -138,6 +138,10 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.3.1 =
+* Fix: `update_elementor_widgets_bulk` and `find_elementor_widgets` no longer reject every request with `auth_denied`. The handlers were calling `current_user_can( 'edit_post', $post_id )` / `current_user_can( 'read_post', $pid )` per-target, but bearer-authenticated MCP requests don't establish a logged-in WP user — `wp_get_current_user()` returns 0, and meta-cap checks against post objects always fail. v1 tools sidestep this via `IATO_MCP_Auth::require_cap()`, which is a flag check that returns true for any bearer-authenticated request (per the documented "the plugin key grants full administrative access" auth model). The v2 handlers now match v1 semantics.
+* Fix: idempotent one-shot migration on plugin update. Existing installs upgrading from 1.2.x to 1.3.x previously saw the nine new Elementor v2 tools auto-disabled because saved `iato_mcp_tools` per-tool toggle arrays didn't include the new names. The migration appends new tool names to the saved option on first request after upgrade. New installs unaffected.
+
 = 1.3.0 =
 * New: widget-grained Elementor surface (v2). Nine new MCP tools — `list_elementor_widgets`, `get_elementor_widget`, `update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`, `find_elementor_widgets`, `set_heading_level`, `set_widget_setting`, `resolve_url`. Replaces the all-or-nothing `update_elementor_data` for surgical edits while preserving the v1 tool unchanged.
 * New: optimistic concurrency on every v2 write via `if_revision` (sha256 of stored Elementor data). Mismatch returns `revision_conflict` with the current revision so clients can re-sync without an extra read.
@@ -197,6 +201,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.3.1 =
+Fixes the Elementor v2 bulk + find tools rejecting every request with auth_denied (capability-check mismatch with the bearer auth model). Adds an idempotent migration so existing installs see the new v2 tools enabled automatically on upgrade. Required for anyone on 1.3.0.
 
 = 1.3.0 =
 Adds widget-grained Elementor tools (v2 surface) — patch a single widget without re-uploading the whole document, with optimistic concurrency and idempotency. Existing v1 tools are unchanged. Recommended upgrade for anyone editing Elementor pages from Claude.

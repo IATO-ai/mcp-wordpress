@@ -19,7 +19,7 @@ const IATO_MCP_FIND_POST_CAP = 500;
 IATO_MCP_Server::register_tool(
 	'update_elementor_widgets_bulk',
 	[
-		'description' => 'Apply a batch of widget patches across many posts in one call. Each update is independent — partial success is the expected mode. Per-post capability check; updates the user can\'t do are reported as auth_denied while siblings succeed. Optional outer idempotency_key covers the entire batch (single 60s window). Requires edit_posts (re-checked per post).',
+		'description' => 'Apply a batch of widget patches across many posts in one call. Each update is independent — partial success is the expected mode (decode/find/revision errors per update don\'t block siblings). Optional outer idempotency_key covers the entire batch (single 60s window). Requires edit_posts.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -95,19 +95,11 @@ IATO_MCP_Server::register_tool(
 				continue;
 			}
 
-			if ( ! current_user_can( 'edit_post', $post_id ) ) {
-				$results[] = [
-					'index'     => $i,
-					'post_id'   => $post_id,
-					'widget_id' => $widget_id,
-					'success'   => false,
-					'error'     => 'auth_denied',
-					'error_data' => [ 'message' => 'Current user cannot edit this post.' ],
-				];
-				$failed++;
-				continue;
-			}
-
+			// Per-post capability is gated by the global require_cap('edit_posts')
+			// at handler entry. Bearer auth in this plugin grants full admin
+			// access (see class-auth.php docblock); current_user_can() against a
+			// post would always return false because wp_get_current_user() is 0
+			// for bearer-authenticated requests, so it would reject every write.
 			$single_args = [
 				'id'             => $post_id,
 				'widget_id'      => $widget_id,
@@ -156,7 +148,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'find_elementor_widgets',
 	[
-		'description' => 'Search every Elementor post for widgets matching a filter. filter: { type?: string, setting?: { key: { eq|ne|in|nin|exists: value } } }. post_ids=[] scans all Elementor-flagged posts (capped at 500 in v1.3.0). Permission-filtered against current_user_can(read_post).',
+		'description' => 'Search every Elementor post for widgets matching a filter. filter: { type?: string, setting?: { key: { eq|ne|in|nin|exists: value } } }. post_ids=[] scans all Elementor-flagged posts (capped at 500 in v1.3.0).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -197,19 +189,10 @@ IATO_MCP_Server::register_tool(
 			$post_ids = array_values( array_unique( array_map( 'absint', $post_ids ) ) );
 		}
 
-		// Permission filter.
-		$permission_filtered = 0;
-		$post_ids_allowed    = [];
-		foreach ( $post_ids as $pid ) {
-			if ( $pid <= 0 ) {
-				continue;
-			}
-			if ( ! current_user_can( 'read_post', $pid ) ) {
-				$permission_filtered++;
-				continue;
-			}
-			$post_ids_allowed[] = $pid;
-		}
+		// Bearer auth grants full admin access (see class-auth.php), so per-post
+		// read_post checks would always fail against wp_get_current_user() = 0
+		// and reject every match. Trust the global authentication instead.
+		$post_ids_allowed = array_values( array_filter( $post_ids, fn( $pid ) => $pid > 0 ) );
 
 		// Walk each post.
 		$matches = [];
@@ -230,9 +213,6 @@ IATO_MCP_Server::register_tool(
 			'scanned'       => count( $post_ids_allowed ),
 			'matches'       => $matches,
 		];
-		if ( $permission_filtered > 0 ) {
-			$response['permission_filtered'] = $permission_filtered;
-		}
 		if ( $truncated ) {
 			$response['truncated'] = true;
 		}
