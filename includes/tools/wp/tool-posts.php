@@ -70,12 +70,13 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_post',
 	[
-		'description' => 'Get full details for a single post or page by ID or slug.',
+		'description' => 'Get full details for a single post or page by ID or slug. Pass include_shadowing=true to detect when an Elementor Theme Builder template overrides the slug-based render (small extra cost; default off to keep the hot path fast).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'id'   => [ 'type' => 'integer', 'description' => 'Post ID' ],
-				'slug' => [ 'type' => 'string',  'description' => 'Post slug (used if id not provided)' ],
+				'id'                => [ 'type' => 'integer', 'description' => 'Post ID' ],
+				'slug'              => [ 'type' => 'string',  'description' => 'Post slug (used if id not provided)' ],
+				'include_shadowing' => [ 'type' => 'boolean', 'description' => 'If true, attach is_shadowed_by when an Elementor Theme Builder template overrides this post (default: false).' ],
 			],
 			'required' => [],
 		],
@@ -103,7 +104,7 @@ IATO_MCP_Server::register_tool(
 		$categories = wp_get_post_categories( $post->ID, [ 'fields' => 'names' ] );
 		$tags       = wp_get_post_tags( $post->ID, [ 'fields' => 'names' ] );
 
-		return IATO_MCP_Server::ok( [
+		$response = [
 			'id'         => $post->ID,
 			'title'      => get_the_title( $post ),
 			'slug'       => $post->post_name,
@@ -116,7 +117,16 @@ IATO_MCP_Server::register_tool(
 			'modified'   => $post->post_modified_gmt,
 			'categories' => is_array( $categories ) ? $categories : [],
 			'tags'       => is_array( $tags ) ? $tags : [],
-		] );
+		];
+
+		if ( ! empty( $args['include_shadowing'] ) && class_exists( 'IATO_MCP_Elementor_Router' ) ) {
+			$shadowing = IATO_MCP_Elementor_Router::get_shadowing_for_post( $post->ID );
+			if ( null !== $shadowing ) {
+				$response['is_shadowed_by'] = $shadowing;
+			}
+		}
+
+		return IATO_MCP_Server::ok( $response );
 	}
 );
 

@@ -250,15 +250,22 @@ class IATO_MCP_Server {
 	 * @return array
 	 */
 	private static function handle_initialize( array $params ): array {
+		$capabilities = [
+			'tools' => new stdClass(), // signals tool support
+		];
+		// Advertise widget-grained Elementor v2 surface only when Elementor is
+		// actually active — tells clients they can hand off to v2 tools without
+		// a tools/list round-trip.
+		if ( class_exists( '\Elementor\Plugin' ) ) {
+			$capabilities['elementor'] = [ 'v2' => true ];
+		}
 		return [
 			'protocolVersion' => '2024-11-05',
 			'serverInfo'      => [
 				'name'    => 'iato-mcp',
 				'version' => IATO_MCP_VERSION,
 			],
-			'capabilities' => [
-				'tools' => new stdClass(), // signals tool support
-			],
+			'capabilities'    => $capabilities,
 		];
 	}
 

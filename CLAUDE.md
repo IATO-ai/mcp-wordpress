@@ -101,6 +101,18 @@ On error, return `isError: true` with a message — never throw exceptions out o
 | `update_structured_data` | tools/wp/tool-structured-data.php | edit_posts |
 | `update_redirect` | tools/wp/tool-redirects.php | manage_options |
 | `get_page_builder` / `get_elementor_data` / `update_elementor_data` | tools/wp/tool-page-builder.php | read / edit_posts |
+| `list_elementor_widgets` / `get_elementor_widget` | tools/wp/tool-elementor-widgets.php | read |
+| `update_elementor_widget` / `update_elementor_patch` | tools/wp/tool-elementor-widgets.php | edit_posts |
+| `update_elementor_widgets_bulk` | tools/wp/tool-elementor-bulk.php | edit_posts (re-checked per post) |
+| `find_elementor_widgets` | tools/wp/tool-elementor-bulk.php | read (permission-filtered per post) |
+| `set_heading_level` / `set_widget_setting` | tools/wp/tool-elementor-helpers.php | edit_posts |
+| `resolve_url` | tools/wp/tool-resolve-url.php | read |
+
+`get_post` accepts an opt-in `include_shadowing: true` parameter that attaches `is_shadowed_by` when an Elementor Theme Builder template overrides the slug-based render. Default is off so the hot path stays fast.
+
+`get_elementor_data` accepts a `format` parameter (`raw` | `compact` | `summary`). All v2 reads include a `revision` hash for use with `if_revision` guards on writes.
+
+The `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active, so clients can feature-detect without a `tools/list` round-trip.
 
 ### IATO Bridge Tools (require IATO API key)
 

@@ -84,11 +84,12 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_elementor_data',
 	[
-		'description' => 'Returns the raw _elementor_data JSON and edit mode for a post. Use get_page_builder first to confirm the post uses Elementor.',
+		'description' => 'Returns Elementor data for a post. format=raw (default) returns the original stored JSON; format=compact decodes and strips default-valued settings; format=summary returns a tree of {widget_id, type, peek_fields}. Always includes the revision hash for use with v2 if_revision guards.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'id' => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
+				'id'     => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
+				'format' => [ 'type' => 'string',  'enum' => [ 'raw', 'compact', 'summary' ], 'description' => 'Output shape (default: raw).' ],
 			],
 			'required' => [ 'id' ],
 		],
@@ -111,13 +112,72 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'no_elementor_data', 'No Elementor data found for this post. Check with get_page_builder first.' );
 		}
 
+		$format = isset( $args['format'] ) ? (string) $args['format'] : 'raw';
+		if ( ! in_array( $format, [ 'raw', 'compact', 'summary' ], true ) ) {
+			$format = 'raw';
+		}
+
+		$revision = IATO_MCP_Elementor_Adapter::compute_revision( (string) $data );
+
+		if ( 'raw' === $format ) {
+			return IATO_MCP_Server::ok( [
+				'post_id'        => $post_id,
+				'revision'       => $revision,
+				'format'         => 'raw',
+				'elementor_data' => $data,
+				'edit_mode'      => $edit_mode,
+			] );
+		}
+
+		// Compact / summary need a decoded tree.
+		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
+		if ( is_wp_error( $decoded ) ) {
+			return $decoded;
+		}
+		[ $elements, ] = $decoded;
+
+		if ( 'summary' === $format ) {
+			return IATO_MCP_Server::ok( [
+				'post_id'   => $post_id,
+				'revision'  => $revision,
+				'format'    => 'summary',
+				'edit_mode' => $edit_mode,
+				'tree'      => IATO_MCP_Elementor_Adapter::flatten_widgets( $elements, 'tree' ),
+			] );
+		}
+
+		// Compact: walk the decoded tree, strip defaults per widget.
+		$compact_tree = iato_mcp_apply_compact_recursive( $elements );
 		return IATO_MCP_Server::ok( [
 			'post_id'        => $post_id,
-			'elementor_data' => $data,
+			'revision'       => $revision,
+			'format'         => 'compact',
 			'edit_mode'      => $edit_mode,
+			'elementor_data' => wp_json_encode( $compact_tree ),
 		] );
 	}
 );
+
+/**
+ * Walk the decoded element tree applying IATO_MCP_Elementor_Adapter::compact()
+ * to every widget node. Container types (sections/columns) pass through.
+ */
+function iato_mcp_apply_compact_recursive( array $elements ): array {
+	$out = [];
+	foreach ( $elements as $element ) {
+		if ( ! is_array( $element ) ) {
+			continue;
+		}
+		if ( ( $element['elType'] ?? '' ) === 'widget' ) {
+			$element = IATO_MCP_Elementor_Adapter::compact( $element );
+		}
+		if ( ! empty( $element['elements'] ) && is_array( $element['elements'] ) ) {
+			$element['elements'] = iato_mcp_apply_compact_recursive( $element['elements'] );
+		}
+		$out[] = $element;
+	}
+	return $out;
+}
 
 // ── update_elementor_data ────────────────────────────────────────────────────
 

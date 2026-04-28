@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.2.4
+Stable tag: 1.3.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,7 +24,7 @@ WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 
 = What Claude can do =
 
-**Without an IATO account (30 WordPress tools):**
+**Without an IATO account (39 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -36,6 +36,8 @@ WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 * Manage JSON-LD structured data
 * Manage redirect rules
 * Read and write Elementor page builder data
+* Widget-grained Elementor edits with optimistic concurrency, idempotency, and bulk operations
+* Resolve URLs to their rendering post (Theme Builder shadowing detection)
 * Search content across the site
 * Read site info and settings
 * Read and filter comments
@@ -136,6 +138,19 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.3.0 =
+* New: widget-grained Elementor surface (v2). Nine new MCP tools — `list_elementor_widgets`, `get_elementor_widget`, `update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`, `find_elementor_widgets`, `set_heading_level`, `set_widget_setting`, `resolve_url`. Replaces the all-or-nothing `update_elementor_data` for surgical edits while preserving the v1 tool unchanged.
+* New: optimistic concurrency on every v2 write via `if_revision` (sha256 of stored Elementor data). Mismatch returns `revision_conflict` with the current revision so clients can re-sync without an extra read.
+* New: idempotency keys on every v2 write via `idempotency_key`. Same key + same payload within 60s returns the cached response with `idempotency_replay: true`; same key + different payload returns 409. Scoped per-(user, tool).
+* New: structured `applied_patch` diff response on every v2 write — RFC 6902 ops with `previous_value` extension. Identical shape in `dry_run` mode so clients can preview before committing.
+* New: `update_elementor_patch` accepts an RFC 6902 JSON Patch over the entire document for surgical array-entry edits (repeater rows, indexed inserts) where v2 widget patch's replace-only array semantics are too coarse.
+* New: `find_elementor_widgets` searches every Elementor post in the workspace (capped at 500 in 1.3.0) for widgets matching a filter spec — operators `eq`, `ne`, `in`, `nin`, `exists`.
+* New: `resolve_url` walks the WordPress rewrite cascade and reports the rendering post + Theme Builder template shadowing (Elementor Pro). Best-effort across Elementor versions; returns `limited_resolution: true` when the platform's APIs aren't available.
+* New: `is_shadowed_by` field on `get_post` (opt-in via `include_shadowing: true`) — surfaces Theme Builder template overrides without requiring a separate `resolve_url` call.
+* New: `format` parameter on `get_elementor_data` — `raw` (existing), `compact` (defaults stripped, top-20 widget types), `summary` (skeleton tree of `{widget_id, type, peek_fields}`). All formats include the canonical `revision` hash for use with v2 if_revision guards.
+* New: `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active so clients can feature-detect without a `tools/list` round-trip.
+* Existing v1 tools (`get_elementor_data`, `update_elementor_data`) remain functional with unchanged signatures — no breaking changes.
+
 = 1.2.4 =
 * Fix: `list_iato_crawls` now returns the UUID `job_id` as `crawl_id` instead of the numeric DB primary key. The numeric `id` had no FK relationship to the other bridge tools (which all key off the UUID via `/crawl/jobs/{uuid}/...`), so handing it back to Claude broke the analyze-and-fix chain at the first hop.
 * Fix: `list_iato_crawls` envelope read now falls back from canonical `data.jobs` to bare `jobs` if the platform regresses or a new un-wrapped endpoint slips through. Same dual-key resilience pattern used for `/workspaces` during the v1.1 transition.
@@ -182,6 +197,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.3.0 =
+Adds widget-grained Elementor tools (v2 surface) — patch a single widget without re-uploading the whole document, with optimistic concurrency and idempotency. Existing v1 tools are unchanged. Recommended upgrade for anyone editing Elementor pages from Claude.
 
 = 1.2.4 =
 Fixes `list_iato_crawls` returning the wrong identifier (numeric DB id instead of the UUID), which broke the chain into the other bridge tools. Adds dual-key envelope resilience for the same endpoint. Recommended upgrade for anyone on 1.2.0–1.2.3.

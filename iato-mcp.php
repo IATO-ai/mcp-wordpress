@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.2.4
+ * Version:     1.3.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.2.4' );
+define( 'IATO_MCP_VERSION', '1.3.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -60,6 +60,8 @@ require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
 require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
+require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
 
 // Phase 1 — WP native tools
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-site.php';
@@ -70,6 +72,10 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-comments.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-menus.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-taxonomy.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-builder.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-widgets.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-bulk.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-helpers.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-resolve-url.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-canonical.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-structured-data.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-redirects.php';
