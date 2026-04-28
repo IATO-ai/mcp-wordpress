@@ -124,6 +124,14 @@ IATO_MCP_Server::register_tool(
 				continue;
 			}
 
+			// Drop change_receipt from per-result rows on bulk responses — keeps
+			// payloads lean for the heavy h1→h2 sweep (saves ~120B per result).
+			// Receipts are still persisted to iato_change_receipts; bulk callers
+			// who need them can query the audit table by post_id + applied_at.
+			// Singleton update_elementor_widget / update_elementor_patch responses
+			// keep the slim receipt for backward-compat and convenience.
+			unset( $result['change_receipt'] );
+
 			$result['index']   = $i;
 			$result['success'] = true;
 			$results[]         = $result;

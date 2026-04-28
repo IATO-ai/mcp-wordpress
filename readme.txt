@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.3.3
+Stable tag: 1.3.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -138,6 +138,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.3.4 =
+* Optimization: `update_elementor_widgets_bulk` no longer echoes `change_receipt` on per-result rows. Receipts are still persisted to the `iato_change_receipts` audit table; bulk callers who need them can query by post_id + applied_at. Saves ~120 bytes per result. Brings the canonical 4-page H1-flip benchmark response under the v2 spec's <2 KB hard target. Singleton `update_elementor_widget` and `update_elementor_patch` responses keep the slim receipt for backward-compat and convenience.
+
 = 1.3.3 =
 * Optimization: v2 write tools (`update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`) now elide `previous_revision` from per-result responses unless the caller passed `if_revision`. Rationale: a client that passed `if_revision` already knows the prior hash (echoing back confirms what the server saw on conflict), and a client that didn't pass it doesn't need it on the wire — they get `current_revision` to chain the next write. Saves ~93 bytes per result; brings the canonical 4-page H1-flip benchmark response under the v2 spec's <2 KB hard target on the `op: replace` path.
 
@@ -207,6 +210,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.3.4 =
+Drops `change_receipt` from `update_elementor_widgets_bulk` per-result rows (still persisted to the audit table; bulk callers query by post_id). Lands the 4-page H1-flip benchmark under the spec's <2 KB hard target. Singleton update tools unchanged.
 
 = 1.3.3 =
 Slims v2 write responses by ~93 bytes per result by eliding the previous_revision echo when the caller didn't pass if_revision. Lands the canonical 4-page bulk benchmark under the spec's <2 KB hard target.
