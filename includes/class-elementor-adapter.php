@@ -977,10 +977,18 @@ class IATO_MCP_Elementor_Adapter {
 			$post_id,
 			'elementor_widget',
 			$receipt_field,
-			wp_json_encode( $applied_patch ),
+			$pipeline['previous_revision'],
 			$pipeline['current_revision']
 		);
-		IATO_MCP_Change_Receipt::append( $response, $receipt );
+		// Slim receipt for the API response — client already has applied_patch
+		// at the top level + previous_revision / current_revision as dedicated
+		// fields. Stored row keeps full before/after for audit/rollback.
+		$response['change_receipt'] = [
+			'change_id'   => $receipt['change_id'],
+			'target_type' => $receipt['target_type'],
+			'field'       => $receipt['field'],
+			'applied_at'  => $receipt['applied_at'],
+		];
 
 		return $response;
 	}

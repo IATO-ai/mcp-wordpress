@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.3.1
+Stable tag: 1.3.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -138,6 +138,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.3.2 =
+* Fix: v2 write tools (`update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`) used to echo a verbose `change_receipt` containing the entire `applied_patch` JSON-stringified into `before_value`. That duplicated the top-level `applied_patch` field on every response and pushed bulk-update payloads over the spec's <2 KB target on a 4-page sweep. The receipt's `before_value` was also semantically wrong (it should be the value being replaced, not the patch). Fixed both: storage rows now record the canonical `previous_revision` → `current_revision` pair, and the API response carries only the receipt id + metadata (`{change_id, target_type, field, applied_at}`). Full audit data still queryable from the `iato_change_receipts` table for rollback. Per-update savings ~0.6–0.8 KB; on a 4-page bulk sweep that's ~3 KB shaved off the wire.
+
 = 1.3.1 =
 * Fix: `update_elementor_widgets_bulk` and `find_elementor_widgets` no longer reject every request with `auth_denied`. The handlers were calling `current_user_can( 'edit_post', $post_id )` / `current_user_can( 'read_post', $pid )` per-target, but bearer-authenticated MCP requests don't establish a logged-in WP user — `wp_get_current_user()` returns 0, and meta-cap checks against post objects always fail. v1 tools sidestep this via `IATO_MCP_Auth::require_cap()`, which is a flag check that returns true for any bearer-authenticated request (per the documented "the plugin key grants full administrative access" auth model). The v2 handlers now match v1 semantics.
 * Fix: idempotent one-shot migration on plugin update. Existing installs upgrading from 1.2.x to 1.3.x previously saw the nine new Elementor v2 tools auto-disabled because saved `iato_mcp_tools` per-tool toggle arrays didn't include the new names. The migration appends new tool names to the saved option on first request after upgrade. New installs unaffected.
@@ -201,6 +204,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.3.2 =
+Slims v2 write-tool responses by ~600 bytes per update by removing redundant change_receipt fields. Brings 4-page bulk sweeps under the 2 KB spec target. No API breakage — the slim receipt still carries the change_id for downstream lookup.
 
 = 1.3.1 =
 Fixes the Elementor v2 bulk + find tools rejecting every request with auth_denied (capability-check mismatch with the bearer auth model). Adds an idempotent migration so existing installs see the new v2 tools enabled automatically on upgrade. Required for anyone on 1.3.0.

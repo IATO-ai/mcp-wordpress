@@ -246,15 +246,22 @@ IATO_MCP_Server::register_tool(
 		];
 
 		// One change receipt for the whole patch — packed field marks the post as
-		// the target since the patch may touch many widgets.
+		// the target since the patch may touch many widgets. Storage rows take
+		// the canonical revision before/after; the API response only echoes the
+		// receipt id + metadata (full applied_patch is already at the top level).
 		$receipt = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'elementor_widget',
 			'elementor:document:patch',
-			wp_json_encode( $applied ),
+			$pipeline['previous_revision'],
 			$pipeline['current_revision']
 		);
-		IATO_MCP_Change_Receipt::append( $response, $receipt );
+		$response['change_receipt'] = [
+			'change_id'   => $receipt['change_id'],
+			'target_type' => $receipt['target_type'],
+			'field'       => $receipt['field'],
+			'applied_at'  => $receipt['applied_at'],
+		];
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'update_elementor_patch', $key, $args, $response );
 		return IATO_MCP_Server::ok( $response );
