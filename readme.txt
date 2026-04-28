@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.2.1
+Stable tag: 1.2.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -136,6 +136,10 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.2.2 =
+* Fix: Test connection now persists the workspace_id when validation succeeds, so the crawl-control tools can scope requests correctly. Previously the option remained empty even after a successful validation, which made `start_iato_crawl` create orphan jobs and `list_iato_crawls` return an empty list.
+* Fix: `start_iato_crawl` and `list_iato_crawls` now use `resolve_workspace_id()` (with built-in lazy-load fallback) instead of reading the option directly. Self-heals existing installs that validated their key before 1.2.2.
+
 = 1.2.1 =
 * Fix: `start_iato_crawl` now tags new crawls with the user's workspace_id so they are properly scoped to the connected IATO account
 * Fix: `list_iato_crawls` now filters by workspace_id to return crawls owned by the connected account (previously returned an empty list even when crawls existed)
@@ -171,6 +175,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.2.2 =
+Completes the workspace_id scoping fix from 1.2.1. After upgrading, click Test connection in Settings > IATO MCP once to populate the workspace_id, then crawl management will work end-to-end.
 
 = 1.2.1 =
 Fixes workspace_id scoping for the new crawl-management tools and a PHP 8.2-only return type that broke installs on PHP 8.0/8.1. Recommended upgrade for anyone on 1.2.0.

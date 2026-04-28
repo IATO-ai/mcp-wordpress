@@ -250,6 +250,16 @@ class IATO_MCP_Settings {
 
 		update_option( 'iato_mcp_api_key_valid', true );
 
+		// Persist the first workspace_id so the crawl-control bridge tools can
+		// scope their requests to the right account. Without this, list_iato_crawls
+		// returns empty and start_iato_crawl creates orphan jobs.
+		if ( $count > 0 ) {
+			$first_id = (string) ( $ws_list[0]['id'] ?? '' );
+			if ( $first_id !== '' ) {
+				update_option( 'iato_mcp_workspace_id', sanitize_text_field( $first_id ) );
+			}
+		}
+
 		wp_send_json_success( [
 			'workspace_count' => $count,
 			/* translators: %d: number of IATO workspaces */

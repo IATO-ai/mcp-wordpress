@@ -34,7 +34,10 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function list_crawls(): array|WP_Error {
-		$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+		// Use resolve_workspace_id() instead of a direct get_option so the lazy-load
+		// fallback heals any install where api_key_valid is set but the workspace_id
+		// option was never populated (e.g. older Test connection paths).
+		$workspace_id = self::resolve_workspace_id();
 		$query        = $workspace_id !== '' ? [ 'workspace_id' => $workspace_id ] : [];
 		return self::get( '/crawl/jobs', $query );
 	}
@@ -367,10 +370,11 @@ class IATO_MCP_IATO_Client {
 		] );
 
 		// Tag the new crawl with the user's workspace_id so it scopes correctly
-		// (and shows up in subsequent list_crawls calls). Read directly from the
-		// saved option — no API roundtrip — to avoid blocking on platform reachability.
+		// (and shows up in subsequent list_crawls calls). Use resolve_workspace_id()
+		// — has a lazy-load fallback that heals installs where the option was
+		// never populated by a prior validation flow.
 		if ( empty( $body['workspace_id'] ) ) {
-			$workspace_id = sanitize_text_field( get_option( 'iato_mcp_workspace_id', '' ) );
+			$workspace_id = self::resolve_workspace_id();
 			if ( $workspace_id !== '' ) {
 				$body['workspace_id'] = $workspace_id;
 			}
