@@ -373,10 +373,14 @@ class IATO_MCP_IATO_Client {
 		// (and shows up in subsequent list_crawls calls). Use resolve_workspace_id()
 		// — has a lazy-load fallback that heals installs where the option was
 		// never populated by a prior validation flow.
+		//
+		// Cast numeric IDs to int so wp_json_encode emits a JSON number, not a
+		// JSON string. The platform's Pydantic model is Optional[int]; depending
+		// on strict-mode it may reject "44" while accepting 44.
 		if ( empty( $body['workspace_id'] ) ) {
 			$workspace_id = self::resolve_workspace_id();
 			if ( $workspace_id !== '' ) {
-				$body['workspace_id'] = $workspace_id;
+				$body['workspace_id'] = is_numeric( $workspace_id ) ? (int) $workspace_id : $workspace_id;
 			}
 		}
 

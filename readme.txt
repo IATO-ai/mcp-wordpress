@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.2.2
+Stable tag: 1.2.3
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -136,6 +136,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.2.3 =
+* Fix: `start_iato_crawl` now sends `workspace_id` as a JSON integer, not a JSON string. The platform's POST /crawl/start handler binds the field as `Optional[int]` via Pydantic; depending on strict-mode it can reject `"44"` while accepting `44`. Resolves orphan-crawl creation that persisted from 1.2.0–1.2.2.
+
 = 1.2.2 =
 * Fix: Test connection now persists the workspace_id when validation succeeds, so the crawl-control tools can scope requests correctly. Previously the option remained empty even after a successful validation, which made `start_iato_crawl` create orphan jobs and `list_iato_crawls` return an empty list.
 * Fix: `start_iato_crawl` and `list_iato_crawls` now use `resolve_workspace_id()` (with built-in lazy-load fallback) instead of reading the option directly. Self-heals existing installs that validated their key before 1.2.2.
@@ -175,6 +178,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.2.3 =
+Sends workspace_id as a JSON integer so the platform's Pydantic binding accepts it. Required to make the crawl-control tools fully functional; recommended upgrade for anyone on 1.2.0–1.2.2.
 
 = 1.2.2 =
 Completes the workspace_id scoping fix from 1.2.1. After upgrading, click Test connection in Settings > IATO MCP once to populate the workspace_id, then crawl management will work end-to-end.
