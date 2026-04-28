@@ -47,7 +47,7 @@ class IATO_MCP_Auth {
 	 * @param WP_REST_Request $request Incoming request.
 	 * @return true|WP_Error
 	 */
-	public static function authenticate( WP_REST_Request $request ): true|WP_Error {
+	public static function authenticate( WP_REST_Request $request ): bool|WP_Error {
 		$stored_key = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
 
 		if ( '' === $stored_key ) {
@@ -93,7 +93,7 @@ class IATO_MCP_Auth {
 	 * @param string $cap WordPress capability string (kept for call-site compatibility).
 	 * @return true|WP_Error
 	 */
-	public static function require_cap( string $cap ): true|WP_Error {
+	public static function require_cap( string $cap ): bool|WP_Error {
 		if ( self::$authenticated ) {
 			return true;
 		}

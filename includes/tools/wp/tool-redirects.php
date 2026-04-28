@@ -119,7 +119,7 @@ function iato_mcp_get_existing_redirect( string $from_url, string $handler ): ?a
  * @param string $handler
  * @return true|WP_Error
  */
-function iato_mcp_write_redirect( string $from_url, string $to_url, int $type, string $handler ): true|WP_Error {
+function iato_mcp_write_redirect( string $from_url, string $to_url, int $type, string $handler ): bool|WP_Error {
 	$from_path = '/' . ltrim( wp_parse_url( $from_url, PHP_URL_PATH ) ?? $from_url, '/' );
 
 	switch ( $handler ) {

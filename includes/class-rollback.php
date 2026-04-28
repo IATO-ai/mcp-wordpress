@@ -164,7 +164,7 @@ class IATO_MCP_Rollback {
 	 * @param mixed    $before_value The value to restore.
 	 * @return true|WP_Error
 	 */
-	private static function dispatch_rollback( string $target_type, string $field, ?int $post_id, mixed $before_value ): true|WP_Error {
+	private static function dispatch_rollback( string $target_type, string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
 		switch ( $target_type ) {
 			case 'page':
 				return self::rollback_page( $field, $post_id, $before_value );
@@ -184,7 +184,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Rollback page-level fields (SEO title, description, canonical, structured data).
 	 */
-	private static function rollback_page( string $field, ?int $post_id, mixed $before_value ): true|WP_Error {
+	private static function rollback_page( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
 		if ( ! $post_id ) {
 			return new WP_Error( 'post_not_found', 'post_id is required for page rollback.' );
 		}
@@ -230,7 +230,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Rollback image alt text.
 	 */
-	private static function rollback_image( string $field, ?int $post_id, mixed $before_value ): true|WP_Error {
+	private static function rollback_image( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
 		if ( 'alt_text' !== $field ) {
 			return new WP_Error( 'unsupported_field', "Rollback not supported for image field: {$field}" );
 		}
@@ -250,7 +250,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Rollback menu item changes.
 	 */
-	private static function rollback_menu_item( string $field, ?int $post_id, mixed $before_value ): true|WP_Error {
+	private static function rollback_menu_item( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
 		switch ( $field ) {
 			case 'create':
 				// Reverse creation: delete the menu item.
@@ -325,7 +325,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Rollback taxonomy changes.
 	 */
-	private static function rollback_taxonomy( string $field, ?int $post_id, mixed $before_value ): true|WP_Error {
+	private static function rollback_taxonomy( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
 		switch ( $field ) {
 			case 'assign':
 			case 'terms':
@@ -403,7 +403,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Rollback redirect changes.
 	 */
-	private static function rollback_redirect( string $field, mixed $before_value ): true|WP_Error {
+	private static function rollback_redirect( string $field, mixed $before_value ): bool|WP_Error {
 		if ( 'rule' !== $field ) {
 			return new WP_Error( 'unsupported_field', "Rollback not supported for redirect field: {$field}" );
 		}
@@ -440,7 +440,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Delete SEO title meta key (when before_value is null).
 	 */
-	private static function delete_seo_title_meta( int $post_id ): true|WP_Error {
+	private static function delete_seo_title_meta( int $post_id ): bool|WP_Error {
 		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );
 		$plugin = $meta['plugin'];
 
@@ -461,7 +461,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Delete SEO description meta key (when before_value is null).
 	 */
-	private static function delete_seo_desc_meta( int $post_id ): true|WP_Error {
+	private static function delete_seo_desc_meta( int $post_id ): bool|WP_Error {
 		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );
 		$plugin = $meta['plugin'];
 

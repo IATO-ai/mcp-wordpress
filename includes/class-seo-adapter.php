@@ -59,7 +59,7 @@ class IATO_MCP_SEO_Adapter {
 	 * @param string $title
 	 * @return true|WP_Error
 	 */
-	public static function update_title( int $post_id, string $title ): true|WP_Error {
+	public static function update_title( int $post_id, string $title ): bool|WP_Error {
 		$key = self::title_key();
 		if ( null === $key ) {
 			return new WP_Error(
@@ -81,7 +81,7 @@ class IATO_MCP_SEO_Adapter {
 	 * @param string $description
 	 * @return true|WP_Error
 	 */
-	public static function update_description( int $post_id, string $description ): true|WP_Error {
+	public static function update_description( int $post_id, string $description ): bool|WP_Error {
 		$key = self::description_key();
 		if ( null === $key ) {
 			return new WP_Error(
@@ -144,7 +144,7 @@ class IATO_MCP_SEO_Adapter {
 	 * @param string $url
 	 * @return true|WP_Error
 	 */
-	public static function update_canonical( int $post_id, string $url ): true|WP_Error {
+	public static function update_canonical( int $post_id, string $url ): bool|WP_Error {
 		$key = self::canonical_key();
 		if ( null === $key ) {
 			return new WP_Error(
