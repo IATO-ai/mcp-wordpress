@@ -91,12 +91,13 @@ class IATO_MCP_Call_Log {
 			}
 		}
 
-		$ip = $fields['ip_address'] ?? ( $_SERVER['REMOTE_ADDR'] ?? null );
-		$ua = $fields['user_agent'] ?? ( $_SERVER['HTTP_USER_AGENT'] ?? null );
+		$ip = $fields['ip_address'] ?? ( isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : null );
+		$ua = $fields['user_agent'] ?? ( isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : null );
 		if ( is_string( $ua ) ) {
 			$ua = substr( $ua, 0, 255 );
 		}
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
 		$wpdb->insert(
 			self::table_name(),
 			[
@@ -128,13 +129,10 @@ class IATO_MCP_Call_Log {
 		global $wpdb;
 
 		$limit = max( 1, min( 500, $limit ) );
-		$table = self::table_name();
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table read; log entries aren't cached.
 		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT * FROM {$table} ORDER BY id DESC LIMIT %d",
-				$limit
-			),
+			$wpdb->prepare( 'SELECT * FROM %i ORDER BY id DESC LIMIT %d', self::table_name(), $limit ),
 			ARRAY_A
 		);
 
@@ -146,8 +144,10 @@ class IATO_MCP_Call_Log {
 	 */
 	public static function count(): int {
 		global $wpdb;
-		$table = self::table_name();
-		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table count; no cache to consult.
+		return (int) $wpdb->get_var(
+			$wpdb->prepare( 'SELECT COUNT(*) FROM %i', self::table_name() )
+		);
 	}
 
 	/**
@@ -155,21 +155,16 @@ class IATO_MCP_Call_Log {
 	 */
 	public static function trim_old( int $keep = self::MAX_ENTRIES ): void {
 		global $wpdb;
-		$table = self::table_name();
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table read for trim operation.
 		$cutoff_id = (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT id FROM {$table} ORDER BY id DESC LIMIT 1 OFFSET %d",
-				$keep
-			)
+			$wpdb->prepare( 'SELECT id FROM %i ORDER BY id DESC LIMIT 1 OFFSET %d', self::table_name(), $keep )
 		);
 
 		if ( $cutoff_id > 0 ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table trim.
 			$wpdb->query(
-				$wpdb->prepare(
-					"DELETE FROM {$table} WHERE id <= %d",
-					$cutoff_id
-				)
+				$wpdb->prepare( 'DELETE FROM %i WHERE id <= %d', self::table_name(), $cutoff_id )
 			);
 		}
 	}
@@ -179,7 +174,9 @@ class IATO_MCP_Call_Log {
 	 */
 	public static function purge(): void {
 		global $wpdb;
-		$table = self::table_name();
-		$wpdb->query( "TRUNCATE TABLE {$table}" );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- TRUNCATE on custom table.
+		$wpdb->query(
+			$wpdb->prepare( 'TRUNCATE TABLE %i', self::table_name() )
+		);
 	}
 }

@@ -21,7 +21,8 @@ add_action( 'template_redirect', function () {
 		return;
 	}
 
-	$request_path = '/' . ltrim( wp_parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH ) ?? '', '/' );
+	$raw_uri      = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+	$request_path = '/' . ltrim( wp_parse_url( $raw_uri, PHP_URL_PATH ) ?? '', '/' );
 
 	foreach ( $redirects as $rule ) {
 		$from = '/' . ltrim( $rule['from_url'] ?? '', '/' );
@@ -30,7 +31,7 @@ add_action( 'template_redirect', function () {
 			if ( ! in_array( $type, [ 301, 302, 307, 308 ], true ) ) {
 				$type = 301;
 			}
-			wp_redirect( esc_url_raw( $rule['to_url'] ), $type );
+			wp_safe_redirect( esc_url_raw( $rule['to_url'] ), $type );
 			exit;
 		}
 	}
@@ -76,6 +77,7 @@ function iato_mcp_get_existing_redirect( string $from_url, string $handler ): ?a
 				'post_type'   => 'redirect_rule',
 				'post_status' => 'publish',
 				'numberposts' => 1,
+				// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Looking up a single redirect rule by a single meta key. Low-cardinality, indexed in typical setups.
 				'meta_query'  => [
 					[
 						'key'   => '_redirect_rule_from',

@@ -159,7 +159,7 @@ IATO_MCP_Server::register_tool(
 		}
 
 		// Validate JSON.
-		$decoded = json_decode( $elementor_data );
+		$decoded = json_decode( $elementor_data, true );
 		if ( json_last_error() !== JSON_ERROR_NONE ) {
 			return new WP_Error( 'invalid_json', 'Invalid JSON: ' . json_last_error_msg() );
 		}
@@ -173,28 +173,88 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		// Update the meta.
+		// Capture old post_content for comparison after save.
+		$old_content = get_post_field( 'post_content', $post_id );
+
+		// 1. Write _elementor_data meta directly — Document->save() does NOT
+		//    persist the 'elements' parameter to meta; it only uses them
+		//    temporarily for rendering. Without this explicit write, meta
+		//    stays unchanged and post_content regenerates from stale data.
 		update_post_meta( $post_id, '_elementor_data', wp_slash( $elementor_data ) );
 		update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
 
-		// Clear Elementor CSS cache for this post so frontend reflects changes.
+		// 2. Clear all caches so Document->save() reads the fresh meta.
 		delete_post_meta( $post_id, '_elementor_css' );
+		wp_cache_delete( $post_id, 'post_meta' );
+		wp_cache_delete( $post_id, 'posts' );
 
-		// Regenerate rendered post_content from Elementor data.
-		// This keeps post_content in sync for search / RSS / fallback.
+		if ( class_exists( '\Elementor\Plugin' ) ) {
+			$plugin = \Elementor\Plugin::$instance;
+			if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
+				$plugin->files_manager->clear_cache();
+			}
+		}
+
+		// 3. Call Document->save() for rendering post_content and rebuilding CSS.
+		//    Elementor's AI module filter (remove_temporary_containers) expects
+		//    array elements, not stdClass — force_arrays ensures this.
 		$regenerated = false;
 		if ( class_exists( '\Elementor\Plugin' ) ) {
 			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
 			if ( $document ) {
+				$force_arrays = function ( $data ) use ( &$force_arrays ) {
+					if ( is_object( $data ) ) {
+						$data = (array) $data;
+					}
+					if ( is_array( $data ) ) {
+						return array_map( $force_arrays, $data );
+					}
+					return $data;
+				};
+
+				$decoded = $force_arrays( $decoded );
+
 				$document->save( [ 'elements' => $decoded ] );
 				$regenerated = true;
 			}
 		}
 
+		// 4. Check if post_content actually changed.
+		wp_cache_delete( $post_id, 'posts' );
+		wp_cache_delete( $post_id, 'post_meta' );
+		$new_content     = get_post_field( 'post_content', $post_id );
+		$content_updated = ( $new_content !== $old_content );
+
+		// 5. If Document->save() didn't update post_content, force render via Frontend.
+		if ( $regenerated && ! $content_updated && class_exists( '\Elementor\Plugin' ) ) {
+			$frontend = \Elementor\Plugin::instance()->frontend;
+			if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
+				$rendered = $frontend->get_builder_content( $post_id, true );
+				if ( ! empty( $rendered ) && $rendered !== $old_content ) {
+					wp_update_post( [
+						'ID'           => $post_id,
+						'post_content' => $rendered,
+					] );
+					$new_content     = $rendered;
+					$content_updated = true;
+				}
+			}
+		}
+
+		// 6. Verify meta actually persisted — catch silent write failures.
+		wp_cache_delete( $post_id, 'post_meta' );
+		$persisted_meta = get_post_meta( $post_id, '_elementor_data', true );
+		$meta_persisted = ( strlen( $persisted_meta ) === strlen( $elementor_data ) );
+
 		return IATO_MCP_Server::ok( [
-			'post_id'     => $post_id,
-			'success'     => true,
-			'regenerated' => $regenerated,
+			'post_id'              => $post_id,
+			'success'              => $meta_persisted,
+			'regenerated'          => $regenerated,
+			'content_updated'      => $content_updated,
+			'post_content_length'  => strlen( $new_content ),
+			'meta_persisted'       => $meta_persisted,
+			'meta_length'          => strlen( $persisted_meta ),
+			'input_length'         => strlen( $elementor_data ),
 		] );
 	}
 );

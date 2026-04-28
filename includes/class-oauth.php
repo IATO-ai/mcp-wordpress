@@ -376,7 +376,7 @@ CSS;
 		</head>
 		<body>
 			<div class="auth-card">
-				<div class="auth-brand"><?php echo iato_mcp_logo_svg( 40 ); ?> <span>MCP</span></div>
+				<div class="auth-brand"><?php echo iato_mcp_logo_svg( 40 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Returns self-escaped <img> markup (attributes wrapped in esc_attr inside the helper); fallback is a static <span>. ?> <span>MCP</span></div>
 				<h2 class="auth-title"><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
 				<p class="auth-desc">
 					<?php

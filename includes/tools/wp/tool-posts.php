@@ -172,13 +172,14 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_post',
 	[
-		'description' => 'Update an existing post title, content, or status.',
+		'description' => 'Update an existing post title, content, excerpt, or status.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
 				'id'      => [ 'type' => 'integer', 'description' => 'Post ID to update (required)' ],
 				'title'   => [ 'type' => 'string',  'description' => 'New title' ],
 				'content' => [ 'type' => 'string',  'description' => 'New content' ],
+				'excerpt' => [ 'type' => 'string',  'description' => 'New excerpt (manual summary shown on archive/listing pages)' ],
 				'status'  => [ 'type' => 'string',  'description' => 'New status: draft|publish' ],
 			],
 			'required' => [ 'id' ],
@@ -202,6 +203,9 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( isset( $args['content'] ) ) {
 			$postarr['post_content'] = wp_kses_post( $args['content'] );
+		}
+		if ( isset( $args['excerpt'] ) ) {
+			$postarr['post_excerpt'] = sanitize_textarea_field( $args['excerpt'] );
 		}
 		if ( isset( $args['status'] ) && in_array( $args['status'], [ 'draft', 'publish' ], true ) ) {
 			$postarr['post_status'] = $args['status'];

@@ -1,14 +1,15 @@
 <?php
 /**
  * Plugin Name: IATO MCP
+ * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.0.0
+ * Version:     1.2.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: iato-mcp
- * Requires at least: 6.0
+ * Requires at least: 6.2
  * Requires PHP: 8.0
  *
  * @package IATO_MCP
@@ -16,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.0.0' );
+define( 'IATO_MCP_VERSION', '1.2.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -57,9 +58,7 @@ require_once IATO_MCP_DIR . 'includes/class-rollback.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
-require_once IATO_MCP_DIR . 'includes/class-review-queue.php';
 require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
-require_once IATO_MCP_DIR . 'includes/class-dashboard-widget.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 
 // Phase 1 — WP native tools
@@ -86,7 +85,9 @@ if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-broken-links.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-suggestions.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-perf.php';
-	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-sync.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-start-crawl.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-crawl-status.php';
+	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-list-crawls.php';
 }
 
 /**
@@ -98,9 +99,7 @@ function iato_mcp_init() {
 	IATO_MCP_Server::init();
 	IATO_MCP_Rollback::init();
 	IATO_MCP_Setup_Wizard::init();
-	IATO_MCP_Review_Queue::init();
 	IATO_MCP_Diagnostics::init();
-	IATO_MCP_Dashboard_Widget::init();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
 
@@ -113,20 +112,13 @@ function iato_mcp_activate() {
 	IATO_MCP_Call_Log::create_table();
 	update_option( 'iato_mcp_show_wizard', true );
 
-	// Clear stale autopilot queue ONLY on the very first install.
-	// Re-activation must never wipe real Autopilot items — users often
-	// deactivate/reactivate during troubleshooting and expect their data
-	// to survive.
-	if ( ! get_option( 'iato_mcp_initial_cleanup_done' ) ) {
-		$api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
-		if ( '' !== $api_key ) {
-			$workspace_id = get_option( 'iato_mcp_workspace_id', '' );
-			if ( ! empty( $workspace_id ) ) {
-				IATO_MCP_IATO_Client::bulk_reject_all_pending( $workspace_id );
-			}
-		}
-		update_option( 'iato_mcp_initial_cleanup_done', true );
-	}
+	// Clear stale suggestion generation transients so a fresh install/update
+	// always starts clean and can re-trigger generation.
+	global $wpdb;
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Activation-only bulk delete of our own transient keys; no cache to invalidate, and delete_transient() cannot do pattern matching.
+	$wpdb->query(
+		"DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_iato_suggestions_generated_%' OR option_name LIKE '_transient_timeout_iato_suggestions_generated_%'"
+	);
 }
 register_activation_hook( __FILE__, 'iato_mcp_activate' );
 

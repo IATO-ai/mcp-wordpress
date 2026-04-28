@@ -13,3 +13,10 @@ IATO-Phase2-WordPress.md
 # WP.org asset overrides (served from SVN, not in plugin ZIP)
 assets/icon-*.png
 assets/screenshot-*.png
+assets/banner-*.png
+
+# Local WP.org SVN working copy (never include in plugin ZIP)
+iato-mcp-svn/
+
+# Plugin Check exported reports
+iato-mcp-iato-mcp-php-*.md

@@ -17,3 +17,9 @@ vendor/
 # Dev artifacts
 pull_request.png
 *.docx
+
+# WP.org SVN working copy (separate distribution channel, not part of the git source tree)
+iato-mcp-svn/
+
+# Plugin Check exported reports
+iato-mcp-iato-mcp-php-*.md

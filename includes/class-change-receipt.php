@@ -93,6 +93,7 @@ class IATO_MCP_Change_Receipt {
 		$change_id  = self::generate_id();
 		$applied_at = current_time( 'mysql', true ); // UTC.
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate, insert is the canonical source of truth.
 		$wpdb->insert(
 			self::table_name(),
 			[
@@ -127,11 +128,9 @@ class IATO_MCP_Change_Receipt {
 	public static function get( string $change_id ): ?array {
 		global $wpdb;
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table read; receipts aren't cached.
 		$row = $wpdb->get_row(
-			$wpdb->prepare(
-				'SELECT * FROM ' . self::table_name() . ' WHERE change_id = %s',
-				$change_id
-			),
+			$wpdb->prepare( 'SELECT * FROM %i WHERE change_id = %s', self::table_name(), $change_id ),
 			ARRAY_A
 		);
 
@@ -147,6 +146,7 @@ class IATO_MCP_Change_Receipt {
 	public static function mark_rolled_back( string $change_id ): bool {
 		global $wpdb;
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
 		$updated = $wpdb->update(
 			self::table_name(),
 			[ 'rolled_back_at' => current_time( 'mysql', true ) ],

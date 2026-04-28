@@ -26,28 +26,48 @@ class IATO_MCP_IATO_Client {
 	// ── Crawl endpoints ────────────────────────────────────────────────────────
 
 	/**
-	 * GET /crawls — list crawl jobs.
+	 * GET /crawl/jobs — list crawl jobs.
 	 *
 	 * @return array|WP_Error
 	 */
 	public static function list_crawls(): array|WP_Error {
-		return self::get( '/crawls' );
+		return self::get( '/crawl/jobs' );
 	}
 
 	/**
-	 * GET /crawls/{id}/analytics
+	 * GET /crawl/jobs/{job_id} — get a single crawl job.
 	 *
-	 * @param string $crawl_id
+	 * @param string $job_id  String/UUID crawl job ID.
+	 * @return array|WP_Error
+	 */
+	public static function get_crawl_job( string $job_id ): array|WP_Error {
+		return self::get( "/crawl/jobs/{$job_id}" );
+	}
+
+	/**
+	 * GET /crawl/jobs/{job_id}/stats — crawl statistics.
+	 *
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @return array|WP_Error
 	 */
 	public static function get_crawl_analytics( string $crawl_id ): array|WP_Error {
-		return self::get( "/crawls/{$crawl_id}/analytics" );
+		return self::get( "/crawl/jobs/{$crawl_id}/stats" );
 	}
 
 	/**
-	 * GET /crawls/{id}/seo-issues
+	 * GET /crawl/jobs/{job_id}/overview — crawl overview/analytics.
 	 *
-	 * @param string      $crawl_id
+	 * @param string $crawl_id  Job ID (string/UUID).
+	 * @return array|WP_Error
+	 */
+	public static function get_crawl_overview( string $crawl_id ): array|WP_Error {
+		return self::get( "/crawl/jobs/{$crawl_id}/overview" );
+	}
+
+	/**
+	 * GET /crawl/jobs/{job_id}/issues — SEO issues list.
+	 *
+	 * @param string      $crawl_id  Job ID (string/UUID).
 	 * @param string|null $severity  'error'|'warning'|'info'|null
 	 * @param int         $limit
 	 * @return array|WP_Error
@@ -57,11 +77,11 @@ class IATO_MCP_IATO_Client {
 		if ( null !== $severity ) {
 			$query['severity'] = $severity;
 		}
-		return self::get( "/crawls/{$crawl_id}/seo-issues", $query );
+		return self::get( "/crawl/jobs/{$crawl_id}/issues", $query );
 	}
 
 	/**
-	 * GET /crawls/{id}/seo-score
+	 * GET /crawls/{crawl_id}/seo-score — computed SEO score (bridge endpoint).
 	 *
 	 * @param string $crawl_id
 	 * @return array|WP_Error
@@ -71,74 +91,104 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
-	 * GET /crawls/{id}/pages
+	 * GET /crawl/jobs/{job_id}/pages — list crawled pages.
 	 *
-	 * @param string $crawl_id
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @param int    $limit
 	 * @return array|WP_Error
 	 */
 	public static function get_pages( string $crawl_id, int $limit = 50 ): array|WP_Error {
-		return self::get( "/crawls/{$crawl_id}/pages", [ 'limit' => $limit ] );
+		return self::get( "/crawl/jobs/{$crawl_id}/pages", [ 'limit' => $limit ] );
 	}
 
 	/**
-	 * GET /crawls/{id}/pages/{page_id}
+	 * GET /crawl/jobs/{job_id}/pages/{page_id}
 	 *
-	 * @param string $crawl_id
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @param int    $page_id
 	 * @return array|WP_Error
 	 */
 	public static function get_page( string $crawl_id, int $page_id ): array|WP_Error {
-		return self::get( "/crawls/{$crawl_id}/pages/{$page_id}" );
+		return self::get( "/crawl/jobs/{$crawl_id}/pages/{$page_id}" );
 	}
 
 	/**
-	 * GET /crawls/{id}/low-performing
+	 * GET /crawl/jobs/{job_id}/performance — performance metrics.
 	 *
-	 * @param string $crawl_id
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @param int    $limit
 	 * @return array|WP_Error
 	 */
 	public static function get_low_performing_pages( string $crawl_id, int $limit = 20 ): array|WP_Error {
-		return self::get( "/crawls/{$crawl_id}/low-performing", [ 'limit' => $limit ] );
+		return self::get( "/crawl/jobs/{$crawl_id}/performance", [ 'limit' => $limit ] );
 	}
 
 	/**
-	 * GET /crawls/{id}/content-metrics
+	 * GET /crawl/jobs/{job_id}/broken-links — broken links.
 	 *
-	 * @param string $crawl_id
+	 * @param string $crawl_id  Job ID (string/UUID).
+	 * @param int    $limit
 	 * @return array|WP_Error
 	 */
-	public static function get_content_metrics( string $crawl_id ): array|WP_Error {
-		return self::get( "/crawls/{$crawl_id}/content-metrics" );
+	public static function get_broken_links( string $crawl_id, int $limit = 50 ): array|WP_Error {
+		return self::get( "/crawl/jobs/{$crawl_id}/broken-links", [ 'limit' => $limit ] );
 	}
 
 	/**
-	 * POST /crawls/{id}/suggestions — generate AI suggestions.
+	 * GET /crawl/jobs/{job_id}/links/orphan — orphan pages.
 	 *
-	 * @param string   $crawl_id
+	 * @param string     $crawl_id      Job ID (string/UUID).
+	 * @param array|null $exclude_types  e.g. ['section','planned']
+	 * @return array|WP_Error
+	 */
+	public static function get_orphan_pages( string $crawl_id, ?array $exclude_types = null ): array|WP_Error {
+		$query = [];
+		if ( null !== $exclude_types ) {
+			$query['exclude_types'] = implode( ',', $exclude_types );
+		}
+		return self::get( "/crawl/jobs/{$crawl_id}/links/orphan", $query );
+	}
+
+	/**
+	 * GET /crawl/jobs/{job_id}/suggestions — AI suggestions (GET, not POST).
+	 *
+	 * @param string   $crawl_id    Job ID (string/UUID).
 	 * @param string[] $focus_areas  e.g. ['seo','content']
 	 * @param int      $limit
 	 * @return array|WP_Error
 	 */
 	public static function generate_suggestions( string $crawl_id, array $focus_areas = [], int $limit = 10 ): array|WP_Error {
-		$body = [ 'limit' => $limit ];
+		$query = [ 'limit' => $limit ];
 		if ( ! empty( $focus_areas ) ) {
-			$body['focus_areas'] = $focus_areas;
+			$query['focus_areas'] = implode( ',', $focus_areas );
 		}
-		return self::post( "/crawls/{$crawl_id}/suggestions", $body );
+		return self::get( "/crawl/jobs/{$crawl_id}/suggestions", $query );
+	}
+
+	/**
+	 * POST /crawl/jobs/{job_id}/suggestions/generate — trigger suggestion generation.
+	 *
+	 * @param string $crawl_id Job ID (string/UUID).
+	 * @return array|WP_Error
+	 */
+	public static function trigger_suggestions_generate( string $crawl_id ): array|WP_Error {
+		return self::post( "/crawl/jobs/{$crawl_id}/suggestions/generate" );
 	}
 
 	// ── Sitemap endpoints ──────────────────────────────────────────────────────
 
 	/**
-	 * GET /sitemaps — list sitemaps.
+	 * GET /sitemaps?job_id={job_id} — list sitemaps for a crawl job.
 	 *
-	 * @param int|null $workspace_id
+	 * @param string|null $job_id       Crawl job ID (required by API).
+	 * @param int|null    $workspace_id Optional workspace filter.
 	 * @return array|WP_Error
 	 */
-	public static function list_sitemaps( ?int $workspace_id = null ): array|WP_Error {
+	public static function list_sitemaps( ?string $job_id = null, ?int $workspace_id = null ): array|WP_Error {
 		$query = [];
+		if ( null !== $job_id ) {
+			$query['job_id'] = $job_id;
+		}
 		if ( null !== $workspace_id ) {
 			$query['workspace_id'] = $workspace_id;
 		}
@@ -146,7 +196,7 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
-	 * GET /sitemaps/{id}/nodes — full node tree.
+	 * GET /sitemaps/{id}/nodes — full node tree (flat list).
 	 *
 	 * @param int $sitemap_id
 	 * @return array|WP_Error
@@ -156,49 +206,33 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
-	 * GET /sitemaps/{id}/menus
+	 * GET /crawl/jobs/{job_id}/navigation/menus — list navigation menus.
 	 *
-	 * @param int $sitemap_id
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @return array|WP_Error
 	 */
-	public static function get_menus( int $sitemap_id ): array|WP_Error {
-		return self::get( "/sitemaps/{$sitemap_id}/menus" );
+	public static function get_menus( string $crawl_id ): array|WP_Error {
+		return self::get( "/crawl/jobs/{$crawl_id}/navigation/menus" );
 	}
 
 	/**
-	 * GET /sitemaps/{id}/menus/{menu_id}/items
+	 * GET /crawl/jobs/{job_id}/navigation/items — list menu items.
 	 *
-	 * @param int $sitemap_id
-	 * @param int $menu_id
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @return array|WP_Error
 	 */
-	public static function get_menu_items( int $sitemap_id, int $menu_id ): array|WP_Error {
-		return self::get( "/sitemaps/{$sitemap_id}/menus/{$menu_id}/items" );
+	public static function get_menu_items( string $crawl_id ): array|WP_Error {
+		return self::get( "/crawl/jobs/{$crawl_id}/navigation/items" );
 	}
 
 	/**
-	 * GET /sitemaps/{id}/orphans
+	 * GET /crawl/jobs/{job_id}/taxonomy/tree — taxonomy tree.
 	 *
-	 * @param int        $sitemap_id
-	 * @param array|null $exclude_types  e.g. ['section','planned']
+	 * @param string $crawl_id  Job ID (string/UUID).
 	 * @return array|WP_Error
 	 */
-	public static function get_orphan_pages( int $sitemap_id, ?array $exclude_types = null ): array|WP_Error {
-		$query = [];
-		if ( null !== $exclude_types ) {
-			$query['exclude_types'] = implode( ',', $exclude_types );
-		}
-		return self::get( "/sitemaps/{$sitemap_id}/orphans", $query );
-	}
-
-	/**
-	 * GET /sitemaps/{id}/taxonomy
-	 *
-	 * @param int $sitemap_id
-	 * @return array|WP_Error
-	 */
-	public static function get_taxonomy( int $sitemap_id ): array|WP_Error {
-		return self::get( "/sitemaps/{$sitemap_id}/taxonomy" );
+	public static function get_taxonomy( string $crawl_id ): array|WP_Error {
+		return self::get( "/crawl/jobs/{$crawl_id}/taxonomy/tree" );
 	}
 
 	// ── Sitemap write endpoints ───────────────────────────────────────────────
@@ -235,7 +269,7 @@ class IATO_MCP_IATO_Client {
 	}
 
 	/**
-	 * POST /sitemaps/{id}/nodes/{node_id} — update a sitemap node.
+	 * PUT /sitemaps/{id}/nodes/{node_id} — update a sitemap node.
 	 *
 	 * @param int   $sitemap_id
 	 * @param int   $node_id
@@ -243,7 +277,7 @@ class IATO_MCP_IATO_Client {
 	 * @return array|WP_Error
 	 */
 	public static function update_sitemap_node( int $sitemap_id, int $node_id, array $fields ): array|WP_Error {
-		return self::post( "/sitemaps/{$sitemap_id}/nodes/{$node_id}", $fields );
+		return self::put( "/sitemaps/{$sitemap_id}/nodes/{$node_id}", $fields );
 	}
 
 	// ── Category endpoints ────────────────────────────────────────────────────
@@ -314,20 +348,19 @@ class IATO_MCP_IATO_Client {
 	// ── SEO fix endpoint ──────────────────────────────────────────────────────
 
 	/**
-	 * POST /crawls/{id}/fix-seo-issue — apply an SEO fix.
+	 * POST /crawl/start — start a new crawl.
 	 *
-	 * @param string $crawl_id
-	 * @param int    $page_id
-	 * @param string $fix_type  'title'|'meta_description'
-	 * @param string $fix_value
+	 * @param string $url       URL to crawl.
+	 * @param int    $max_pages Maximum pages to crawl.
+	 * @param array  $extra     Additional config fields.
 	 * @return array|WP_Error
 	 */
-	public static function fix_seo_issue( string $crawl_id, int $page_id, string $fix_type, string $fix_value ): array|WP_Error {
-		return self::post( "/crawls/{$crawl_id}/fix-seo-issue", [
-			'page_id'   => $page_id,
-			'fix_type'  => $fix_type,
-			'fix_value' => $fix_value,
+	public static function start_crawl( string $url, int $max_pages = 1000, array $extra = [] ): array|WP_Error {
+		$body = array_merge( $extra, [
+			'url'       => $url,
+			'max_pages' => $max_pages,
 		] );
+		return self::post( '/crawl/start', $body );
 	}
 
 	/**
@@ -380,8 +413,10 @@ class IATO_MCP_IATO_Client {
 			return '';
 		}
 
-		$ws_list = $result['workspaces'] ?? $result['data'] ?? $result;
-		if ( empty( $ws_list ) || ! isset( $ws_list[0] ) ) {
+		// Platform normalized /workspaces to data.workspaces; fall back to bare data for
+		// one release so users on the transition build don't break. Drop the fallback in v1.1.
+		$ws_list = $result['data']['workspaces'] ?? $result['workspaces'] ?? [];
+		if ( ! is_array( $ws_list ) || empty( $ws_list ) || ! isset( $ws_list[0] ) ) {
 			return '';
 		}
 
@@ -404,287 +439,31 @@ class IATO_MCP_IATO_Client {
 		return self::get( "/workspaces/{$workspace_id}" );
 	}
 
-	// ── Governance endpoints ─────────────────────────────────────────────────
-
-	/**
-	 * GET /workspaces/{id}/governance-policy
-	 *
-	 * @param string $workspace_id
-	 * @return array|WP_Error
-	 */
-	public static function get_governance_policy( string $workspace_id ): array|WP_Error {
-		return self::get( "/autopilot/{$workspace_id}/policy" );
-	}
-
-	/**
-	 * PUT /autopilot/{id}/policy — partial upsert.
-	 *
-	 * @param string $workspace_id
-	 * @param array  $policy
-	 * @return array|WP_Error
-	 */
-	public static function update_governance_policy( string $workspace_id, array $policy ): array|WP_Error {
-		return self::put( "/autopilot/{$workspace_id}/policy", $policy );
-	}
-
-	// ── Autopilot Queue endpoints ───────────────────────────────────────────
-
-	/**
-	 * GET /autopilot/{workspace_id}/queue — list autopilot queue items.
-	 *
-	 * @param string $workspace_id
-	 * @param array  $params       Optional: status, limit, page.
-	 * @return array|WP_Error
-	 */
-	public static function get_queue( string $workspace_id, array $params = [] ): array|WP_Error {
-		return self::get( "/autopilot/{$workspace_id}/queue", $params );
-	}
-
-	/**
-	 * Update a queue item status, trying multiple endpoint patterns.
-	 *
-	 * Attempts:
-	 * 1. POST /autopilot/{workspace_id}/queue/{item_id}/{action}  (action-based)
-	 * 2. PUT  /autopilot/{workspace_id}/queue/{item_id}           (status field)
-	 *
-	 * @param string $workspace_id
-	 * @param string $item_id
-	 * @param string $status  'approved', 'rejected', or 'manually_fixed'.
-	 * @return array|WP_Error
-	 */
-	public static function update_queue_item( string $workspace_id, string $item_id, string $status ): array|WP_Error {
-		// Map status to action verb for POST endpoints.
-		$action_map = [
-			'approved'       => 'approve',
-			'rejected'       => 'reject',
-			'manually_fixed' => 'mark-fixed',
-		];
-
-		$action = $action_map[ $status ] ?? null;
-
-		// Try action-based POST endpoint first.
-		if ( $action ) {
-			$result = self::post( "/autopilot/{$workspace_id}/queue/{$item_id}/{$action}" );
-			if ( ! is_wp_error( $result ) ) {
-				return $result;
-			}
-		}
-
-		// Fallback: PUT with status field.
-		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", [
-			'status' => $status,
-		] );
-	}
-
-	/**
-	 * POST /autopilot/batch/{batch_id}/reject — bulk-reject all pending items in a batch.
-	 *
-	 * @param string $batch_id Batch UUID.
-	 * @return array|WP_Error
-	 */
-	public static function reject_batch( string $batch_id ): array|WP_Error {
-		return self::post( "/autopilot/batch/{$batch_id}/reject" );
-	}
-
-	/**
-	 * Mark a single item as manually fixed.
-	 *
-	 * @param string $workspace_id
-	 * @param string $item_id
-	 * @param string $notes Optional notes.
-	 * @return array|WP_Error
-	 */
-	public static function mark_as_fixed( string $workspace_id, string $item_id, string $notes = '' ): array|WP_Error {
-		$body = [];
-		if ( $notes !== '' ) {
-			$body['notes'] = $notes;
-		}
-
-		// Try action-based POST endpoint.
-		$result = self::post( "/autopilot/{$workspace_id}/queue/{$item_id}/mark-fixed", $body );
-		if ( ! is_wp_error( $result ) ) {
-			return $result;
-		}
-
-		// Fallback: PUT with status field.
-		$put_body = [ 'status' => 'manually_fixed' ];
-		if ( $notes !== '' ) {
-			$put_body['notes'] = $notes;
-		}
-		return self::put( "/autopilot/{$workspace_id}/queue/{$item_id}", $put_body );
-	}
-
-	/**
-	 * POST /autopilot/batches/{batch_id}/mark-fixed — bulk mark batch as manually fixed.
-	 *
-	 * @param string $batch_id Batch UUID.
-	 * @param string $notes    Optional notes.
-	 * @return array|WP_Error
-	 */
-	public static function mark_batch_as_fixed( string $batch_id, string $notes = '' ): array|WP_Error {
-		$body = [];
-		if ( $notes !== '' ) {
-			$body['notes'] = $notes;
-		}
-		return self::post( "/autopilot/batches/{$batch_id}/mark-fixed", $body );
-	}
-
-	/**
-	 * Bulk-reject all pending_review items for a workspace.
-	 *
-	 * Fetches all pending items page by page, collects unique batch IDs,
-	 * then calls reject_batch() for each.
-	 *
-	 * @param string $workspace_id
-	 * @return array{ batches_rejected: int, items_total: int }|WP_Error
-	 */
-	public static function bulk_reject_all_pending( string $workspace_id ): array|WP_Error {
-		$dismissed  = 0;
-		$errors     = 0;
-		$total      = 0;
-		$iteration  = 0;
-		$last_error = '';
-
-		do {
-			// Always fetch page 1 since rejected items drop off the list.
-			$result = self::get_queue( $workspace_id, [
-				'status' => 'pending_review',
-				'limit'  => 50,
-				'page'   => 1,
-			] );
-
-			if ( is_wp_error( $result ) ) {
-				if ( $dismissed > 0 ) {
-					break; // Return partial results.
-				}
-				return $result;
-			}
-
-			$data  = $result['data'] ?? $result;
-			$items = $data['items'] ?? [];
-			if ( $iteration === 0 ) {
-				$total = $data['total'] ?? 0;
-			}
-
-			if ( empty( $items ) ) {
-				break;
-			}
-
-			// Try batch reject first if batch_id is present.
-			$batch_ids = [];
-			foreach ( $items as $item ) {
-				$bid = $item['batch_id'] ?? '';
-				if ( $bid !== '' ) {
-					$batch_ids[ $bid ] = true;
-				}
-			}
-
-			if ( ! empty( $batch_ids ) ) {
-				foreach ( array_keys( $batch_ids ) as $bid ) {
-					$res = self::reject_batch( $bid );
-					if ( is_wp_error( $res ) ) {
-						$last_error = $res->get_error_message();
-						// Batch reject failed — fall through to individual.
-						$batch_ids = [];
-						break;
-					}
-				}
-			}
-
-			if ( ! empty( $batch_ids ) ) {
-				$dismissed += count( $items );
-			} else {
-				// No batch_id or batch reject failed — reject individually.
-				foreach ( $items as $item ) {
-					$item_id = $item['id'] ?? '';
-					if ( $item_id === '' ) {
-						continue;
-					}
-					$res = self::update_queue_item( $workspace_id, (string) $item_id, 'rejected' );
-					if ( ! is_wp_error( $res ) ) {
-						$dismissed++;
-					} else {
-						$errors++;
-						$last_error = $res->get_error_message();
-						// If every item in this page fails, stop looping.
-						if ( $errors >= count( $items ) ) {
-							break 2;
-						}
-					}
-				}
-			}
-
-			$iteration++;
-			if ( $iteration > 200 ) {
-				break;
-			}
-		} while ( true );
-
-		$response = [
-			'items_dismissed' => $dismissed,
-			'items_total'     => $total,
-		];
-
-		if ( $dismissed === 0 && $last_error !== '' ) {
-			return new WP_Error( 'reject_failed', 'Could not reject items: ' . $last_error );
-		}
-
-		if ( $errors > 0 ) {
-			$response['errors'] = $errors;
-			$response['last_error'] = $last_error;
-		}
-
-		return $response;
-	}
-
-	// ── Activity Log endpoints ───────────────────────────────────────────────
-
-	/**
-	 * GET /autopilot/{id}/activity
-	 *
-	 * @param string $workspace_id
-	 * @param array  $params       Optional: action, limit, page.
-	 * @return array|WP_Error
-	 */
-	public static function get_activity_log( string $workspace_id, array $params = [] ): array|WP_Error {
-		return self::get( "/autopilot/{$workspace_id}/activity", $params );
-	}
-
-	// ── Schedule endpoints ───────────────────────────────────────────────────
-
-	/**
-	 * POST /schedules — create a crawl schedule.
-	 *
-	 * @param array $data Schedule configuration.
-	 * @return array|WP_Error
-	 */
-	public static function create_schedule( array $data ): array|WP_Error {
-		return self::post( '/schedules', $data );
-	}
-
-	/**
-	 * POST /schedules/{id}/run — trigger an immediate crawl.
-	 *
-	 * @param string $schedule_id
-	 * @return array|WP_Error
-	 */
-	public static function run_schedule_now( string $schedule_id ): array|WP_Error {
-		return self::post( "/schedules/{$schedule_id}/run" );
-	}
-
-	// ── SEO Audit endpoint ───────────────────────────────────────────────────
-
-	/**
-	 * POST /crawls/{id}/seo-audit — run an SEO audit.
-	 *
-	 * @param string $crawl_id
-	 * @return array|WP_Error
-	 */
-	public static function run_seo_audit( string $crawl_id ): array|WP_Error {
-		return self::post( "/crawls/{$crawl_id}/seo-audit" );
-	}
-
 	// ── Internal helpers ───────────────────────────────────────────────────────
+
+	/**
+	 * Build the standard request headers for every IATO API call.
+	 *
+	 * Always includes plugin version + capabilities so the platform can
+	 * gate push/callback behavior per client. Unknown headers are ignored
+	 * silently by FastAPI today; used by autopilot v2.0 on the platform.
+	 *
+	 * @param string $key    Bearer token.
+	 * @param bool   $send_json  Whether the request has a JSON body.
+	 * @return array
+	 */
+	private static function default_headers( string $key, bool $send_json ): array {
+		$headers = [
+			'Authorization'              => 'Bearer ' . $key,
+			'Accept'                     => 'application/json',
+			'X-IATO-Plugin-Version'      => defined( 'IATO_MCP_VERSION' ) ? IATO_MCP_VERSION : 'unknown',
+			'X-IATO-Plugin-Capabilities' => 'mcp-read',
+		];
+		if ( $send_json ) {
+			$headers['Content-Type'] = 'application/json';
+		}
+		return $headers;
+	}
 
 	/**
 	 * GET request to the IATO API.
@@ -706,10 +485,7 @@ class IATO_MCP_IATO_Client {
 
 		$response = wp_remote_get( $url, [
 			'timeout' => self::TIMEOUT,
-			'headers' => [
-				'Authorization' => 'Bearer ' . $key,
-				'Accept'        => 'application/json',
-			],
+			'headers' => self::default_headers( $key, false ),
 		] );
 
 		return self::parse_response( $response );
@@ -730,12 +506,8 @@ class IATO_MCP_IATO_Client {
 
 		$response = wp_remote_post( self::BASE_URL . $path, [
 			'timeout' => self::TIMEOUT,
-			'headers' => [
-				'Authorization' => 'Bearer ' . $key,
-				'Content-Type'  => 'application/json',
-				'Accept'        => 'application/json',
-			],
-			'body' => wp_json_encode( $body ),
+			'headers' => self::default_headers( $key, true ),
+			'body'    => wp_json_encode( $body ),
 		] );
 
 		return self::parse_response( $response );
@@ -757,12 +529,8 @@ class IATO_MCP_IATO_Client {
 		$response = wp_remote_request( self::BASE_URL . $path, [
 			'method'  => 'PUT',
 			'timeout' => self::TIMEOUT,
-			'headers' => [
-				'Authorization' => 'Bearer ' . $key,
-				'Content-Type'  => 'application/json',
-				'Accept'        => 'application/json',
-			],
-			'body' => wp_json_encode( $body ),
+			'headers' => self::default_headers( $key, true ),
+			'body'    => wp_json_encode( $body ),
 		] );
 
 		return self::parse_response( $response );

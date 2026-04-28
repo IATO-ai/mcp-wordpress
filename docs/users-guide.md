@@ -18,11 +18,10 @@
 3. [Settings & Configuration](#settings--configuration)
 4. [WordPress Tools](#wordpress-tools)
 5. [IATO Bridge Tools](#iato-bridge-tools)
-6. [Sync Tools](#sync-tools)
-7. [SEO Plugin Support](#seo-plugin-support)
-8. [Dry-Run Mode](#dry-run-mode)
-9. [Example Prompts](#example-prompts)
-10. [Troubleshooting](#troubleshooting)
+6. [SEO Plugin Support](#seo-plugin-support)
+7. [Dry-Run Mode](#dry-run-mode)
+8. [Example Prompts](#example-prompts)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -45,15 +44,15 @@
 
 | | Without IATO Account | With <img src="iato-icon.png" alt="IATO" width="16" align="top" /> IATO Account (free up to 500 pages) |
 |---|---|---|
-| **Tools** | 17 WordPress tools | 17 WordPress + 12 IATO tools |
-| **Read content** | Posts, pages, media, menus, taxonomy, comments | Everything in WordPress tools |
-| **Edit content** | Create/update posts, SEO, alt text, menus, taxonomy | Everything in WordPress tools |
-| **Site audit** | — | Full SEO audit with auto-fix |
-| **Broken links** | — | Detected and mapped to source posts |
+| **Tools** | WordPress tools only | WordPress tools + 9 IATO bridge tools |
+| **Read content** | Posts, pages, media, menus, taxonomy, comments, Elementor | Everything in WordPress tools |
+| **Edit content** | Create/update posts, SEO, alt text, menus, taxonomy, canonical, structured data, redirects, Elementor | Everything in WordPress tools |
+| **Site audit** | — | SEO issues with WP slugs attached |
+| **Broken links** | — | Broken pages + resources mapped to source posts |
 | **Orphan pages** | — | Pages missing from navigation |
 | **Content gaps** | — | Thin content flagged with recommendations |
-| **AI suggestions** | — | Prioritized improvements across all areas |
-| **Sync to IATO** | — | Push pages, taxonomy, and SEO metadata |
+| **AI suggestions** | — | Prioritized improvements across SEO, content, links, performance |
+| **Performance report** | — | Slowest and largest pages with WP slugs |
 
 ---
 
@@ -433,64 +432,6 @@ Returns pages with poor load performance: slow load times, large page sizes, exc
 
 ---
 
-## <img src="iato-icon.png" alt="" width="28" align="top" /> Sync Tools
-
-These 3 tools push WordPress data into IATO, keeping your IATO workspace in sync with your WordPress site. All require an IATO API key and the `edit_posts` capability.
-
-### `sync_wp_pages_to_iato`
-
-Creates IATO sitemap nodes from your WordPress posts and pages. Includes rich metadata: title, URL, page type, status, author, publish date, and slug.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `sitemap_id` | integer | Yes | | IATO sitemap ID |
-| `crawl_id` | string | Yes | | IATO crawl ID |
-| `post_type` | string | No | `post,page` | Comma-separated post types |
-| `post_status` | string | No | `publish` | WordPress post status |
-| `limit` | integer | No | 100 | Max posts to sync |
-| `dry_run` | boolean | No | false | Preview without creating |
-
-**How mapping works:**
-
-| WordPress | IATO | Mapping |
-|-----------|------|---------|
-| Post title | Node title | Direct |
-| Permalink | Node URL | Direct |
-| `post` type | `article` page type | Mapped |
-| `page` type | `landing` page type | Mapped |
-| `publish` status | `published` | Mapped |
-| `draft` status | `draft` | Mapped |
-| Author, date, slug | Node notes | Packed as metadata string |
-
-Pages already in the IATO sitemap (matched by URL) are skipped automatically.
-
-### `sync_wp_taxonomy_to_iato`
-
-Syncs WordPress categories and tags to IATO. Categories are created hierarchically — parent/child relationships are preserved. Tags are created as flat IATO tags. Both are then assigned to matching IATO sitemap nodes.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `sitemap_id` | integer | Yes | | IATO sitemap ID |
-| `crawl_id` | string | Yes | | IATO crawl ID |
-| `taxonomy` | string | No | `category,post_tag` | Comma-separated taxonomies |
-| `dry_run` | boolean | No | false | Preview without syncing |
-
-**Category hierarchy:** WordPress categories with parents are created in depth-first order. Child categories are linked to their IATO parent via `parent_category_id`, preserving the full tree structure.
-
-### `sync_wp_meta_to_iato`
-
-Reads SEO titles and meta descriptions from WordPress (via Yoast, RankMath, or SEOPress) and pushes them to IATO. Keeps your IATO crawl data in sync with on-site SEO metadata.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `sitemap_id` | integer | Yes | | IATO sitemap ID |
-| `crawl_id` | string | Yes | | IATO crawl ID |
-| `post_type` | string | No | `post,page` | Comma-separated post types |
-| `limit` | integer | No | 100 | Max posts to process |
-| `dry_run` | boolean | No | false | Preview without pushing |
-
----
-
 ## SEO Plugin Support
 
 IATO MCP automatically detects and works with your installed SEO plugin.
@@ -502,7 +443,7 @@ IATO MCP automatically detects and works with your installed SEO plugin.
 | 3 | SEOPress | `seopress/seopress.php` |
 | 4 | Fallback | Native WordPress title, no description |
 
-Detection happens once per request and is cached. The active SEO plugin is reported in responses from `get_seo_data`, `update_seo_data`, and `sync_wp_meta_to_iato` so you always know which plugin is providing the data.
+Detection happens once per request and is cached. The active SEO plugin is reported in responses from `get_seo_data` and `update_seo_data` so you always know which plugin is providing the data.
 
 If no SEO plugin is installed, IATO MCP reads the native WordPress post title. SEO title and description writes require an active SEO plugin — the fallback mode is read-only.
 
@@ -517,13 +458,9 @@ Write operations that modify external data support `dry_run: true`. When enabled
 | Tool | What it previews |
 |------|-----------------|
 | `update_menu_item` | Menu item that would be added |
-| `sync_wp_pages_to_iato` | IATO nodes that would be created |
-| `sync_wp_taxonomy_to_iato` | Categories/tags that would be created and assigned |
-| `sync_wp_meta_to_iato` | SEO metadata that would be pushed |
+| `update_elementor_data` | Whether the supplied JSON is valid and would be written |
 
-Dry-run responses always include `"dry_run": true` and show actions like `"would_create"` or `"would_sync"` instead of `"create"` or `"synced"`.
-
-**Tip:** Run every sync tool with `dry_run: true` first to review the changes, then run again with `dry_run: false` to apply them.
+Dry-run responses always include `"dry_run": true` and show actions like `"would_update"` instead of executing the write.
 
 ---
 

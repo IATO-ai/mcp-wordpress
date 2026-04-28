@@ -97,11 +97,18 @@ class IATO_MCP_Server {
 	/**
 	 * Register a tool with the server.
 	 *
+	 * Skips registration if the tool is toggled off in Settings > IATO MCP.
+	 * Toggles default to "all on" when the option is empty (fresh install).
+	 *
 	 * @param string   $name       Tool name (snake_case, matches tools/list output).
 	 * @param array    $definition JSON Schema definition for tools/list.
 	 * @param callable $handler    Handler — receives assoc array of params, returns array|WP_Error.
 	 */
 	public static function register_tool( string $name, array $definition, callable $handler ): void {
+		if ( class_exists( 'IATO_MCP_Settings' ) && ! IATO_MCP_Settings::is_tool_enabled( $name ) ) {
+			return;
+		}
+
 		self::$tools[ $name ] = [
 			'definition' => $definition,
 			'handler'    => $handler,
@@ -119,6 +126,13 @@ class IATO_MCP_Server {
 		$id     = $body['id']     ?? null;
 		$method = $body['method'] ?? '';
 		$params = $body['params'] ?? [];
+
+		// MCP notifications (e.g. notifications/initialized) are one-way — the
+		// client does not expect a response per JSON-RPC 2.0 spec. Accept with
+		// 202 and skip call-log entry (high-frequency protocol chatter).
+		if ( is_string( $method ) && strpos( $method, 'notifications/' ) === 0 ) {
+			return new WP_REST_Response( null, 202 );
+		}
 
 		$started   = microtime( true );
 		$tool_name = null;

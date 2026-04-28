@@ -1,10 +1,10 @@
 === IATO MCP ===
 Contributors: iatoai
 Tags: mcp, ai, seo, sitemap, claude
-Requires at least: 6.0
+Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.0.0
+Stable tag: 1.2.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -14,32 +14,37 @@ Exposes an MCP server from any self-hosted WordPress site, enabling AI agents li
 
 WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 
-IATO MCP connects your WordPress site to Claude Desktop and other MCP-enabled AI clients. Once connected, you can ask Claude to audit your site and fix SEO issues, identify orphan pages, clean up broken links, and more — all in a single conversation.
+[IATO MCP](https://iato.ai/wordpress-mcp) connects your WordPress site to Claude Desktop and other MCP-enabled AI clients. Once connected, you can ask Claude to audit your site and fix SEO issues, identify orphan pages, clean up broken links, and more — all in a single conversation.
 
 = How it works =
 
 1. Install and activate the plugin
 2. Follow the setup wizard — copy the config into Claude Desktop, or use "Add Custom Connector" with your site URL
-3. Connect your IATO account for AI-powered analysis (free up to 500 pages)
+3. Connect your [IATO account](https://iato.ai) for AI-powered analysis ([free trial](https://iato.ai) up to 500 pages)
 
 = What Claude can do =
 
-**Without an IATO account (17 WordPress tools):**
+**Without an IATO account (30 WordPress tools):**
 
 * Read and edit posts, pages, and media
-* Create new posts and pages
+* Create new posts and pages with excerpt support
 * Update SEO titles and meta descriptions (Yoast SEO, RankMath, SEOPress)
+* Update canonical URLs
 * Update image alt text
 * Read and edit navigation menus
 * Manage categories, tags, and taxonomy terms
+* Manage JSON-LD structured data
+* Manage redirect rules
+* Read and write Elementor page builder data
 * Search content across the site
 * Read site info and settings
 * Read and filter comments
 
-**With an IATO account (9 bridge tools — full analyze-and-fix pipeline):**
+**With an [IATO account](https://iato.ai) (12 bridge tools — full analyze-and-fix pipeline):**
 
-* Crawl your site and run a full SEO audit
-* Fix title, meta description, and alt text issues automatically
+* Start a new crawl of your site directly from Claude (admin only)
+* Check crawl status and list recent crawl jobs
+* Run a full SEO audit and fix title, meta description, and alt text issues automatically
 * Identify orphan pages not linked from any navigation menu
 * Audit navigation menus for gaps and missing sections
 * Surface thin content with specific improvement recommendations
@@ -86,15 +91,17 @@ The plugin also implements an OAuth 2.0 authorization server on your WordPress s
 4. In Claude Desktop, either paste the JSON config or use "Add Custom Connector" and enter your site URL
 5. Optionally, go to Settings > IATO MCP to enter your IATO API key for the full analysis pipeline
 
+For detailed setup instructions, see the [IATO MCP documentation](https://iato.ai/wordpress-mcp-docs).
+
 == Frequently Asked Questions ==
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 17 built-in tools. An IATO account (free for up to 500 pages) unlocks 9 additional bridge tools: SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
+No. The plugin works standalone for reading and editing WordPress content with 30 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
 
 = Which WordPress version is required? =
 
-WordPress 6.0 or higher with PHP 8.0+. The plugin uses the WordPress REST API and implements OAuth 2.0 for secure authentication with AI clients.
+WordPress 6.2 or higher with PHP 8.0+. The plugin uses the WordPress REST API and implements OAuth 2.0 for secure authentication with AI clients.
 
 = Does this work on shared hosting? =
 
@@ -107,6 +114,10 @@ Any MCP-enabled client: Claude Desktop, Cursor, VS Code with GitHub Copilot, and
 = How does authentication work? =
 
 The plugin generates a secure API key on activation. You can authenticate in two ways: paste the provided Bearer token config into your AI client, or use Claude Desktop's "Add Custom Connector" flow which handles OAuth 2.0 with PKCE automatically.
+
+= Why does the plugin support two auth methods? =
+
+AI clients like Claude Desktop authenticate via a WordPress Application Password (or the OAuth 2.0 / PKCE flow), which is the WordPress-native pattern most users will use. The plugin also accepts the plugin-generated Bearer token at the same MCP endpoint — that path is used by the IATO platform's own integrations (for example, the dashboard's "Sync pages, posts, menus, and taxonomy from WordPress" feature, which composes the plugin's read tools to pull content into IATO). Both methods land at `/wp-json/iato-mcp/v1/message` and are validated by `class-auth.php`. You don't have to choose — paste your Bearer token into the IATO platform connection, generate an Application Password for Claude Desktop, and the same plugin handles both.
 
 = Is my content sent to IATO or Anthropic? =
 
@@ -125,18 +136,45 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
-= 1.0.0 =
-* 17 WordPress native tools: posts, pages, media, SEO, menus, taxonomy, comments, site info and settings
+= 1.2.0 =
+* New: `start_iato_crawl` MCP tool — Claude can kick off an IATO crawl of the current site directly from a conversation (admin only; consumes IATO platform quota)
+* New: `get_iato_crawl_status` MCP tool — poll a specific crawl job until it completes
+* New: `list_iato_crawls` MCP tool — list recent crawl jobs to find the most recent completed crawl_id
+* New "Crawl Management" category in Settings > IATO MCP > Tools
+* Bridge tool count: 9 → 12; total registered tools: 39 → 42
+* New FAQ entry on the dual auth methods (Application Password / OAuth for AI clients vs. Bearer token for the IATO platform's WordPress Sync UI)
+
+= 1.1.12 =
+* Added Plugin URI to plugin header
+* Added contextual links to iato.ai throughout the plugin description, installation, and FAQ sections
+* Added link to documentation page
+
+= 1.1.11 =
+* Readme accuracy corrections: updated tool count from 17 to 30, expanded feature list with Elementor, canonical URLs, structured data, redirects, and excerpt support, corrected minimum WordPress version to 6.2
+
+= 1.1.10 =
+* 30 WordPress native tools including Elementor read/write and the new `excerpt` parameter on `update_post`
 * 9 IATO bridge tools: sitemap, SEO fixes, broken links, content gaps, orphan pages, navigation audit, AI suggestions, performance reports, taxonomy analysis
 * OAuth 2.0 authorization server with PKCE for Claude Desktop connector flow
 * Dynamic client registration (RFC 7591)
 * SEO adapter supporting Yoast SEO, RankMath, and SEOPress
-* Card-based settings UI with per-tool enable/disable toggles
-* Setup wizard with auto-generated connection config
-* Dry-run mode for destructive write operations
+* Single Settings page with General and Diagnostics tabs; 39 per-tool toggles
+* AJAX-based Save Settings to sidestep host-level options.php timeouts
+* "Test connection" button for explicit IATO API key validation
+* Change receipts audit trail for every write operation, with Claude-callable rollback endpoint
+* MCP `notifications/*` methods silently accepted per JSON-RPC spec
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
 
-= 1.0.0 =
-First stable release.
+= 1.2.0 =
+Adds three crawl-control MCP tools so Claude can start, check, and list IATO crawls without leaving the conversation. Admin only for `start_iato_crawl`.
+
+= 1.1.12 =
+Adds Plugin URI and contextual links to iato.ai throughout the listing. No code changes.
+
+= 1.1.11 =
+Readme accuracy pass. No code changes.
+
+= 1.1.10 =
+First stable release to the WordPress.org directory.

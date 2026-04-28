@@ -2,10 +2,12 @@
 /**
  * Bridge Tool: get_iato_content_gaps
  *
- * Identifies thin or under-optimised pages via IATO get_low_performing_pages
- * and get_content_metrics, with WordPress slugs attached for direct editing.
+ * Identifies thin or under-optimised pages using the crawl's per-page metadata
+ * (word count, H1 presence, image count, internal link count) from the IATO
+ * /crawl/jobs/{id}/pages endpoint. Enriches each flagged page with the
+ * WordPress post ID and slug.
  *
- * IATO tools used: get_low_performing_pages, get_content_metrics
+ * IATO tools used: get_pages
  * WP resolution:   url_to_postid() per page URL
  *
  * @package IATO_MCP
@@ -39,27 +41,12 @@ IATO_MCP_Server::register_tool(
 		$min_words = absint( $args['min_word_count'] ?? 300 );
 		$limit     = absint( $args['limit'] ?? 20 );
 
-		// Fetch low-performing pages and content metrics in sequence.
-		$pages_response = IATO_MCP_IATO_Client::get_low_performing_pages( $crawl_id, $limit );
-		if ( is_wp_error( $pages_response ) ) {
-			return $pages_response;
+		$response = IATO_MCP_IATO_Client::get_pages( $crawl_id, max( $limit, 100 ) );
+		if ( is_wp_error( $response ) ) {
+			return $response;
 		}
 
-		$metrics_response = IATO_MCP_IATO_Client::get_content_metrics( $crawl_id );
-		$metrics_by_url   = [];
-		if ( ! is_wp_error( $metrics_response ) ) {
-			$metrics_data = $metrics_response['pages'] ?? $metrics_response['data'] ?? $metrics_response;
-			if ( is_array( $metrics_data ) ) {
-				foreach ( $metrics_data as $m ) {
-					$murl = $m['url'] ?? '';
-					if ( $murl ) {
-						$metrics_by_url[ $murl ] = $m;
-					}
-				}
-			}
-		}
-
-		$pages_data = $pages_response['pages'] ?? $pages_response['data'] ?? $pages_response;
+		$pages_data = $response['data']['pages'] ?? [];
 		if ( ! is_array( $pages_data ) ) {
 			$pages_data = [];
 		}
@@ -69,20 +56,19 @@ IATO_MCP_Server::register_tool(
 			$url        = $page['url'] ?? '';
 			$wp_id      = $url ? url_to_postid( $url ) : 0;
 			$wp_slug    = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
-			$metrics    = $metrics_by_url[ $url ] ?? [];
-			$word_count = (int) ( $page['word_count'] ?? $metrics['word_count'] ?? 0 );
+			$word_count = (int) ( $page['word_count'] ?? 0 );
 
 			$flags = [];
 			if ( $word_count < $min_words ) {
 				$flags[] = "word_count ({$word_count} < {$min_words})";
 			}
-			if ( ! empty( $page['missing_h1'] ) || ! empty( $metrics['missing_h1'] ) ) {
+			if ( ! empty( $page['missing_h1'] ) ) {
 				$flags[] = 'missing_h1';
 			}
-			if ( 0 === (int) ( $page['image_count'] ?? $metrics['image_count'] ?? -1 ) ) {
+			if ( 0 === (int) ( $page['image_count'] ?? -1 ) ) {
 				$flags[] = 'no_images';
 			}
-			if ( (int) ( $page['internal_link_count'] ?? $metrics['internal_link_count'] ?? 999 ) < 2 ) {
+			if ( (int) ( $page['internal_link_count'] ?? 999 ) < 2 ) {
 				$flags[] = 'low_internal_links';
 			}
 
@@ -91,13 +77,17 @@ IATO_MCP_Server::register_tool(
 			}
 
 			$pages[] = [
-				'url'          => $url,
-				'title'        => $page['title'] ?? '',
-				'word_count'   => $word_count,
-				'flags'        => $flags,
-				'wp_post_id'   => $wp_id ?: null,
-				'wp_slug'      => $wp_slug ?: null,
+				'url'        => $url,
+				'title'      => $page['title'] ?? '',
+				'word_count' => $word_count,
+				'flags'      => $flags,
+				'wp_post_id' => $wp_id ?: null,
+				'wp_slug'    => $wp_slug ?: null,
 			];
+
+			if ( count( $pages ) >= $limit ) {
+				break;
+			}
 		}
 
 		return IATO_MCP_Server::ok( [
