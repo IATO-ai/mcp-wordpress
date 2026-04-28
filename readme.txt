@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.3.4
+Stable tag: 1.3.5
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -74,6 +74,10 @@ WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 
 > "Audit my categories and tags and suggest consolidations"
 
+> "Set every H2 heading in these Elementor posts to H1"
+
+> "Find all button widgets on the site and change their color to #ff0000"
+
 = External Services =
 
 This plugin connects to the following external service when configured:
@@ -99,7 +103,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 30 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
+No. The plugin works standalone for reading and editing WordPress content with 39 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
 
 = Which WordPress version is required? =
 
@@ -137,6 +141,11 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.3.5 =
+* Docs: corrected the FAQ entry that still claimed "30 built-in tools" — now reflects the v1.3.0 widget-grained Elementor surface (39 WordPress native + 12 IATO bridge = 51 total).
+* Docs: added two example prompts demonstrating widget-grained edits ("Set every H2 heading in these Elementor posts to H1" and "Find all button widgets on the site and change their color to #ff0000") so the v2 capability is concrete for end users who don't know Elementor jargon.
+* No code changes.
 
 = 1.3.4 =
 * Optimization: `update_elementor_widgets_bulk` no longer echoes `change_receipt` on per-result rows. Receipts are still persisted to the `iato_change_receipts` audit table; bulk callers who need them can query by post_id + applied_at. Saves ~120 bytes per result. Brings the canonical 4-page H1-flip benchmark response under the v2 spec's <2 KB hard target. Singleton `update_elementor_widget` and `update_elementor_patch` responses keep the slim receipt for backward-compat and convenience.
@@ -210,6 +219,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.3.5 =
+Docs-only release: corrects a stale FAQ tool count and adds widget-flavored example prompts. No code changes; safe to skip if you've already updated to 1.3.4.
 
 = 1.3.4 =
 Drops `change_receipt` from `update_elementor_widgets_bulk` per-result rows (still persisted to the audit table; bulk callers query by post_id). Lands the 4-page H1-flip benchmark under the spec's <2 KB hard target. Singleton update tools unchanged.

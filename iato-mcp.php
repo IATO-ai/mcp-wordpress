@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.3.4
+ * Version:     1.3.5
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.3.4' );
+define( 'IATO_MCP_VERSION', '1.3.5' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -120,10 +120,10 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
 function iato_mcp_maybe_run_migrations() {
 	$db_version = get_option( 'iato_mcp_db_version', '0' );
 
-	// 1.3.4: append v2 tool names to iato_mcp_tools so existing installs
+	// 1.3.5: append v2 tool names to iato_mcp_tools so existing installs
 	// upgrading from 1.2.x don't see the new Elementor v2 tools auto-disabled
 	// (is_tool_enabled() returns false for any name not in the saved array).
-	if ( version_compare( $db_version, '1.3.4', '<' ) ) {
+	if ( version_compare( $db_version, '1.3.5', '<' ) ) {
 		$saved = get_option( 'iato_mcp_tools', null );
 		if ( is_array( $saved ) && ! empty( $saved ) ) {
 			$new_v2 = [
