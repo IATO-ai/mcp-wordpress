@@ -32,7 +32,10 @@ IATO_MCP_Server::register_tool(
 			return $response;
 		}
 
-		$jobs_data = $response['data']['jobs'] ?? [];
+		// Dual-key envelope read: canonical { data: { jobs } } first, with a
+		// fallback to the bare { jobs } shape for resilience if the platform
+		// regresses or a new un-wrapped endpoint is added later.
+		$jobs_data = $response['data']['jobs'] ?? $response['jobs'] ?? [];
 		if ( ! is_array( $jobs_data ) ) {
 			$jobs_data = [];
 		}
@@ -42,8 +45,10 @@ IATO_MCP_Server::register_tool(
 		$jobs = [];
 		foreach ( $jobs_data as $job ) {
 			$status = (string) ( $job['status'] ?? $job['state'] ?? 'unknown' );
+			// Prefer the UUID job_id — the numeric `id` is a DB primary key with
+			// no FK into the other bridge tools, which all read /crawl/jobs/{uuid}/...
 			$jobs[] = [
-				'crawl_id'      => $job['id'] ?? $job['crawl_id'] ?? $job['job_id'] ?? null,
+				'crawl_id'      => $job['job_id'] ?? $job['crawl_id'] ?? $job['id'] ?? null,
 				'url'           => $job['url'] ?? null,
 				'status'        => $status,
 				'is_complete'   => in_array( $status, [ 'completed', 'complete', 'done', 'finished' ], true ),

@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.2.3
+Stable tag: 1.2.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -136,6 +136,10 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.2.4 =
+* Fix: `list_iato_crawls` now returns the UUID `job_id` as `crawl_id` instead of the numeric DB primary key. The numeric `id` had no FK relationship to the other bridge tools (which all key off the UUID via `/crawl/jobs/{uuid}/...`), so handing it back to Claude broke the analyze-and-fix chain at the first hop.
+* Fix: `list_iato_crawls` envelope read now falls back from canonical `data.jobs` to bare `jobs` if the platform regresses or a new un-wrapped endpoint slips through. Same dual-key resilience pattern used for `/workspaces` during the v1.1 transition.
+
 = 1.2.3 =
 * Fix: `start_iato_crawl` now sends `workspace_id` as a JSON integer, not a JSON string. The platform's POST /crawl/start handler binds the field as `Optional[int]` via Pydantic; depending on strict-mode it can reject `"44"` while accepting `44`. Resolves orphan-crawl creation that persisted from 1.2.0–1.2.2.
 
@@ -178,6 +182,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.2.4 =
+Fixes `list_iato_crawls` returning the wrong identifier (numeric DB id instead of the UUID), which broke the chain into the other bridge tools. Adds dual-key envelope resilience for the same endpoint. Recommended upgrade for anyone on 1.2.0–1.2.3.
 
 = 1.2.3 =
 Sends workspace_id as a JSON integer so the platform's Pydantic binding accepts it. Required to make the crawl-control tools fully functional; recommended upgrade for anyone on 1.2.0–1.2.2.
