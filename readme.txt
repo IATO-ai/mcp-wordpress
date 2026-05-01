@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.3.5
+Stable tag: 1.4.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,7 +24,7 @@ WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 
 = What Claude can do =
 
-**Without an IATO account (39 WordPress tools):**
+**Without an IATO account (40 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -41,6 +41,7 @@ WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 * Search content across the site
 * Read site info and settings
 * Read and filter comments
+* One-call rollback for any tracked write — every change emits a receipt with a stable `change_id`; pass it back to the `rollback` tool and the original value is restored
 
 **With an [IATO account](https://iato.ai) (12 bridge tools — full analyze-and-fix pipeline):**
 
@@ -103,7 +104,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 39 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
+No. The plugin works standalone for reading and editing WordPress content with 40 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
 
 = Which WordPress version is required? =
 
@@ -141,6 +142,12 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.4.0 =
+* New: `rollback` MCP tool. Reverses any prior write by `change_id`. Wraps the existing `wp-json/iato-mcp/v1/rollback` REST endpoint so Claude can undo a change in one MCP call instead of the user constructing a manual HTTP request. Validates the stored `before_value` to prevent tampering, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Requires `edit_posts` (with elevated `manage_options` for `menu_item` and `redirect` receipts to mirror the original write capability).
+* New: change receipts on `update_post` and `create_post`. Previously these two write tools returned no audit trail, so even though every other write tool emitted a receipt, the most common edits — title, content, excerpt, status, and net-new posts — couldn't be rolled back. `update_post` now records one receipt per actually-changed field (skipping no-op resends); `create_post` records `target_type=post, field=create`, and `rollback` reverses it via `wp_trash_post` (recoverable from the WP trash).
+* New: `capabilities.rollback: true` in the `initialize` response so MCP clients can feature-detect rollback support without a `tools/list` round-trip — same pattern as the existing `capabilities.elementor.v2`.
+* Migration: appends `rollback` to the saved `iato_mcp_tools` per-tool toggle option on first request after upgrade so existing installs see the new tool enabled by default. Same idempotent migration pattern used for the v2 Elementor tools in 1.3.5.
 
 = 1.3.5 =
 * Docs: corrected the FAQ entry that still claimed "30 built-in tools" — now reflects the v1.3.0 widget-grained Elementor surface (39 WordPress native + 12 IATO bridge = 51 total).
@@ -219,6 +226,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.0 =
+Adds a `rollback` MCP tool and change-receipt coverage for `update_post` / `create_post`, closing the gap that previously left the two highest-volume write tools without an audit trail. Claude can now undo any tracked change in a single tool call.
 
 = 1.3.5 =
 Docs-only release: corrects a stale FAQ tool count and adds widget-flavored example prompts. No code changes; safe to skip if you've already updated to 1.3.4.

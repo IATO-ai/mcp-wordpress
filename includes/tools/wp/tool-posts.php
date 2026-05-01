@@ -170,10 +170,24 @@ IATO_MCP_Server::register_tool(
 			return $post_id;
 		}
 
-		return IATO_MCP_Server::ok( [
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$post_id,
+			'post',
+			'create',
+			null,
+			[
+				'post_type' => $post_type,
+				'title'     => $postarr['post_title'],
+			]
+		);
+
+		$data = [
 			'id'  => $post_id,
 			'url' => get_permalink( $post_id ),
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 
@@ -207,18 +221,23 @@ IATO_MCP_Server::register_tool(
 		}
 
 		$postarr = [ 'ID' => $post_id ];
+		$before  = [];
 
 		if ( isset( $args['title'] ) ) {
 			$postarr['post_title'] = sanitize_text_field( $args['title'] );
+			$before['title']       = $post->post_title;
 		}
 		if ( isset( $args['content'] ) ) {
 			$postarr['post_content'] = wp_kses_post( $args['content'] );
+			$before['content']       = $post->post_content;
 		}
 		if ( isset( $args['excerpt'] ) ) {
 			$postarr['post_excerpt'] = sanitize_textarea_field( $args['excerpt'] );
+			$before['excerpt']       = $post->post_excerpt;
 		}
 		if ( isset( $args['status'] ) && in_array( $args['status'], [ 'draft', 'publish' ], true ) ) {
 			$postarr['post_status'] = $args['status'];
+			$before['status']       = $post->post_status;
 		}
 
 		$result = wp_update_post( $postarr, true );
@@ -226,11 +245,35 @@ IATO_MCP_Server::register_tool(
 			return $result;
 		}
 
-		return IATO_MCP_Server::ok( [
+		$field_to_postkey = [
+			'title'   => 'post_title',
+			'content' => 'post_content',
+			'excerpt' => 'post_excerpt',
+			'status'  => 'post_status',
+		];
+
+		$receipts = [];
+		foreach ( $before as $field => $before_value ) {
+			$after_value = $postarr[ $field_to_postkey[ $field ] ];
+			if ( $before_value === $after_value ) {
+				continue;
+			}
+			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post', $field, $before_value, $after_value );
+		}
+
+		$data = [
 			'id'       => $post_id,
 			'url'      => get_permalink( $post_id ),
 			'modified' => get_post( $post_id )->post_modified_gmt,
-		] );
+		];
+
+		if ( count( $receipts ) === 1 ) {
+			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
+		} elseif ( count( $receipts ) > 1 ) {
+			$data['change_receipts'] = $receipts;
+		}
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 

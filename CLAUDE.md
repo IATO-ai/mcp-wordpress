@@ -13,8 +13,8 @@ Claude Desktop / AI Client
         |  HTTP MCP transport (Streamable HTTP — one POST per request, no SSE for MVP)
         |
 WordPress Plugin (iato-mcp)
-  ├── wp-json/iato-mcp/v1/message     ← single JSON-RPC endpoint (tools)
-  ├── wp-json/iato-mcp/v1/rollback    ← Claude-callable rollback endpoint
+  ├── wp-json/iato-mcp/v1/message     ← single JSON-RPC endpoint (tools, incl. `rollback`)
+  ├── wp-json/iato-mcp/v1/rollback    ← REST rollback endpoint (same dispatch as the MCP tool)
   ├── class-mcp-server.php            ← MCP protocol handler
   ├── class-auth.php                  ← Application Password validation
   ├── class-oauth.php                 ← OAuth 2.0 server for Claude Desktop
@@ -107,12 +107,15 @@ On error, return `isError: true` with a message — never throw exceptions out o
 | `find_elementor_widgets` | tools/wp/tool-elementor-bulk.php | read |
 | `set_heading_level` / `set_widget_setting` | tools/wp/tool-elementor-helpers.php | edit_posts |
 | `resolve_url` | tools/wp/tool-resolve-url.php | read |
+| `rollback` | tools/wp/tool-rollback.php | edit_posts (manage_options for menu_item / redirect receipts) |
 
 `get_post` accepts an opt-in `include_shadowing: true` parameter that attaches `is_shadowed_by` when an Elementor Theme Builder template overrides the slug-based render. Default is off so the hot path stays fast.
 
 `get_elementor_data` accepts a `format` parameter (`raw` | `compact` | `summary`). All v2 reads include a `revision` hash for use with `if_revision` guards on writes.
 
-The `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active, so clients can feature-detect without a `tools/list` round-trip.
+`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`. `update_post` records one receipt per changed field (`title`, `content`, `excerpt`, `status`); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`.
+
+The `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active, plus `capabilities.rollback: true` always — clients can feature-detect without a `tools/list` round-trip.
 
 ### IATO Bridge Tools (require IATO API key)
 

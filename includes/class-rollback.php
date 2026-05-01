@@ -168,6 +168,8 @@ class IATO_MCP_Rollback {
 		switch ( $target_type ) {
 			case 'page':
 				return self::rollback_page( $field, $post_id, $before_value );
+			case 'post':
+				return self::rollback_post( $field, $post_id, $before_value );
 			case 'image':
 				return self::rollback_image( $field, $post_id, $before_value );
 			case 'menu_item':
@@ -179,6 +181,51 @@ class IATO_MCP_Rollback {
 			default:
 				return new WP_Error( 'unsupported_target_type', "Rollback not supported for target_type: {$target_type}" );
 		}
+	}
+
+	/**
+	 * Rollback WP-core post fields (title, content, excerpt, status) and create.
+	 */
+	private static function rollback_post( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( ! $post_id ) {
+			return new WP_Error( 'post_not_found', 'post_id is required for post rollback.' );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'post_not_found', 'Post not found.', [ 'status' => 404 ] );
+		}
+
+		// Reverse a create by trashing the post. Already-trashed is treated as success.
+		if ( 'create' === $field ) {
+			if ( 'trash' === $post->post_status ) {
+				return true;
+			}
+			$trashed = wp_trash_post( $post_id );
+			if ( ! $trashed ) {
+				return new WP_Error( 'trash_failed', 'Failed to trash post.' );
+			}
+			return true;
+		}
+
+		$post_key = match ( $field ) {
+			'title'   => 'post_title',
+			'content' => 'post_content',
+			'excerpt' => 'post_excerpt',
+			'status'  => 'post_status',
+			default   => null,
+		};
+
+		if ( null === $post_key ) {
+			return new WP_Error( 'unsupported_field', "Rollback not supported for post field: {$field}" );
+		}
+
+		$result = wp_update_post( [
+			'ID'      => $post_id,
+			$post_key => $before_value,
+		], true );
+
+		return is_wp_error( $result ) ? $result : true;
 	}
 
 	/**

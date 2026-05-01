@@ -251,7 +251,8 @@ class IATO_MCP_Server {
 	 */
 	private static function handle_initialize( array $params ): array {
 		$capabilities = [
-			'tools' => new stdClass(), // signals tool support
+			'tools'    => new stdClass(), // signals tool support
+			'rollback' => true,           // change-receipt-based undo for tracked write tools
 		];
 		// Advertise widget-grained Elementor v2 surface only when Elementor is
 		// actually active — tells clients they can hand off to v2 tools without
