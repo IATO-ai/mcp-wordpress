@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.1
+Stable tag: 1.4.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,11 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.2 =
+* Fix: `Authorization: Basic <Application Password>` is now an accepted auth path on the MCP endpoint, alongside the existing plugin Bearer token. v1.4.1 documented Application Password support in the setup wizard but `class-auth.php` was hard-rejecting any non-Bearer header — users following wizard Methods 2 or 3 were getting 401s. This release makes the wizard's promise actually work. Trust grant in this version is identical to the Bearer path (full admin once authenticated); per-user capability enforcement under Application Password is tracked separately as a v1.6 hardening item.
+* Fix: dismissible setup notice now emits a Claude-Desktop-compatible stdio-bridge config (`mcp-remote` via `npx`, Bearer + `iato_mcp_key` in an `env` entry) instead of the direct-HTTP `{url, headers}` format that Claude Desktop's config file can't consume. Same bug class as the v1.4.1 wizard fix; this catches the second occurrence in the admin notice.
+* Fix: relabeled the Settings page hero-card config block from "Claude Desktop Configuration" to "HTTP MCP clients (MCP Inspector, IDEs, scripts)" — the snippet is still the right config for those clients, just no longer mislabels its audience. Adds a one-line pointer to the setup wizard for stdio-only clients.
+
 = 1.4.1 =
 * Fix: setup wizard restructured around the three actual connection methods. The previous "1. URL → 2. Application Password → 3. Claude Desktop config" framing presented OAuth-via-Connectors users with a credential step they didn't need, and the JSON snippet referenced `@modelcontextprotocol/server-http` — a package that doesn't exist on npm. The wizard now leads with the endpoint URL, then presents three mutually exclusive method cards: Connectors UI (OAuth, recommended), Direct HTTP (Basic Auth for MCP Inspector / IDEs / scripts), and Manual config (stdio bridge for Claude Desktop config file, Cursor, Cline, Zed).
 * Fix: stdio-bridge JSON snippet now uses `mcp-remote` (the real npm package) and passes the credential via an `env` entry referenced as `${IATO_AUTH}` in `args`, working around Claude Desktop's args parser breaking on spaces inside inline header strings.
@@ -230,6 +235,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.2 =
+Makes the Application Password auth path documented in the v1.4.1 setup wizard actually work (the auth handler was hard-rejecting non-Bearer requests, so wizard Methods 2 and 3 were returning 401). Also fixes the dismissible setup notice to emit a Claude-Desktop-compatible stdio-bridge config, and relabels the Settings page hero-card so its audience (HTTP MCP clients) is unambiguous. Recommended upgrade for anyone on 1.4.1.
 
 = 1.4.1 =
 Setup wizard restructured around the three real connection paths (Connectors UI / Direct HTTP / stdio bridge), and the stdio JSON snippet now references the actual `mcp-remote` npm package with an env-var credential pattern. Recommended for any new install; existing connections are unaffected.

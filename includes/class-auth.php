@@ -1,11 +1,19 @@
 <?php
 /**
- * Authentication — validates the plugin-generated API key on every MCP request.
+ * Authentication — validates incoming MCP requests on the REST endpoint.
  *
- * On plugin activation a 32-character random key is generated and stored in
- * wp_options as `iato_mcp_key`. Clients send it via `Authorization: Bearer <key>`.
+ * Two auth paths are accepted:
+ *   1. Plugin Bearer token (`iato_mcp_key`) — auto-generated on activation, used by the
+ *      IATO platform's own integrations and by clients that paste the Settings page config.
+ *   2. WordPress Application Password (Basic auth) — the WP-native credential, used by
+ *      AI clients via the setup wizard (Methods 2 and 3) and by generic HTTP MCP tooling.
  *
- * No nonces. No sessions. No WordPress Application Passwords. Stateless per-request auth.
+ * Both paths grant full administrative access in this version (matching the long-standing
+ * "plugin key grants full administrative access" invariant). Per-user capability enforcement
+ * under Application Password is tracked separately as a v1.6 hardening item — see the
+ * deferred section in the v1.4.2 plan.
+ *
+ * Stateless per-request auth: no nonces, no sessions.
  *
  * @package IATO_MCP
  */
@@ -41,8 +49,8 @@ class IATO_MCP_Auth {
 	/**
 	 * Permission callback for the MCP REST route.
 	 *
-	 * Extracts the Bearer token from the Authorization header and compares
-	 * it against the stored plugin key using a timing-safe comparison.
+	 * Accepts two auth paths: plugin Bearer token or WordPress Application Password
+	 * (Basic auth, already validated by WP core's determine_current_user filter chain).
 	 *
 	 * @param WP_REST_Request $request Incoming request.
 	 * @return true|WP_Error
@@ -60,27 +68,44 @@ class IATO_MCP_Auth {
 
 		$header = $request->get_header( 'Authorization' );
 
-		if ( ! $header || 0 !== strncasecmp( $header, 'Bearer ', 7 ) ) {
+		if ( $header && 0 === strncasecmp( $header, 'Bearer ', 7 ) ) {
+			$provided_key = substr( $header, 7 );
+
+			if ( ! hash_equals( $stored_key, $provided_key ) ) {
+				return new WP_Error(
+					'iato_mcp_unauthorized',
+					__( 'Invalid API key.', 'iato-mcp' ),
+					[ 'status' => 401 ]
+				);
+			}
+
+			self::$authenticated = true;
+			return true;
+		}
+
+		// WP core's determine_current_user filter has already validated the Basic header
+		// against Application Passwords by the time this callback runs, so we just check
+		// whether a real user with edit_posts is now logged in.
+		if ( $header && 0 === strncasecmp( $header, 'Basic ', 6 ) && is_user_logged_in() ) {
+			$user = wp_get_current_user();
+
+			if ( $user && $user->exists() && user_can( $user, 'edit_posts' ) ) {
+				self::$authenticated = true;
+				return true;
+			}
+
 			return new WP_Error(
-				'iato_mcp_unauthorized',
-				__( 'Authentication required. Use Authorization: Bearer <your-mcp-key>.', 'iato-mcp' ),
-				[ 'status' => 401 ]
+				'iato_mcp_forbidden',
+				__( 'Authenticated user lacks the edit_posts capability required for MCP.', 'iato-mcp' ),
+				[ 'status' => 403 ]
 			);
 		}
 
-		$provided_key = substr( $header, 7 );
-
-		if ( ! hash_equals( $stored_key, $provided_key ) ) {
-			return new WP_Error(
-				'iato_mcp_unauthorized',
-				__( 'Invalid API key.', 'iato-mcp' ),
-				[ 'status' => 401 ]
-			);
-		}
-
-		self::$authenticated = true;
-
-		return true;
+		return new WP_Error(
+			'iato_mcp_unauthorized',
+			__( 'Authentication required. Use Authorization: Bearer <your-mcp-key> or a WordPress Application Password (Basic auth).', 'iato-mcp' ),
+			[ 'status' => 401 ]
+		);
 	}
 
 	/**

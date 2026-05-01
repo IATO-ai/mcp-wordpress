@@ -535,8 +535,16 @@ class IATO_MCP_Settings {
 					</div>
 
 					<div class="iato-config-section">
-						<h3 class="iato-config-title"><?php esc_html_e( 'Claude Desktop Configuration', 'iato-mcp' ); ?></h3>
-						<p class="iato-hint"><?php esc_html_e( 'Paste this into your Claude Desktop settings to connect:', 'iato-mcp' ); ?></p>
+						<h3 class="iato-config-title"><?php esc_html_e( 'HTTP MCP clients (MCP Inspector, IDEs, scripts)', 'iato-mcp' ); ?></h3>
+						<p class="iato-hint">
+							<?php
+							printf(
+								/* translators: %s: link to setup wizard */
+								esc_html__( 'For clients that speak HTTP MCP directly. Claude Desktop, Cursor, Cline, Zed and other stdio-only clients need a different config — see the %s.', 'iato-mcp' ),
+								'<a href="' . esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ) . '">' . esc_html__( 'setup wizard', 'iato-mcp' ) . '</a>'
+							);
+							?>
+						</p>
 						<div class="iato-config-block">
 							<pre id="iato-config-json"><?php echo esc_html( $config_json ); ?></pre>
 							<button type="button" class="iato-copy-btn iato-copy-btn--config" data-target="iato-config-json" title="<?php esc_attr_e( 'Copy config', 'iato-mcp' ); ?>">
@@ -1595,10 +1603,17 @@ JS;
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
-				'wordpress' => [
-					'url'     => rest_url( 'iato-mcp/v1/message' ),
-					'headers' => [
-						'Authorization' => 'Bearer ' . $key,
+				'iato-wordpress' => [
+					'command' => 'npx',
+					'args'    => [
+						'-y',
+						'mcp-remote',
+						rest_url( 'iato-mcp/v1/message' ),
+						'--header',
+						'Authorization: Bearer ${IATO_KEY}',
+					],
+					'env'     => [
+						'IATO_KEY' => $key,
 					],
 				],
 			],
