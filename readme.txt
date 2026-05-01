@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.0
+Stable tag: 1.4.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,10 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.1 =
+* Fix: setup wizard restructured around the three actual connection methods. The previous "1. URL → 2. Application Password → 3. Claude Desktop config" framing presented OAuth-via-Connectors users with a credential step they didn't need, and the JSON snippet referenced `@modelcontextprotocol/server-http` — a package that doesn't exist on npm. The wizard now leads with the endpoint URL, then presents three mutually exclusive method cards: Connectors UI (OAuth, recommended), Direct HTTP (Basic Auth for MCP Inspector / IDEs / scripts), and Manual config (stdio bridge for Claude Desktop config file, Cursor, Cline, Zed).
+* Fix: stdio-bridge JSON snippet now uses `mcp-remote` (the real npm package) and passes the credential via an `env` entry referenced as `${IATO_AUTH}` in `args`, working around Claude Desktop's args parser breaking on spaces inside inline header strings.
+
 = 1.4.0 =
 * New: `rollback` MCP tool. Reverses any prior write by `change_id`. Wraps the existing `wp-json/iato-mcp/v1/rollback` REST endpoint so Claude can undo a change in one MCP call instead of the user constructing a manual HTTP request. Validates the stored `before_value` to prevent tampering, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Requires `edit_posts` (with elevated `manage_options` for `menu_item` and `redirect` receipts to mirror the original write capability).
 * New: change receipts on `update_post` and `create_post`. Previously these two write tools returned no audit trail, so even though every other write tool emitted a receipt, the most common edits — title, content, excerpt, status, and net-new posts — couldn't be rolled back. `update_post` now records one receipt per actually-changed field (skipping no-op resends); `create_post` records `target_type=post, field=create`, and `rollback` reverses it via `wp_trash_post` (recoverable from the WP trash).
@@ -226,6 +230,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.1 =
+Setup wizard restructured around the three real connection paths (Connectors UI / Direct HTTP / stdio bridge), and the stdio JSON snippet now references the actual `mcp-remote` npm package with an env-var credential pattern. Recommended for any new install; existing connections are unaffected.
 
 = 1.4.0 =
 Adds a `rollback` MCP tool and change-receipt coverage for `update_post` / `create_post`, closing the gap that previously left the two highest-volume write tools without an audit trail. Claude can now undo any tracked change in a single tool call.

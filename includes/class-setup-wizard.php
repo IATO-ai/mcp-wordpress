@@ -102,7 +102,10 @@ class IATO_MCP_Setup_Wizard {
 		$profile   = admin_url( 'profile.php#application-passwords-section' );
 		$nonce     = wp_create_nonce( 'iato_mcp_wizard' );
 
-		// Claude Desktop config snippet — user fills in Application Password.
+		// Claude Desktop / Cursor / Cline / Zed config snippet for stdio clients.
+		// Uses `mcp-remote` (the real npm package that bridges remote HTTP MCP to stdio).
+		// Credential is held in `env` and referenced via ${IATO_AUTH} in `args` because
+		// Claude Desktop's args parser is fragile around spaces in inline header strings.
 		$config_snippet = wp_json_encode(
 			[
 				'mcpServers' => [
@@ -110,10 +113,13 @@ class IATO_MCP_Setup_Wizard {
 						'command' => 'npx',
 						'args'    => [
 							'-y',
-							'@modelcontextprotocol/server-http',
+							'mcp-remote',
 							$mcp_url,
 							'--header',
-							'Authorization: Basic <base64(username:application_password)>',
+							'Authorization: Basic ${IATO_AUTH}',
+						],
+						'env'     => [
+							'IATO_AUTH' => '<base64(username:application_password)>',
 						],
 					],
 				],
@@ -133,33 +139,100 @@ class IATO_MCP_Setup_Wizard {
 			<div id="iato-wizard-message"></div>
 
 			<div class="iato-wizard-card">
-				<h2><?php esc_html_e( '1. Your MCP server URL', 'iato-mcp' ); ?></h2>
+				<h2><?php esc_html_e( 'Your MCP server URL', 'iato-mcp' ); ?></h2>
 				<p><?php esc_html_e( 'Point your AI client at this endpoint:', 'iato-mcp' ); ?></p>
 				<code class="iato-endpoint"><?php echo esc_html( $mcp_url ); ?></code>
-			</div>
-
-			<div class="iato-wizard-card">
-				<h2><?php esc_html_e( '2. Generate an Application Password', 'iato-mcp' ); ?></h2>
-				<p>
-					<?php esc_html_e( 'AI clients authenticate using a WordPress Application Password. Generate one from your user profile, then base64-encode "username:password" for the Authorization header.', 'iato-mcp' ); ?>
-				</p>
-				<p>
-					<a class="button button-primary" href="<?php echo esc_url( $profile ); ?>" target="_blank" rel="noopener">
-						<?php esc_html_e( 'Open my profile → Application Passwords', 'iato-mcp' ); ?>
-					</a>
+				<p class="iato-method-intro">
+					<?php esc_html_e( 'Choose ONE connection method below based on your client.', 'iato-mcp' ); ?>
 				</p>
 			</div>
 
-			<div class="iato-wizard-card">
-				<h2><?php esc_html_e( '3. Claude Desktop config', 'iato-mcp' ); ?></h2>
+			<div class="iato-wizard-card recommended">
+				<h2>
+					<?php esc_html_e( 'Claude.ai or Claude Desktop (Connectors UI)', 'iato-mcp' ); ?>
+					<span class="iato-method-badge"><?php esc_html_e( 'Recommended', 'iato-mcp' ); ?></span>
+				</h2>
+				<p class="iato-method-subhead"><?php esc_html_e( 'No credentials required — OAuth handles the handshake.', 'iato-mcp' ); ?></p>
 				<p>
-					<?php esc_html_e( 'Paste this into your Claude Desktop config file, replacing the Authorization placeholder with your base64-encoded credentials:', 'iato-mcp' ); ?>
+					<?php esc_html_e( 'In Claude, click Add Connector, paste the URL above, and click Connect. You will be redirected to your WordPress site to authorize the connection. Done.', 'iato-mcp' ); ?>
 				</p>
+			</div>
+
+			<div class="iato-method-divider"><?php esc_html_e( '— or —', 'iato-mcp' ); ?></div>
+
+			<div class="iato-wizard-card">
+				<h2><?php esc_html_e( 'Direct HTTP clients (Basic Auth)', 'iato-mcp' ); ?></h2>
+				<p class="iato-method-subhead"><?php esc_html_e( 'For clients that speak HTTP MCP directly: MCP Inspector, IDEs with native HTTP MCP support, scripts.', 'iato-mcp' ); ?></p>
+				<ol class="iato-method-steps">
+					<li>
+						<?php
+						printf(
+							/* translators: %s: link to WP user profile Application Passwords section */
+							esc_html__( 'Generate a WordPress Application Password from %s.', 'iato-mcp' ),
+							'<a href="' . esc_url( $profile ) . '" target="_blank" rel="noopener">' . esc_html__( 'your profile → Application Passwords', 'iato-mcp' ) . '</a>'
+						);
+						?>
+					</li>
+					<li>
+						<?php
+						echo wp_kses(
+							/* translators: %s: code-formatted credential pair */
+							sprintf( __( 'Base64-encode %s.', 'iato-mcp' ), '<code>username:application_password</code>' ),
+							[ 'code' => [] ]
+						);
+						?>
+					</li>
+					<li>
+						<?php
+						echo wp_kses(
+							/* translators: %s: code-formatted Authorization header */
+							sprintf( __( 'Configure your client to send the header %s to the endpoint above.', 'iato-mcp' ), '<code>Authorization: Basic &lt;encoded&gt;</code>' ),
+							[ 'code' => [] ]
+						);
+						?>
+					</li>
+				</ol>
+			</div>
+
+			<div class="iato-method-divider"><?php esc_html_e( '— or —', 'iato-mcp' ); ?></div>
+
+			<div class="iato-wizard-card">
+				<h2><?php esc_html_e( 'Manual config file (stdio clients)', 'iato-mcp' ); ?></h2>
+				<p class="iato-method-subhead"><?php esc_html_e( 'For Claude Desktop config file, Cursor, Cline, Zed, and other stdio-only MCP clients.', 'iato-mcp' ); ?></p>
+				<ol class="iato-method-steps">
+					<li>
+						<?php
+						printf(
+							/* translators: %s: link to WP user profile Application Passwords section */
+							esc_html__( 'Generate a WordPress Application Password from %s.', 'iato-mcp' ),
+							'<a href="' . esc_url( $profile ) . '" target="_blank" rel="noopener">' . esc_html__( 'your profile → Application Passwords', 'iato-mcp' ) . '</a>'
+						);
+						?>
+					</li>
+					<li>
+						<?php
+						echo wp_kses(
+							/* translators: %s: code-formatted credential pair */
+							sprintf( __( 'Base64-encode %s and keep the result handy.', 'iato-mcp' ), '<code>username:application_password</code>' ),
+							[ 'code' => [] ]
+						);
+						?>
+					</li>
+					<li>
+						<?php
+						echo wp_kses(
+							/* translators: %s: code-formatted env var name */
+							sprintf( __( 'Add this to your client\'s MCP config file, replacing the %s placeholder with your encoded value:', 'iato-mcp' ), '<code>IATO_AUTH</code>' ),
+							[ 'code' => [] ]
+						);
+						?>
+					</li>
+				</ol>
 				<pre class="iato-config"><?php echo esc_html( $config_snippet ); ?></pre>
 			</div>
 
 			<div class="iato-wizard-card">
-				<h2><?php esc_html_e( '4. IATO API key (optional)', 'iato-mcp' ); ?></h2>
+				<h2><?php esc_html_e( 'IATO API key (optional)', 'iato-mcp' ); ?></h2>
 				<p>
 					<?php
 					printf(
@@ -201,7 +274,15 @@ class IATO_MCP_Setup_Wizard {
 		return <<<'CSS'
 .iato-wizard { max-width: 820px; }
 .iato-wizard-card { background: #fff; border: 1px solid #dcdcde; padding: 20px 24px; margin: 16px 0; border-radius: 4px; }
+.iato-wizard-card.recommended { border-left: 4px solid #00a32a; }
 .iato-wizard-card h2 { margin-top: 0; font-size: 16px; }
+.iato-method-badge { display: inline-block; background: #00a32a; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-left: 8px; vertical-align: middle; }
+.iato-method-subhead { font-size: 13px; color: #50575e; margin-top: -8px; margin-bottom: 12px; }
+.iato-method-intro { margin-top: 12px; font-size: 13px; color: #50575e; }
+.iato-method-divider { text-align: center; color: #8c8f94; font-size: 12px; margin: 8px 0; letter-spacing: 2px; text-transform: uppercase; }
+.iato-method-steps { padding-left: 22px; margin: 8px 0 12px; }
+.iato-method-steps li { margin: 4px 0; }
+.iato-method-steps code, .iato-wizard-card p code { background: #f6f7f7; padding: 1px 6px; border-radius: 3px; font-family: Menlo, Consolas, monospace; font-size: 12px; }
 .iato-endpoint { display: inline-block; background: #f6f7f7; padding: 8px 12px; font-family: Menlo, Consolas, monospace; font-size: 13px; border-radius: 3px; }
 .iato-config { background: #1d2327; color: #e5e5e5; padding: 16px; border-radius: 3px; font-family: Menlo, Consolas, monospace; font-size: 12px; overflow-x: auto; white-space: pre; }
 .field-group { margin: 8px 0; }
