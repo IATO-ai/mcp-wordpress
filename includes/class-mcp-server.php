@@ -18,32 +18,97 @@ class IATO_MCP_Server {
 	private static array $tools = [];
 
 	/**
-	 * Boot: register REST route.
+	 * Boot: register REST route and auth response filter.
 	 */
 	public static function init(): void {
 		add_action( 'rest_api_init', [ self::class, 'register_routes' ] );
+		add_filter( 'rest_post_dispatch', [ self::class, 'add_auth_headers' ], 10, 3 );
 	}
 
 	/**
-	 * Register the single MCP message endpoint.
+	 * Register the MCP message endpoint.
+	 * Accepts both GET (endpoint probe / SSE) and POST (JSON-RPC messages).
 	 * Authentication is handled via the plugin-generated API key (Bearer token).
 	 */
 	public static function register_routes(): void {
 		register_rest_route( 'iato-mcp/v1', '/message', [
-			'methods'             => 'POST',
-			'callback'            => [ self::class, 'handle_request' ],
-			'permission_callback' => [ 'IATO_MCP_Auth', 'authenticate' ],
+			[
+				'methods'             => 'POST',
+				'callback'            => [ self::class, 'handle_request' ],
+				'permission_callback' => [ 'IATO_MCP_Auth', 'authenticate' ],
+			],
+			[
+				'methods'             => 'GET',
+				'callback'            => [ self::class, 'handle_get' ],
+				'permission_callback' => [ 'IATO_MCP_Auth', 'authenticate' ],
+			],
 		] );
 	}
 
 	/**
+	 * Handle GET — endpoint probe for Streamable HTTP transport.
+	 *
+	 * Claude Desktop and other MCP clients send GET to verify the endpoint
+	 * exists before starting the OAuth flow or sending JSON-RPC messages.
+	 *
+	 * @param WP_REST_Request $request Incoming request.
+	 * @return WP_REST_Response
+	 */
+	public static function handle_get( WP_REST_Request $request ): WP_REST_Response {
+		return new WP_REST_Response( [
+			'jsonrpc' => '2.0',
+			'result'  => [
+				'serverInfo' => [
+					'name'    => 'iato-mcp',
+					'version' => IATO_MCP_VERSION,
+				],
+			],
+		], 200 );
+	}
+
+	/**
+	 * Add WWW-Authenticate header to 401 responses on MCP routes.
+	 *
+	 * This tells Claude Desktop where to find the OAuth metadata so it can
+	 * start the authorization flow automatically.
+	 *
+	 * @param WP_REST_Response $response Response object.
+	 * @param WP_REST_Server   $server   REST server.
+	 * @param WP_REST_Request  $request  Request object.
+	 * @return WP_REST_Response
+	 */
+	public static function add_auth_headers( WP_REST_Response $response, WP_REST_Server $server, WP_REST_Request $request ): WP_REST_Response {
+		$route = $request->get_route();
+		if ( 0 !== strpos( $route, '/iato-mcp/' ) ) {
+			return $response;
+		}
+
+		if ( 401 === $response->get_status() ) {
+			$resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
+			$response->header(
+				'WWW-Authenticate',
+				'Bearer resource_metadata="' . esc_url_raw( $resource_metadata_url ) . '"'
+			);
+		}
+
+		return $response;
+	}
+
+	/**
 	 * Register a tool with the server.
+	 *
+	 * Skips registration if the tool is toggled off in Settings > IATO MCP.
+	 * Toggles default to "all on" when the option is empty (fresh install).
 	 *
 	 * @param string   $name       Tool name (snake_case, matches tools/list output).
 	 * @param array    $definition JSON Schema definition for tools/list.
 	 * @param callable $handler    Handler — receives assoc array of params, returns array|WP_Error.
 	 */
 	public static function register_tool( string $name, array $definition, callable $handler ): void {
+		if ( class_exists( 'IATO_MCP_Settings' ) && ! IATO_MCP_Settings::is_tool_enabled( $name ) ) {
+			return;
+		}
+
 		self::$tools[ $name ] = [
 			'definition' => $definition,
 			'handler'    => $handler,
@@ -62,6 +127,22 @@ class IATO_MCP_Server {
 		$method = $body['method'] ?? '';
 		$params = $body['params'] ?? [];
 
+		// MCP notifications (e.g. notifications/initialized) are one-way — the
+		// client does not expect a response per JSON-RPC 2.0 spec. Accept with
+		// 202 and skip call-log entry (high-frequency protocol chatter).
+		if ( is_string( $method ) && strpos( $method, 'notifications/' ) === 0 ) {
+			return new WP_REST_Response( null, 202 );
+		}
+
+		$started   = microtime( true );
+		$tool_name = null;
+		$args      = null;
+
+		if ( 'tools/call' === $method ) {
+			$tool_name = (string) ( $params['name'] ?? '' );
+			$args      = $params['arguments'] ?? [];
+		}
+
 		switch ( $method ) {
 			case 'initialize':
 				$result = self::handle_initialize( $params );
@@ -73,18 +154,91 @@ class IATO_MCP_Server {
 				$result = self::handle_tools_call( $params );
 				break;
 			default:
+				self::log_call(
+					$method,
+					$tool_name,
+					$args,
+					'error',
+					'method_not_found',
+					'Method not found',
+					$started
+				);
 				return self::error_response( $id, -32601, 'Method not found' );
 		}
 
 		if ( is_wp_error( $result ) ) {
+			self::log_call(
+				$method,
+				$tool_name,
+				$args,
+				'error',
+				$result->get_error_code(),
+				$result->get_error_message(),
+				$started
+			);
 			return self::error_response( $id, -32000, $result->get_error_message() );
 		}
+
+		// tools/call may return a tool-level error envelope with isError=true.
+		$tool_error = null;
+		if ( 'tools/call' === $method && is_array( $result ) && ! empty( $result['isError'] ) ) {
+			$tool_error = isset( $result['content'][0]['text'] )
+				? (string) $result['content'][0]['text']
+				: 'tool_error';
+		}
+
+		self::log_call(
+			$method,
+			$tool_name,
+			$args,
+			null === $tool_error ? 'success' : 'error',
+			null === $tool_error ? null : 'tool_error',
+			$tool_error,
+			$started
+		);
 
 		return new WP_REST_Response( [
 			'jsonrpc' => '2.0',
 			'id'      => $id,
 			'result'  => $result,
 		], 200 );
+	}
+
+	/**
+	 * Record a call log entry for an incoming MCP request.
+	 *
+	 * @param string      $method   JSON-RPC method (initialize, tools/list, tools/call, etc.).
+	 * @param string|null $tool     Tool name (only for tools/call).
+	 * @param mixed       $args     Raw arguments array (only for tools/call).
+	 * @param string      $status   'success' | 'error' | 'unauthorized'.
+	 * @param string|null $code     Optional error code.
+	 * @param string|null $message  Optional error message.
+	 * @param float       $started  Value from microtime(true) at request start.
+	 */
+	private static function log_call(
+		string $method,
+		?string $tool,
+		mixed $args,
+		string $status,
+		?string $code,
+		?string $message,
+		float $started
+	): void {
+		if ( ! class_exists( 'IATO_MCP_Call_Log' ) ) {
+			return;
+		}
+		$duration_ms = (int) round( ( microtime( true ) - $started ) * 1000 );
+
+		IATO_MCP_Call_Log::record( [
+			'rpc_method'      => $method,
+			'tool_name'       => $tool,
+			'request_args'    => is_array( $args ) ? $args : null,
+			'response_status' => $status,
+			'error_code'      => $code,
+			'error_message'   => $message,
+			'duration_ms'     => $duration_ms,
+			'auth_user_id'    => function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0,
+		] );
 	}
 
 	// ── Method handlers ────────────────────────────────────────────────────────
@@ -96,15 +250,23 @@ class IATO_MCP_Server {
 	 * @return array
 	 */
 	private static function handle_initialize( array $params ): array {
+		$capabilities = [
+			'tools'    => new stdClass(), // signals tool support
+			'rollback' => true,           // change-receipt-based undo for tracked write tools
+		];
+		// Advertise widget-grained Elementor v2 surface only when Elementor is
+		// actually active — tells clients they can hand off to v2 tools without
+		// a tools/list round-trip.
+		if ( class_exists( '\Elementor\Plugin' ) ) {
+			$capabilities['elementor'] = [ 'v2' => true ];
+		}
 		return [
 			'protocolVersion' => '2024-11-05',
 			'serverInfo'      => [
 				'name'    => 'iato-mcp',
 				'version' => IATO_MCP_VERSION,
 			],
-			'capabilities' => [
-				'tools' => new stdClass(), // signals tool support
-			],
+			'capabilities'    => $capabilities,
 		];
 	}
 
@@ -139,11 +301,16 @@ class IATO_MCP_Server {
 		$result  = call_user_func( $handler, $arguments );
 
 		if ( is_wp_error( $result ) ) {
+			$err_msg = $result->get_error_message();
+			// MCP spec requires text to be a string — IATO API errors can leak objects.
+			if ( ! is_string( $err_msg ) ) {
+				$err_msg = is_array( $err_msg ) ? wp_json_encode( $err_msg ) : (string) $err_msg;
+			}
 			return [
 				'isError' => true,
 				'content' => [[
 					'type' => 'text',
-					'text' => $result->get_error_message(),
+					'text' => $err_msg,
 				]],
 			];
 		}

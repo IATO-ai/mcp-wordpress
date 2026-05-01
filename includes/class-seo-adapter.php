@@ -59,7 +59,7 @@ class IATO_MCP_SEO_Adapter {
 	 * @param string $title
 	 * @return true|WP_Error
 	 */
-	public static function update_title( int $post_id, string $title ): true|WP_Error {
+	public static function update_title( int $post_id, string $title ): bool|WP_Error {
 		$key = self::title_key();
 		if ( null === $key ) {
 			return new WP_Error(
@@ -81,7 +81,7 @@ class IATO_MCP_SEO_Adapter {
 	 * @param string $description
 	 * @return true|WP_Error
 	 */
-	public static function update_description( int $post_id, string $description ): true|WP_Error {
+	public static function update_description( int $post_id, string $description ): bool|WP_Error {
 		$key = self::description_key();
 		if ( null === $key ) {
 			return new WP_Error(
@@ -121,6 +121,70 @@ class IATO_MCP_SEO_Adapter {
 		}
 
 		return self::$active_plugin;
+	}
+
+	/**
+	 * Get the canonical URL for a post.
+	 *
+	 * @param int $post_id
+	 * @return string Canonical URL or empty string if not set.
+	 */
+	public static function get_canonical( int $post_id ): string {
+		$key = self::canonical_key();
+		if ( null === $key ) {
+			return '';
+		}
+		return sanitize_text_field( get_post_meta( $post_id, $key, true ) );
+	}
+
+	/**
+	 * Update the canonical URL for a post.
+	 *
+	 * @param int    $post_id
+	 * @param string $url
+	 * @return true|WP_Error
+	 */
+	public static function update_canonical( int $post_id, string $url ): bool|WP_Error {
+		$key = self::canonical_key();
+		if ( null === $key ) {
+			return new WP_Error(
+				'iato_mcp_no_seo_plugin',
+				__( 'No supported SEO plugin is active. Install Yoast, RankMath, or SEOPress to manage canonical URLs.', 'iato-mcp' )
+			);
+		}
+
+		$url = esc_url_raw( $url );
+		update_post_meta( $post_id, $key, $url );
+
+		return true;
+	}
+
+	/**
+	 * Delete the canonical URL meta for a post (used during rollback when before_value is null).
+	 *
+	 * @param int $post_id
+	 * @return bool
+	 */
+	public static function delete_canonical( int $post_id ): bool {
+		$key = self::canonical_key();
+		if ( null === $key ) {
+			return false;
+		}
+		return delete_post_meta( $post_id, $key );
+	}
+
+	/**
+	 * Get the meta key for canonical URL based on the active plugin.
+	 *
+	 * @return string|null Null for fallback (no canonical support).
+	 */
+	private static function canonical_key(): ?string {
+		return match ( self::detect_plugin() ) {
+			'yoast'    => '_yoast_wpseo_canonical',
+			'rankmath' => 'rank_math_canonical_url',
+			'seopress' => '_seopress_robots_canonical',
+			default    => null,
+		};
 	}
 
 	/**

@@ -63,7 +63,8 @@ IATO_MCP_Server::register_tool(
 			return $response;
 		}
 
-		$issues_data = $response['issues'] ?? $response['data'] ?? $response;
+		// Canonical shape: { success, data: { issues: [...] }, ... }.
+		$issues_data = $response['data']['issues'] ?? [];
 		if ( ! is_array( $issues_data ) ) {
 			$issues_data = [];
 		}
@@ -72,8 +73,8 @@ IATO_MCP_Server::register_tool(
 		$auto_count = 0;
 
 		foreach ( $issues_data as $issue ) {
-			$type    = $issue['type'] ?? '';
-			$url     = $issue['url'] ?? '';
+			$type    = $issue['type'] ?? $issue['issue_type'] ?? $issue['rule'] ?? $issue['rule_type'] ?? $issue['category'] ?? '';
+			$url     = $issue['url'] ?? $issue['page_url'] ?? $issue['affected_url'] ?? $issue['link'] ?? '';
 			$wp_id   = $url ? url_to_postid( $url ) : 0;
 			$wp_slug = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
 			$is_auto = in_array( $type, IATO_MCP_AUTO_FIX_TYPES, true );
@@ -82,12 +83,34 @@ IATO_MCP_Server::register_tool(
 				$auto_count++;
 			}
 
+			// Resolve description — IATO may return a structured object instead of a string.
+			$description = $issue['description'] ?? $issue['details'] ?? $issue['explanation'] ?? '';
+			if ( is_array( $description ) || is_object( $description ) ) {
+				$description = (array) $description;
+				$suggestion  = $description['suggestion'] ?? '';
+				$headings    = $description['existing_headings'] ?? [];
+				$parts       = [];
+				if ( ! empty( $headings ) && is_array( $headings ) ) {
+					$heading_list = array_map(
+						fn( $h ) => strtoupper( $h['tag'] ?? '' ) . ' "' . ( $h['content'] ?? '' ) . '"',
+						$headings
+					);
+					$parts[] = 'Existing headings: ' . implode( ', ', $heading_list );
+				}
+				if ( ! empty( $suggestion ) ) {
+					$parts[] = 'Suggestion: ' . $suggestion;
+				}
+				$description = implode( '. ', $parts ) ?: wp_json_encode( $description );
+			}
+
 			$issues[] = [
 				'issue_type'           => $type,
-				'severity'             => $issue['severity'] ?? 'warning',
+				'severity'             => $issue['severity'] ?? $issue['level'] ?? $issue['priority'] ?? 'warning',
+				'title'                => $issue['title'] ?? $issue['name'] ?? $issue['summary'] ?? $issue['message'] ?? '',
+				'description'          => $description,
 				'url'                  => $url,
-				'current'              => $issue['current_value'] ?? null,
-				'suggested'            => $issue['suggested_value'] ?? null,
+				'current'              => $issue['current_value'] ?? $issue['current'] ?? null,
+				'suggested'            => $issue['suggested_value'] ?? $issue['suggested'] ?? $issue['recommendation'] ?? null,
 				'fix_type'             => $is_auto ? 'auto' : 'manual',
 				'wp_post_id'           => $wp_id ?: null,
 				'wp_slug'              => $wp_slug ?: null,

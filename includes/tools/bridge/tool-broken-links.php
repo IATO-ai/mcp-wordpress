@@ -2,12 +2,13 @@
 /**
  * Bridge Tool: get_iato_broken_links
  *
- * Extracts broken link data from IATO get_crawl_analytics and maps each
- * broken link to its source WordPress post ID and slug so Claude can
- * call update_post to fix or remove the link.
+ * Wraps IATO /crawl/jobs/{id}/broken-links. The platform returns broken pages
+ * (4xx/5xx pages on the site) and broken resources (images, scripts, etc. on
+ * pages) separately, plus a summary object. Each broken page is enriched with
+ * the WordPress post ID and slug when resolvable.
  *
- * IATO tools used: get_crawl_analytics
- * WP resolution:   url_to_postid() per source page URL
+ * IATO tools used: get_broken_links
+ * WP resolution:   url_to_postid() per broken page URL (and source URL for resources)
  *
  * @package IATO_MCP
  */
@@ -17,12 +18,12 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_iato_broken_links',
 	[
-		'description' => 'Returns broken links found during the crawl. Each result includes the broken URL, HTTP status code, anchor text, and the WordPress post ID and slug of the page containing the link.',
+		'description' => 'Returns broken pages and broken resources found during the crawl. Each broken page includes the URL, HTTP status, and WordPress post ID/slug when resolvable; each broken resource includes the source page where it is referenced.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
 				'crawl_id' => [ 'type' => 'string',  'description' => 'IATO crawl ID. Falls back to default crawl ID from settings.' ],
-				'limit'    => [ 'type' => 'integer', 'description' => 'Max broken links to return (default: 50)' ],
+				'limit'    => [ 'type' => 'integer', 'description' => 'Max entries per list (default: 50)' ],
 			],
 			'required' => [],
 		],
@@ -38,46 +39,60 @@ IATO_MCP_Server::register_tool(
 
 		$limit = absint( $args['limit'] ?? 50 );
 
-		$response = IATO_MCP_IATO_Client::get_crawl_analytics( $crawl_id );
+		$response = IATO_MCP_IATO_Client::get_broken_links( $crawl_id, $limit );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
-		$links_data = $response['broken_links'] ?? $response['data']['broken_links'] ?? [];
-		if ( ! is_array( $links_data ) ) {
-			$links_data = [];
-		}
+		$data = $response['data'] ?? [];
 
-		$links_data = array_slice( $links_data, 0, $limit );
+		$broken_pages_data     = is_array( $data['broken_pages'] ?? null ) ? $data['broken_pages'] : [];
+		$broken_resources_data = is_array( $data['broken_resources'] ?? null ) ? $data['broken_resources'] : [];
+		$summary               = is_array( $data['summary'] ?? null ) ? $data['summary'] : [];
 
-		$broken_links = [];
-		foreach ( $links_data as $link ) {
-			$source_url = $link['source_url'] ?? '';
-			$wp_id      = $source_url ? url_to_postid( $source_url ) : 0;
-			$wp_slug    = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
-			$status     = (int) ( $link['status_code'] ?? 0 );
+		$broken_pages = [];
+		foreach ( array_slice( $broken_pages_data, 0, $limit ) as $page ) {
+			$url     = $page['url'] ?? '';
+			$wp_id   = $url ? url_to_postid( $url ) : 0;
+			$wp_slug = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
+			$status  = (int) ( $page['status_code'] ?? $page['status'] ?? 0 );
 
-			$suggestion = 'Remove or replace this broken link.';
+			$suggestion = 'Remove or replace this broken page.';
 			if ( $status >= 300 && $status < 400 ) {
-				$suggestion = 'Update to the final destination URL.';
+				$suggestion = 'Update references to point at the final destination URL.';
 			}
 
-			$broken_links[] = [
-				'broken_url'   => $link['url'] ?? '',
-				'status_code'  => $status,
-				'anchor_text'  => $link['anchor_text'] ?? '',
+			$broken_pages[] = [
+				'url'         => $url,
+				'status_code' => $status,
+				'title'       => $page['title'] ?? '',
+				'wp_post_id'  => $wp_id ?: null,
+				'wp_slug'     => $wp_slug ?: null,
+				'suggestion'  => $suggestion,
+			];
+		}
+
+		$broken_resources = [];
+		foreach ( array_slice( $broken_resources_data, 0, $limit ) as $resource ) {
+			$source_url = $resource['source_url'] ?? $resource['page_url'] ?? '';
+			$wp_id      = $source_url ? url_to_postid( $source_url ) : 0;
+			$wp_slug    = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
+
+			$broken_resources[] = [
+				'resource_url' => $resource['url'] ?? '',
+				'resource_type' => $resource['type'] ?? $resource['resource_type'] ?? '',
+				'status_code'  => (int) ( $resource['status_code'] ?? $resource['status'] ?? 0 ),
 				'source_url'   => $source_url,
-				'source_title' => $link['source_title'] ?? '',
 				'wp_post_id'   => $wp_id ?: null,
 				'wp_slug'      => $wp_slug ?: null,
-				'suggestion'   => $suggestion,
 			];
 		}
 
 		return IATO_MCP_Server::ok( [
-			'crawl_id'     => $crawl_id,
-			'total'        => count( $broken_links ),
-			'broken_links' => $broken_links,
+			'crawl_id'         => $crawl_id,
+			'summary'          => $summary,
+			'broken_pages'     => $broken_pages,
+			'broken_resources' => $broken_resources,
 		] );
 	}
 );

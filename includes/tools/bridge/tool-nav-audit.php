@@ -21,29 +21,32 @@ IATO_MCP_Server::register_tool(
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'sitemap_id' => [ 'type' => 'integer', 'description' => 'IATO sitemap ID (required)' ],
+				'crawl_id' => [ 'type' => 'string', 'description' => 'IATO crawl job ID. Falls back to default crawl ID from settings.' ],
 			],
-			'required' => [ 'sitemap_id' ],
+			'required' => [],
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$sitemap_id = absint( $args['sitemap_id'] ?? 0 );
-		if ( ! $sitemap_id ) {
-			return new WP_Error( 'missing_sitemap_id', 'sitemap_id required' );
+		$crawl_id = sanitize_text_field( $args['crawl_id'] ?? '' );
+		if ( ! $crawl_id ) {
+			$crawl_id = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
+		}
+		if ( ! $crawl_id ) {
+			return new WP_Error( 'missing_crawl_id', 'crawl_id required. Set a default in Settings > IATO MCP or pass it explicitly.' );
 		}
 
 		// Fetch menus from IATO.
-		$menus_response = IATO_MCP_IATO_Client::get_menus( $sitemap_id );
+		$menus_response = IATO_MCP_IATO_Client::get_menus( $crawl_id );
 		if ( is_wp_error( $menus_response ) ) {
 			return $menus_response;
 		}
 
-		$menus_data = $menus_response['menus'] ?? $menus_response['data'] ?? $menus_response;
+		$menus_data = $menus_response['data']['menus'] ?? [];
 		if ( ! is_array( $menus_data ) ) {
 			$menus_data = [];
 		}
 
-		// Fetch items for each menu.
+		// Fetch menu items.
 		$menus = [];
 		foreach ( $menus_data as $menu ) {
 			$menu_id = absint( $menu['id'] ?? 0 );
@@ -51,10 +54,10 @@ IATO_MCP_Server::register_tool(
 				continue;
 			}
 
-			$items_response = IATO_MCP_IATO_Client::get_menu_items( $sitemap_id, $menu_id );
+			$items_response = IATO_MCP_IATO_Client::get_menu_items( $crawl_id );
 			$items_data     = [];
 			if ( ! is_wp_error( $items_response ) ) {
-				$items_data = $items_response['items'] ?? $items_response['data'] ?? $items_response;
+				$items_data = $items_response['data']['items'] ?? [];
 				if ( ! is_array( $items_data ) ) {
 					$items_data = [];
 				}
@@ -84,10 +87,10 @@ IATO_MCP_Server::register_tool(
 		}
 
 		// Fetch orphan pages.
-		$orphans_response = IATO_MCP_IATO_Client::get_orphan_pages( $sitemap_id, [ 'section', 'planned' ] );
+		$orphans_response = IATO_MCP_IATO_Client::get_orphan_pages( $crawl_id, [ 'section', 'planned' ] );
 		$orphans_data     = [];
 		if ( ! is_wp_error( $orphans_response ) ) {
-			$orphans_data = $orphans_response['orphans'] ?? $orphans_response['data'] ?? $orphans_response;
+			$orphans_data = $orphans_response['data']['pages'] ?? [];
 			if ( ! is_array( $orphans_data ) ) {
 				$orphans_data = [];
 			}
@@ -109,7 +112,7 @@ IATO_MCP_Server::register_tool(
 		}
 
 		return IATO_MCP_Server::ok( [
-			'sitemap_id'   => $sitemap_id,
+			'crawl_id'     => $crawl_id,
 			'menus'        => $menus,
 			'orphan_count' => count( $orphans ),
 			'orphans'      => $orphans,

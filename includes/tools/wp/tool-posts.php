@@ -70,12 +70,13 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_post',
 	[
-		'description' => 'Get full details for a single post or page by ID or slug.',
+		'description' => 'Get full details for a single post or page by ID or slug. Pass include_shadowing=true to detect when an Elementor Theme Builder template overrides the slug-based render (small extra cost; default off to keep the hot path fast).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'id'   => [ 'type' => 'integer', 'description' => 'Post ID' ],
-				'slug' => [ 'type' => 'string',  'description' => 'Post slug (used if id not provided)' ],
+				'id'                => [ 'type' => 'integer', 'description' => 'Post ID' ],
+				'slug'              => [ 'type' => 'string',  'description' => 'Post slug (used if id not provided)' ],
+				'include_shadowing' => [ 'type' => 'boolean', 'description' => 'If true, attach is_shadowed_by when an Elementor Theme Builder template overrides this post (default: false).' ],
 			],
 			'required' => [],
 		],
@@ -103,7 +104,7 @@ IATO_MCP_Server::register_tool(
 		$categories = wp_get_post_categories( $post->ID, [ 'fields' => 'names' ] );
 		$tags       = wp_get_post_tags( $post->ID, [ 'fields' => 'names' ] );
 
-		return IATO_MCP_Server::ok( [
+		$response = [
 			'id'         => $post->ID,
 			'title'      => get_the_title( $post ),
 			'slug'       => $post->post_name,
@@ -116,7 +117,16 @@ IATO_MCP_Server::register_tool(
 			'modified'   => $post->post_modified_gmt,
 			'categories' => is_array( $categories ) ? $categories : [],
 			'tags'       => is_array( $tags ) ? $tags : [],
-		] );
+		];
+
+		if ( ! empty( $args['include_shadowing'] ) && class_exists( 'IATO_MCP_Elementor_Router' ) ) {
+			$shadowing = IATO_MCP_Elementor_Router::get_shadowing_for_post( $post->ID );
+			if ( null !== $shadowing ) {
+				$response['is_shadowed_by'] = $shadowing;
+			}
+		}
+
+		return IATO_MCP_Server::ok( $response );
 	}
 );
 
@@ -160,10 +170,24 @@ IATO_MCP_Server::register_tool(
 			return $post_id;
 		}
 
-		return IATO_MCP_Server::ok( [
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$post_id,
+			'post',
+			'create',
+			null,
+			[
+				'post_type' => $post_type,
+				'title'     => $postarr['post_title'],
+			]
+		);
+
+		$data = [
 			'id'  => $post_id,
 			'url' => get_permalink( $post_id ),
-		] );
+		];
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 
@@ -172,13 +196,14 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_post',
 	[
-		'description' => 'Update an existing post title, content, or status.',
+		'description' => 'Update an existing post title, content, excerpt, or status.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
 				'id'      => [ 'type' => 'integer', 'description' => 'Post ID to update (required)' ],
 				'title'   => [ 'type' => 'string',  'description' => 'New title' ],
 				'content' => [ 'type' => 'string',  'description' => 'New content' ],
+				'excerpt' => [ 'type' => 'string',  'description' => 'New excerpt (manual summary shown on archive/listing pages)' ],
 				'status'  => [ 'type' => 'string',  'description' => 'New status: draft|publish' ],
 			],
 			'required' => [ 'id' ],
@@ -188,22 +213,31 @@ IATO_MCP_Server::register_tool(
 		$cap_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
-		$post_id = absint( $args['id'] );
+		// Accept both schema name (id) and Autopilot name (post_id).
+		$post_id = absint( $args['id'] ?? $args['post_id'] ?? 0 );
 		$post    = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
 		$postarr = [ 'ID' => $post_id ];
+		$before  = [];
 
 		if ( isset( $args['title'] ) ) {
 			$postarr['post_title'] = sanitize_text_field( $args['title'] );
+			$before['title']       = $post->post_title;
 		}
 		if ( isset( $args['content'] ) ) {
 			$postarr['post_content'] = wp_kses_post( $args['content'] );
+			$before['content']       = $post->post_content;
+		}
+		if ( isset( $args['excerpt'] ) ) {
+			$postarr['post_excerpt'] = sanitize_textarea_field( $args['excerpt'] );
+			$before['excerpt']       = $post->post_excerpt;
 		}
 		if ( isset( $args['status'] ) && in_array( $args['status'], [ 'draft', 'publish' ], true ) ) {
 			$postarr['post_status'] = $args['status'];
+			$before['status']       = $post->post_status;
 		}
 
 		$result = wp_update_post( $postarr, true );
@@ -211,11 +245,35 @@ IATO_MCP_Server::register_tool(
 			return $result;
 		}
 
-		return IATO_MCP_Server::ok( [
+		$field_to_postkey = [
+			'title'   => 'post_title',
+			'content' => 'post_content',
+			'excerpt' => 'post_excerpt',
+			'status'  => 'post_status',
+		];
+
+		$receipts = [];
+		foreach ( $before as $field => $before_value ) {
+			$after_value = $postarr[ $field_to_postkey[ $field ] ];
+			if ( $before_value === $after_value ) {
+				continue;
+			}
+			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post', $field, $before_value, $after_value );
+		}
+
+		$data = [
 			'id'       => $post_id,
 			'url'      => get_permalink( $post_id ),
 			'modified' => get_post( $post_id )->post_modified_gmt,
-		] );
+		];
+
+		if ( count( $receipts ) === 1 ) {
+			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
+		} elseif ( count( $receipts ) > 1 ) {
+			$data['change_receipts'] = $receipts;
+		}
+
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 

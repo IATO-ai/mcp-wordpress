@@ -6,7 +6,8 @@
  * so Claude Desktop can obtain a Bearer token through its standard connector UI.
  *
  * Endpoints:
- *   GET  /.well-known/oauth-authorization-server  — RFC 8414 metadata
+ *   GET  /.well-known/oauth-authorization-server  — RFC 8414 authorization server metadata
+ *   GET  /.well-known/oauth-protected-resource    — RFC 9728 protected resource metadata
  *   POST /oauth/register                          — dynamic client registration
  *   GET  /oauth/authorize                         — authorization (requires WP admin login)
  *   POST /oauth/token                             — token exchange
@@ -38,6 +39,9 @@ class IATO_MCP_OAuth {
 			case '.well-known/oauth-authorization-server':
 				self::handle_metadata();
 				break;
+			case '.well-known/oauth-protected-resource':
+				self::handle_resource_metadata();
+				break;
 			case 'oauth/register':
 				self::handle_register();
 				break;
@@ -48,6 +52,18 @@ class IATO_MCP_OAuth {
 				self::handle_token();
 				break;
 		}
+	}
+
+	// ── Protected Resource Metadata (RFC 9728) ──────────────────────────────
+
+	private static function handle_resource_metadata(): void {
+		$base = home_url();
+
+		self::json_response( [
+			'resource'                => rest_url( 'iato-mcp/v1/message' ),
+			'authorization_servers'   => [ $base ],
+			'bearer_methods_supported' => [ 'header' ],
+		] );
 	}
 
 	// ── Metadata (RFC 8414) ──────────────────────────────────────────────────
@@ -70,7 +86,8 @@ class IATO_MCP_OAuth {
 	// ── Dynamic Client Registration (RFC 7591) ──────────────────────────────
 
 	private static function handle_register(): void {
-		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
 			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'POST required' ], 405 );
 		}
 
@@ -105,13 +122,15 @@ class IATO_MCP_OAuth {
 	// ── Authorize ────────────────────────────────────────────────────────────
 
 	private static function handle_authorize(): void {
-		if ( 'GET' !== $_SERVER['REQUEST_METHOD'] && 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'GET' !== $method && 'POST' !== $method ) {
 			self::json_response( [ 'error' => 'invalid_request' ], 405 );
 		}
 
 		// Require WordPress admin login.
 		if ( ! is_user_logged_in() || ! current_user_can( 'manage_options' ) ) {
-			wp_redirect( wp_login_url( home_url( $_SERVER['REQUEST_URI'] ) ) );
+			$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+			wp_safe_redirect( wp_login_url( home_url( $request_uri ) ) );
 			exit;
 		}
 
@@ -139,7 +158,7 @@ class IATO_MCP_OAuth {
 		}
 
 		// POST = user approved the form.
-		if ( 'POST' === $_SERVER['REQUEST_METHOD'] ) {
+		if ( 'POST' === $method ) {
 			check_admin_referer( 'iato_mcp_oauth_authorize' );
 
 			// Store PKCE challenge for verification at the token endpoint.
@@ -159,7 +178,7 @@ class IATO_MCP_OAuth {
 				$params['state'] = $state;
 			}
 
-			wp_redirect( add_query_arg( $params, $redirect_uri ) );
+			wp_safe_redirect( add_query_arg( $params, $redirect_uri ) );
 			exit;
 		}
 
@@ -174,44 +193,216 @@ class IATO_MCP_OAuth {
 	/**
 	 * Minimal approval screen so the WP admin confirms the connection.
 	 */
+	/**
+	 * Return the inline CSS for the authorize screen.
+	 */
+	private static function get_authorize_styles(): string {
+		return <<<'CSS'
+				:root {
+					--iato-primary: #1e40af;
+					--iato-primary-hover: #1e3a8a;
+					--iato-primary-light: #dbeafe;
+					--iato-text: #0f172a;
+					--iato-text-secondary: #475569;
+					--iato-text-muted: #94a3b8;
+					--iato-border: #e2e8f0;
+					--iato-bg: #f1f5f9;
+					--iato-success: #16a34a;
+				}
+				* { box-sizing: border-box; }
+				body {
+					font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+					display: flex;
+					justify-content: center;
+					align-items: center;
+					min-height: 100vh;
+					margin: 0;
+					background: var(--iato-bg);
+					color: var(--iato-text);
+				}
+				.auth-card {
+					background: #fff;
+					padding: 32px;
+					border-radius: 16px;
+					box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+					max-width: 440px;
+					width: 100%;
+					margin: 20px;
+				}
+				.auth-brand {
+					font-size: 22px;
+					font-weight: 700;
+					color: var(--iato-primary);
+					letter-spacing: -0.5px;
+					margin-bottom: 20px;
+					display: flex;
+					align-items: center;
+					gap: 8px;
+				}
+				.auth-brand img {
+					height: 32px;
+					width: auto;
+				}
+				.auth-brand span {
+					font-weight: 400;
+					color: var(--iato-text-secondary);
+				}
+				.auth-title {
+					font-size: 18px;
+					font-weight: 600;
+					margin: 0 0 8px;
+					color: var(--iato-text);
+				}
+				.auth-desc {
+					font-size: 14px;
+					color: var(--iato-text-secondary);
+					margin: 0 0 20px;
+					line-height: 1.5;
+				}
+				.auth-desc strong {
+					color: var(--iato-text);
+				}
+				.auth-permissions {
+					background: var(--iato-bg);
+					border: 1px solid var(--iato-border);
+					border-radius: 10px;
+					padding: 16px 20px;
+					margin-bottom: 24px;
+				}
+				.auth-permissions h3 {
+					font-size: 12px;
+					font-weight: 600;
+					text-transform: uppercase;
+					letter-spacing: 0.5px;
+					color: var(--iato-text-secondary);
+					margin: 0 0 12px;
+				}
+				.auth-permissions ul {
+					list-style: none;
+					margin: 0;
+					padding: 0;
+				}
+				.auth-permissions li {
+					font-size: 14px;
+					color: var(--iato-text);
+					padding: 6px 0;
+					display: flex;
+					align-items: center;
+					gap: 10px;
+				}
+				.auth-permissions li::before {
+					content: '\2713';
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					width: 20px;
+					height: 20px;
+					background: #dcfce7;
+					color: var(--iato-success);
+					border-radius: 50%;
+					font-size: 12px;
+					font-weight: 700;
+					flex-shrink: 0;
+				}
+				.auth-actions {
+					display: flex;
+					gap: 10px;
+					margin-top: 0;
+				}
+				.auth-btn {
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					padding: 10px 24px;
+					border-radius: 8px;
+					font-size: 14px;
+					font-weight: 600;
+					cursor: pointer;
+					text-decoration: none;
+					transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+					border: none;
+				}
+				.auth-btn--primary {
+					flex: 1;
+					background: var(--iato-primary);
+					color: #fff;
+				}
+				.auth-btn--primary:hover {
+					background: var(--iato-primary-hover);
+					box-shadow: 0 2px 8px rgba(30, 64, 175, 0.3);
+				}
+				.auth-btn--secondary {
+					padding: 10px 20px;
+					background: #fff;
+					color: var(--iato-text-secondary);
+					border: 1px solid var(--iato-border);
+				}
+				.auth-btn--secondary:hover {
+					background: var(--iato-bg);
+					color: var(--iato-text);
+				}
+				.auth-footer {
+					text-align: center;
+					margin-top: 20px;
+					padding-top: 16px;
+					border-top: 1px solid var(--iato-border);
+					font-size: 12px;
+					color: var(--iato-text-muted);
+				}
+CSS;
+	}
+
+	/**
+	 * Minimal approval screen so the WP admin confirms the connection.
+	 */
 	private static function render_authorize_screen( string $client_name ): void {
 		$site_name = sanitize_text_field( get_bloginfo( 'name' ) );
+
+		// Enqueue inline styles via WP.
+		wp_register_style( 'iato-mcp-oauth', false, [], IATO_MCP_VERSION );
+		wp_enqueue_style( 'iato-mcp-oauth' );
+		wp_add_inline_style( 'iato-mcp-oauth', self::get_authorize_styles() );
 		?>
 		<!DOCTYPE html>
 		<html <?php language_attributes(); ?>>
 		<head>
 			<meta charset="utf-8">
 			<meta name="viewport" content="width=device-width, initial-scale=1">
-			<title><?php printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) ); ?></title>
-			<style>
-				body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f0f0f1; }
-				.card { background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.13); max-width: 420px; width: 100%; }
-				h2 { margin-top: 0; }
-				.actions { margin-top: 1.5rem; }
-				.btn { display: inline-block; padding: .6rem 1.2rem; border: none; border-radius: 4px; font-size: .95rem; cursor: pointer; text-decoration: none; }
-				.btn-primary { background: #2271b1; color: #fff; }
-				.btn-primary:hover { background: #135e96; }
-				.btn-cancel { background: #ddd; color: #50575e; margin-left: .5rem; }
-			</style>
+			<title><?php
+			/* translators: %s: site name */
+			printf( esc_html__( 'Authorize — %s', 'iato-mcp' ), esc_html( $site_name ) );
+			?></title>
+			<?php wp_print_styles( 'iato-mcp-oauth' ); ?>
 		</head>
 		<body>
-			<div class="card">
-				<h2><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
-				<p>
+			<div class="auth-card">
+				<div class="auth-brand"><?php echo iato_mcp_logo_svg( 40 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Returns self-escaped <img> markup (attributes wrapped in esc_attr inside the helper); fallback is a static <span>. ?> <span>MCP</span></div>
+				<h2 class="auth-title"><?php esc_html_e( 'Authorize Application', 'iato-mcp' ); ?></h2>
+				<p class="auth-desc">
 					<?php
 					printf(
-						/* translators: %s: client/application name */
-						esc_html__( '%s wants to connect to your WordPress site via MCP.', 'iato-mcp' ),
-						'<strong>' . esc_html( $client_name ) . '</strong>'
+						/* translators: %1$s: client/application name, %2$s: site name */
+						esc_html__( '%1$s wants to connect to %2$s via the Model Context Protocol.', 'iato-mcp' ),
+						'<strong>' . esc_html( $client_name ) . '</strong>',
+						'<strong>' . esc_html( $site_name ) . '</strong>'
 					);
 					?>
 				</p>
-				<p><?php esc_html_e( 'This will grant read and write access to your site content.', 'iato-mcp' ); ?></p>
-				<form method="post" class="actions">
+				<div class="auth-permissions">
+					<h3><?php esc_html_e( 'This will allow', 'iato-mcp' ); ?></h3>
+					<ul>
+						<li><?php esc_html_e( 'Read site content and settings', 'iato-mcp' ); ?></li>
+						<li><?php esc_html_e( 'Create and modify posts', 'iato-mcp' ); ?></li>
+						<li><?php esc_html_e( 'Update SEO metadata', 'iato-mcp' ); ?></li>
+						<li><?php esc_html_e( 'Manage media and navigation', 'iato-mcp' ); ?></li>
+					</ul>
+				</div>
+				<form method="post" class="auth-actions">
 					<?php wp_nonce_field( 'iato_mcp_oauth_authorize' ); ?>
-					<button type="submit" class="btn btn-primary"><?php esc_html_e( 'Approve', 'iato-mcp' ); ?></button>
-					<a href="<?php echo esc_url( admin_url() ); ?>" class="btn btn-cancel"><?php esc_html_e( 'Deny', 'iato-mcp' ); ?></a>
+					<button type="submit" class="auth-btn auth-btn--primary"><?php esc_html_e( 'Approve', 'iato-mcp' ); ?></button>
+					<a href="<?php echo esc_url( admin_url() ); ?>" class="auth-btn auth-btn--secondary"><?php esc_html_e( 'Deny', 'iato-mcp' ); ?></a>
 				</form>
+				<p class="auth-footer"><?php esc_html_e( 'Powered by IATO MCP', 'iato-mcp' ); ?></p>
 			</div>
 		</body>
 		</html>
@@ -222,18 +413,20 @@ class IATO_MCP_OAuth {
 	// ── Token Exchange ───────────────────────────────────────────────────────
 
 	private static function handle_token(): void {
-		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
 			self::json_response( [ 'error' => 'invalid_request' ], 405 );
 		}
 
 		// Accept both form-encoded and JSON bodies.
-		$content_type = $_SERVER['CONTENT_TYPE'] ?? '';
+		$content_type = isset( $_SERVER['CONTENT_TYPE'] ) ? sanitize_text_field( wp_unslash( $_SERVER['CONTENT_TYPE'] ) ) : '';
 		if ( false !== strpos( $content_type, 'application/json' ) ) {
 			$input = json_decode( file_get_contents( 'php://input' ), true );
 			if ( ! is_array( $input ) ) {
 				$input = [];
 			}
 		} else {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- OAuth token endpoint; nonce not applicable.
 			$input = wp_unslash( $_POST );
 		}
 
@@ -287,10 +480,10 @@ class IATO_MCP_OAuth {
 	 * Handles subdirectory installs correctly.
 	 */
 	private static function get_request_path(): string {
-		$uri  = $_SERVER['REQUEST_URI'] ?? '';
+		$uri  = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 		$path = trim( strtok( $uri, '?' ), '/' );
 
-		$home_path = trim( parse_url( home_url(), PHP_URL_PATH ) ?: '', '/' );
+		$home_path = trim( wp_parse_url( home_url(), PHP_URL_PATH ) ?: '', '/' );
 		if ( '' !== $home_path && 0 === strpos( $path, $home_path . '/' ) ) {
 			$path = substr( $path, strlen( $home_path ) + 1 );
 		} elseif ( $home_path === $path ) {

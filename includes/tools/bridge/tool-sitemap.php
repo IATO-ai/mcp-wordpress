@@ -30,12 +30,16 @@ IATO_MCP_Server::register_tool(
 
 		// If no sitemap_id provided, fetch the most recent one.
 		if ( ! $sitemap_id ) {
-			$sitemaps = IATO_MCP_IATO_Client::list_sitemaps();
+			$crawl_id = sanitize_text_field( $args['crawl_id'] ?? '' );
+			if ( ! $crawl_id ) {
+				$crawl_id = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
+			}
+			$sitemaps = IATO_MCP_IATO_Client::list_sitemaps( $crawl_id ?: null );
 			if ( is_wp_error( $sitemaps ) ) {
 				return $sitemaps;
 			}
-			$list = $sitemaps['sitemaps'] ?? $sitemaps['data'] ?? $sitemaps;
-			if ( empty( $list ) || ! is_array( $list ) ) {
+			$list = $sitemaps['data']['sitemaps'] ?? [];
+			if ( ! is_array( $list ) || empty( $list ) ) {
 				return new WP_Error( 'no_sitemaps', 'No sitemaps found in your IATO account.' );
 			}
 			$sitemap_id = absint( $list[0]['id'] ?? 0 );
@@ -49,7 +53,7 @@ IATO_MCP_Server::register_tool(
 			return $nodes_response;
 		}
 
-		$nodes = $nodes_response['nodes'] ?? $nodes_response['data'] ?? $nodes_response;
+		$nodes = $nodes_response['data']['nodes'] ?? [];
 		if ( ! is_array( $nodes ) ) {
 			$nodes = [];
 		}

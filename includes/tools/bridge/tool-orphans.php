@@ -21,23 +21,26 @@ IATO_MCP_Server::register_tool(
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'sitemap_id' => [ 'type' => 'integer', 'description' => 'IATO sitemap ID (required)' ],
+				'crawl_id' => [ 'type' => 'string', 'description' => 'IATO crawl job ID. Falls back to default crawl ID from settings.' ],
 			],
-			'required' => [ 'sitemap_id' ],
+			'required' => [],
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$sitemap_id = absint( $args['sitemap_id'] ?? 0 );
-		if ( ! $sitemap_id ) {
-			return new WP_Error( 'missing_sitemap_id', 'sitemap_id required' );
+		$crawl_id = sanitize_text_field( $args['crawl_id'] ?? '' );
+		if ( ! $crawl_id ) {
+			$crawl_id = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
+		}
+		if ( ! $crawl_id ) {
+			return new WP_Error( 'missing_crawl_id', 'crawl_id required. Set a default in Settings > IATO MCP or pass it explicitly.' );
 		}
 
-		$response = IATO_MCP_IATO_Client::get_orphan_pages( $sitemap_id, [ 'section', 'planned' ] );
+		$response = IATO_MCP_IATO_Client::get_orphan_pages( $crawl_id, [ 'section', 'planned' ] );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 
-		$orphans_data = $response['orphans'] ?? $response['data'] ?? $response;
+		$orphans_data = $response['data']['pages'] ?? [];
 		if ( ! is_array( $orphans_data ) ) {
 			$orphans_data = [];
 		}
@@ -58,9 +61,9 @@ IATO_MCP_Server::register_tool(
 		}
 
 		return IATO_MCP_Server::ok( [
-			'sitemap_id' => $sitemap_id,
-			'total'      => count( $orphans ),
-			'orphans'    => $orphans,
+			'crawl_id' => $crawl_id,
+			'total'    => count( $orphans ),
+			'orphans'  => $orphans,
 		] );
 	}
 );
