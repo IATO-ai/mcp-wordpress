@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.2
+Stable tag: 1.4.3
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.3 =
+* Fix: dismissible "MCP — Ready to Connect" admin notice restructured. The previous "1. Copy / 2. Open Claude Desktop / 3. (Optional) IATO key" framing implied a sequential three-step flow, but Step 1's snippet and Step 2's "Or use Add Custom Connector" sub-line were actually two mutually-exclusive connection methods, and Step 3 was unrelated optional setup. Notice now leads with the endpoint URL (with its own Copy button), then presents Option A (Connectors UI / OAuth, recommended) and Option B (Claude Desktop config file with the mcp-remote stdio snippet) as clearly-labeled alternatives separated by an "— or —" divider, with the IATO API key and "see the setup wizard for other clients" line moved to a non-numbered footer. Same content, structure no longer suggests dependence between the two paths.
+
 = 1.4.2 =
 * Fix: `Authorization: Basic <Application Password>` is now an accepted auth path on the MCP endpoint, alongside the existing plugin Bearer token. v1.4.1 documented Application Password support in the setup wizard but `class-auth.php` was hard-rejecting any non-Bearer header — users following wizard Methods 2 or 3 were getting 401s. This release makes the wizard's promise actually work. Trust grant in this version is identical to the Bearer path (full admin once authenticated); per-user capability enforcement under Application Password is tracked separately as a v1.6 hardening item.
 * Fix: dismissible setup notice now emits a Claude-Desktop-compatible stdio-bridge config (`mcp-remote` via `npx`, Bearer + `iato_mcp_key` in an `env` entry) instead of the direct-HTTP `{url, headers}` format that Claude Desktop's config file can't consume. Same bug class as the v1.4.1 wizard fix; this catches the second occurrence in the admin notice.
@@ -235,6 +238,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.3 =
+Restructures the dismissible "Ready to Connect" admin notice so its two connection methods (Connectors UI / Claude Desktop config file) are presented as mutually-exclusive options instead of a confusing three-step sequence. No code-path or auth-handler changes — purely a clarity fix in the onboarding notice.
 
 = 1.4.2 =
 Makes the Application Password auth path documented in the v1.4.1 setup wizard actually work (the auth handler was hard-rejecting non-Bearer requests, so wizard Methods 2 and 3 were returning 401). Also fixes the dismissible setup notice to emit a Claude-Desktop-compatible stdio-bridge config, and relabels the Settings page hero-card so its audience (HTTP MCP clients) is unambiguous. Recommended upgrade for anyone on 1.4.1.

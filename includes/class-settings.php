@@ -1598,7 +1598,9 @@ JS;
 		}
 
 		$key          = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
+		$endpoint     = rest_url( 'iato-mcp/v1/message' );
 		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
+		$wizard_url   = admin_url( 'admin.php?page=iato-mcp-setup' );
 		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_wizard' ), 'iato_mcp_dismiss_wizard' );
 
 		$config_json = wp_json_encode( [
@@ -1608,7 +1610,7 @@ JS;
 					'args'    => [
 						'-y',
 						'mcp-remote',
-						rest_url( 'iato-mcp/v1/message' ),
+						$endpoint,
 						'--header',
 						'Authorization: Bearer ${IATO_KEY}',
 					],
@@ -1621,47 +1623,63 @@ JS;
 		?>
 		<div class="notice" style="border-left-color: #5a89f4; padding: 0; overflow: hidden;">
 			<div style="padding: 20px 24px;">
-				<h3 style="margin: 0 0 12px; font-size: 16px; color: #5a89f4;"><?php echo iato_mcp_logo_svg( 28 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Returns self-escaped <img> markup (attributes wrapped in esc_attr inside the helper); fallback is a static <span>. ?><span style="vertical-align: middle; margin-left: 8px;">MCP — Ready to Connect</span></h3>
-				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
-					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">1</span>
+				<h3 style="margin: 0 0 16px; font-size: 16px; color: #5a89f4;"><?php echo iato_mcp_logo_svg( 28 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Returns self-escaped <img> markup (attributes wrapped in esc_attr inside the helper); fallback is a static <span>. ?><span style="vertical-align: middle; margin-left: 8px;"><?php esc_html_e( 'MCP — Ready to Connect', 'iato-mcp' ); ?></span></h3>
+
+				<p style="margin: 0 0 6px; font-size: 13px; color: #475569;"><strong><?php esc_html_e( 'Your MCP server URL', 'iato-mcp' ); ?></strong></p>
+				<div style="background: #f1f5f9; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px;">
+					<code id="iato-notice-endpoint" style="flex: 1; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 13px; color: #0f172a; background: transparent; padding: 0;"><?php echo esc_html( $endpoint ); ?></code>
+					<button type="button" style="background: rgba(90,137,244,0.12); border: none; color: #5a89f4; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('iato-notice-endpoint').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.innerHTML='<span class=\'dashicons dashicons-clipboard\' style=\'font-size:13px;width:13px;height:13px;\'></span> Copy';},2000);});">
+						<span class="dashicons dashicons-clipboard" style="font-size:13px;width:13px;height:13px;"></span> <?php esc_html_e( 'Copy', 'iato-mcp' ); ?>
+					</button>
+				</div>
+
+				<p style="margin: 0 0 8px; font-size: 13px; color: #64748b;"><?php esc_html_e( 'Choose ONE connection method:', 'iato-mcp' ); ?></p>
+
+				<div style="border: 1px solid #c7d2fe; border-left: 4px solid #5a89f4; border-radius: 6px; padding: 14px 16px; margin-bottom: 6px; background: rgba(90,137,244,0.03);">
+					<div style="margin-bottom: 6px;">
+						<strong style="font-size: 14px;"><?php esc_html_e( 'Option A — Claude.ai or Claude Desktop (Connectors UI)', 'iato-mcp' ); ?></strong>
+						<span style="display: inline-block; background: #5a89f4; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-left: 6px; vertical-align: middle;"><?php esc_html_e( 'Recommended', 'iato-mcp' ); ?></span>
 					</div>
-					<div>
-						<strong><?php esc_html_e( 'Copy this configuration', 'iato-mcp' ); ?></strong>
-						<div style="background: #0f172a; border-radius: 8px; margin-top: 8px; position: relative; overflow: hidden;">
-							<pre id="iato-wizard-config" style="margin: 0; padding: 16px; padding-right: 70px; color: #e2e8f0; font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;"><?php echo esc_html( $config_json ); ?></pre>
-							<button type="button" style="position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.1); border: none; color: rgba(255,255,255,0.7); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('iato-wizard-config').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.innerHTML='<span class=\'dashicons dashicons-clipboard\' style=\'font-size:14px;width:14px;height:14px;\'></span> Copy';},2000);});">
-								<span class="dashicons dashicons-clipboard" style="font-size:14px;width:14px;height:14px;"></span> <?php esc_html_e( 'Copy', 'iato-mcp' ); ?>
-							</button>
-						</div>
+					<p style="margin: 0; color: #475569; font-size: 13px; line-height: 1.5;"><?php esc_html_e( 'In Claude, click Add Custom Connector, paste the URL above, and click Connect. OAuth handles authentication — no credentials needed.', 'iato-mcp' ); ?></p>
+				</div>
+
+				<div style="text-align: center; color: #94a3b8; font-size: 11px; margin: 4px 0; letter-spacing: 2px; text-transform: uppercase;"><?php esc_html_e( '— or —', 'iato-mcp' ); ?></div>
+
+				<div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;">
+					<div style="margin-bottom: 6px;">
+						<strong style="font-size: 14px;"><?php esc_html_e( 'Option B — Claude Desktop config file', 'iato-mcp' ); ?></strong>
+					</div>
+					<p style="margin: 0 0 8px; color: #475569; font-size: 13px; line-height: 1.5;"><?php esc_html_e( "For Claude Desktop's local config file. Paste this snippet under mcpServers:", 'iato-mcp' ); ?></p>
+					<div style="background: #0f172a; border-radius: 8px; position: relative; overflow: hidden;">
+						<pre id="iato-wizard-config" style="margin: 0; padding: 16px; padding-right: 70px; color: #e2e8f0; font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;"><?php echo esc_html( $config_json ); ?></pre>
+						<button type="button" style="position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.1); border: none; color: rgba(255,255,255,0.7); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('iato-wizard-config').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.innerHTML='<span class=\'dashicons dashicons-clipboard\' style=\'font-size:14px;width:14px;height:14px;\'></span> Copy';},2000);});">
+							<span class="dashicons dashicons-clipboard" style="font-size:14px;width:14px;height:14px;"></span> <?php esc_html_e( 'Copy', 'iato-mcp' ); ?>
+						</button>
 					</div>
 				</div>
-				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
-					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">2</span>
-					</div>
-					<div>
-						<strong><?php esc_html_e( 'Open Claude Desktop settings and paste under MCP Servers', 'iato-mcp' ); ?></strong>
-						<p style="margin: 4px 0 0; color: #64748b; font-size: 13px;"><?php esc_html_e( 'Or use "Add Custom Connector" and enter your endpoint URL.', 'iato-mcp' ); ?></p>
-					</div>
-				</div>
-				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
-					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">3</span>
-					</div>
-					<div>
-						<?php
-						printf(
-							/* translators: %s: link to settings page */
-							esc_html__( '(Optional) Enter your IATO API key in %s to enable bridge tools.', 'iato-mcp' ),
-							'<a href="' . esc_url( $settings_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'Settings', 'iato-mcp' ) . '</a>'
-						);
-						?>
-					</div>
-				</div>
+
+				<p style="margin: 0 0 6px; color: #64748b; font-size: 13px; line-height: 1.5;">
+					<?php
+					printf(
+						/* translators: %s: link to setup wizard */
+						esc_html__( 'Other clients (Cursor, Cline, Zed, MCP Inspector, scripts): see the %s for OAuth, Application Password, and stdio bridge configs.', 'iato-mcp' ),
+						'<a href="' . esc_url( $wizard_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'setup wizard', 'iato-mcp' ) . '</a>'
+					);
+					?>
+				</p>
+				<p style="margin: 0 0 14px; color: #64748b; font-size: 13px; line-height: 1.5;">
+					<?php
+					printf(
+						/* translators: %s: link to settings page */
+						esc_html__( 'Optional: enter your IATO API key in %s to enable bridge tools (sitemap, SEO audits, performance reports).', 'iato-mcp' ),
+						'<a href="' . esc_url( $settings_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'Settings', 'iato-mcp' ) . '</a>'
+					);
+					?>
+				</p>
+
 				<div style="margin-top: 8px; display: flex; gap: 16px; align-items: center;">
 					<?php if ( ! get_option( 'iato_mcp_setup_complete' ) ) : ?>
-						<a href="<?php echo esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
+						<a href="<?php echo esc_url( $wizard_url ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
 					<?php endif; ?>
 					<a href="<?php echo esc_url( $dismiss_url ); ?>" style="color: #94a3b8; font-size: 13px; text-decoration: none;"><?php esc_html_e( 'Dismiss this notice', 'iato-mcp' ); ?></a>
 				</div>
