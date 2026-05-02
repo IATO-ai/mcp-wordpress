@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.3
+Stable tag: 1.4.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,12 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.4 =
+* Fix: clicking Approve on the OAuth consent screen no longer redirects users to /wp-admin instead of back to the OAuth client. The handler at `class-oauth.php:181` was using `wp_safe_redirect()` for the post-approval callback, but `wp_safe_redirect` silently rewrites any URL whose host isn't on WordPress's `allowed_redirect_hosts` allowlist to `admin_url()` — which means every external OAuth callback (claude.ai, cursor.sh, etc.) was being silently rewritten to /wp-admin/, leaving the connector stuck on "Connect" because the client never received an authorization code. Switched to `wp_redirect()`, which is the correct primitive for OAuth callbacks (the protocol requires an external redirect by design).
+* Fix: the not-logged-in branch of the authorize handler at `class-oauth.php:132` was passing `$_SERVER['REQUEST_URI']` through `sanitize_text_field()` before building the post-login redirect URL. `sanitize_text_field` strips `%XX` percent-encoded sequences as an HTML-entity defense, which mangled the inner `redirect_uri` parameter (every `:` and `/` removed) and broke the post-login bounce back to /oauth/authorize. Now uses `wp_unslash` only, which is correct for a server-set value used as a redirect target.
+* Hardening: `/oauth/authorize` now refuses requests whose `client_id` isn't registered via the dynamic client registration endpoint at `/oauth/register`. Previously the redirect_uri allowlist was opt-in (validated only when the client_id existed in the registered set) — after the wp_redirect change above lets external redirects through, that opt-in shape was an open-redirect surface. Spec-compliant clients (Claude, Cursor, etc.) already register before authorize, so this is a no-op for them.
+* Fix: `initialize` now echoes the client's requested `protocolVersion` when it's one we recognize (`2024-11-05`, `2025-03-26`, `2025-06-18`) instead of always returning `2024-11-05`. Falls back to `2025-06-18` for unknown requests. Forward-compat for clients on newer MCP revs.
+
 = 1.4.3 =
 * Fix: dismissible "MCP — Ready to Connect" admin notice restructured. The previous "1. Copy / 2. Open Claude Desktop / 3. (Optional) IATO key" framing implied a sequential three-step flow, but Step 1's snippet and Step 2's "Or use Add Custom Connector" sub-line were actually two mutually-exclusive connection methods, and Step 3 was unrelated optional setup. Notice now leads with the endpoint URL (with its own Copy button), then presents Option A (Connectors UI / OAuth, recommended) and Option B (Claude Desktop config file with the mcp-remote stdio snippet) as clearly-labeled alternatives separated by an "— or —" divider, with the IATO API key and "see the setup wizard for other clients" line moved to a non-numbered footer. Same content, structure no longer suggests dependence between the two paths.
 
@@ -238,6 +244,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.4 =
+Fixes the OAuth flow: clicking Approve on the consent screen now correctly redirects back to the OAuth client (Claude, Cursor, etc.) with an authorization code instead of dumping users on /wp-admin. The connector framework on the client side then transitions to "Connected" as expected. Required for anyone trying to connect via Claude.ai's Add Connector or Claude Desktop's Connectors UI.
 
 = 1.4.3 =
 Restructures the dismissible "Ready to Connect" admin notice so its two connection methods (Connectors UI / Claude Desktop config file) are presented as mutually-exclusive options instead of a confusing three-step sequence. No code-path or auth-handler changes — purely a clarity fix in the onboarding notice.

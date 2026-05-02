@@ -129,7 +129,11 @@ class IATO_MCP_OAuth {
 
 		// Require WordPress admin login.
 		if ( ! is_user_logged_in() || ! current_user_can( 'manage_options' ) ) {
-			$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+			// wp_unslash only — sanitize_text_field strips %XX percent-encoded sequences
+			// (HTML-entity defense), which would corrupt the inner redirect_uri parameter.
+			// REQUEST_URI is server-set and consumed only as a redirect target via
+			// wp_login_url() + wp_safe_redirect() (which validates the host).
+			$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
 			wp_safe_redirect( wp_login_url( home_url( $request_uri ) ) );
 			exit;
 		}
@@ -149,12 +153,19 @@ class IATO_MCP_OAuth {
 			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'client_id and redirect_uri required' ], 400 );
 		}
 
-		// If client was dynamically registered, verify redirect_uri.
+		// Require dynamic client registration. Spec-compliant clients (Claude, Cursor, etc.)
+		// register at /oauth/register before hitting /oauth/authorize, so this is a no-op
+		// for them. Refusing unregistered client_ids closes the open-redirect surface that
+		// existed when redirect_uri validation was opt-in.
 		$clients = get_option( 'iato_mcp_oauth_clients', [] );
-		if ( isset( $clients[ $client_id ] ) ) {
-			if ( ! in_array( $redirect_uri, $clients[ $client_id ]['redirect_uris'], true ) ) {
-				self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'redirect_uri not registered' ], 400 );
-			}
+		if ( ! isset( $clients[ $client_id ] ) ) {
+			self::json_response( [
+				'error'             => 'invalid_client',
+				'error_description' => 'client_id is not registered. Use the dynamic client registration endpoint at /oauth/register first.',
+			], 400 );
+		}
+		if ( ! in_array( $redirect_uri, $clients[ $client_id ]['redirect_uris'], true ) ) {
+			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'redirect_uri not registered' ], 400 );
 		}
 
 		// POST = user approved the form.
@@ -178,7 +189,12 @@ class IATO_MCP_OAuth {
 				$params['state'] = $state;
 			}
 
-			wp_safe_redirect( add_query_arg( $params, $redirect_uri ) );
+			// wp_redirect (not wp_safe_redirect) — the redirect_uri is the OAuth client's
+			// external callback by protocol design. wp_safe_redirect rewrites unknown hosts
+			// to admin_url(), which would silently break every off-site OAuth flow. The
+			// redirect_uri is already validated against the client's dynamic-registration
+			// allowlist above, so this isn't an open redirect.
+			wp_redirect( add_query_arg( $params, $redirect_uri ) );
 			exit;
 		}
 

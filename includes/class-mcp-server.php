@@ -250,6 +250,17 @@ class IATO_MCP_Server {
 	 * @return array
 	 */
 	private static function handle_initialize( array $params ): array {
+		// Negotiate protocol version. Echo the client's requested version when it's
+		// one we know about; fall back to our newest known version otherwise. The
+		// MCP envelope and tools/list / tools/call response shapes are stable across
+		// these revs — newer features (structured content, _meta, etc.) are additive
+		// and our flat content responses degrade past them.
+		$supported_versions = [ '2025-06-18', '2025-03-26', '2024-11-05' ];
+		$requested          = isset( $params['protocolVersion'] ) && is_string( $params['protocolVersion'] )
+			? sanitize_text_field( $params['protocolVersion'] )
+			: '';
+		$negotiated         = in_array( $requested, $supported_versions, true ) ? $requested : '2025-06-18';
+
 		$capabilities = [
 			'tools'    => new stdClass(), // signals tool support
 			'rollback' => true,           // change-receipt-based undo for tracked write tools
@@ -261,7 +272,7 @@ class IATO_MCP_Server {
 			$capabilities['elementor'] = [ 'v2' => true ];
 		}
 		return [
-			'protocolVersion' => '2024-11-05',
+			'protocolVersion' => $negotiated,
 			'serverInfo'      => [
 				'name'    => 'iato-mcp',
 				'version' => IATO_MCP_VERSION,
