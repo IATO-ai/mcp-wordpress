@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.4.4
+ * Version:     1.4.5
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.4.4' );
+define( 'IATO_MCP_VERSION', '1.4.5' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -148,6 +148,18 @@ function iato_mcp_maybe_run_migrations() {
 	// 1.4.0: append `rollback` to iato_mcp_tools so existing installs don't see
 	// the new tool auto-disabled by the per-tool toggle gate.
 	if ( version_compare( $db_version, '1.4.0', '<' ) ) {
+		$saved = get_option( 'iato_mcp_tools', null );
+		if ( is_array( $saved ) && ! empty( $saved ) && ! in_array( 'rollback', $saved, true ) ) {
+			$saved[] = 'rollback';
+			update_option( 'iato_mcp_tools', array_values( $saved ), false );
+		}
+	}
+
+	// 1.4.5: re-restore `rollback` to iato_mcp_tools for installs where it was
+	// stripped by sanitize_tools() between 1.4.0 and 1.4.5 (TOOL_NAMES was missing
+	// it, so any user-triggered Settings save would array_intersect it out).
+	// Idempotent — no-op for installs that didn't lose it.
+	if ( version_compare( $db_version, '1.4.5', '<' ) ) {
 		$saved = get_option( 'iato_mcp_tools', null );
 		if ( is_array( $saved ) && ! empty( $saved ) && ! in_array( 'rollback', $saved, true ) ) {
 			$saved[] = 'rollback';

@@ -262,9 +262,15 @@ class IATO_MCP_Server {
 		$negotiated         = in_array( $requested, $supported_versions, true ) ? $requested : '2025-06-18';
 
 		$capabilities = [
-			'tools'    => new stdClass(), // signals tool support
-			'rollback' => true,           // change-receipt-based undo for tracked write tools
+			'tools' => new stdClass(), // signals tool support
 		];
+		// Advertise rollback capability only when the tool is actually registered —
+		// the per-tool toggle at Settings > IATO MCP can disable it, and clients
+		// feature-detecting via this response shouldn't be told the tool exists
+		// when it would return tool_not_found on call.
+		if ( class_exists( 'IATO_MCP_Settings' ) && IATO_MCP_Settings::is_tool_enabled( 'rollback' ) ) {
+			$capabilities['rollback'] = true;
+		}
 		// Advertise widget-grained Elementor v2 surface only when Elementor is
 		// actually active — tells clients they can hand off to v2 tools without
 		// a tools/list round-trip.

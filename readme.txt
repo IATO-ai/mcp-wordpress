@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.4
+Stable tag: 1.4.5
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,11 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.5 =
+* Fix: `rollback` tool now appears in the Settings → IATO MCP per-tool toggle list, and the Settings save no longer silently strips it from `iato_mcp_tools`. When v1.4.0 added the rollback MCP tool, the developer forgot to add it to the `TOOL_NAMES` constant in `class-settings.php`. Consequence: no UI checkbox for it, and `sanitize_tools()` (which `array_intersect`s saved values against TOOL_NAMES) was stripping it from existing installs every time a user clicked Save Settings. Once stripped, `is_tool_enabled('rollback')` returned false and the tool stopped registering. Adding rollback to TOOL_NAMES fixes both the UI and the strip behavior.
+* Fix: idempotent migration restores `rollback` to `iato_mcp_tools` for any install where it had been stripped by the previous bug. Runs once on plugin upgrade, no-op for installs that didn't lose it.
+* Fix: `capabilities.rollback` in the `initialize` response now reflects actual tool registration instead of being hardcoded `true`. Previously, an install with rollback disabled (manually or via the strip bug above) would advertise `rollback: true` in capabilities, causing clients that feature-detect to attempt rollback calls that returned `tool_not_found`.
+
 = 1.4.4 =
 * Fix: clicking Approve on the OAuth consent screen no longer redirects users to /wp-admin instead of back to the OAuth client. The handler at `class-oauth.php:181` was using `wp_safe_redirect()` for the post-approval callback, but `wp_safe_redirect` silently rewrites any URL whose host isn't on WordPress's `allowed_redirect_hosts` allowlist to `admin_url()` — which means every external OAuth callback (claude.ai, cursor.sh, etc.) was being silently rewritten to /wp-admin/, leaving the connector stuck on "Connect" because the client never received an authorization code. Switched to `wp_redirect()`, which is the correct primitive for OAuth callbacks (the protocol requires an external redirect by design).
 * Fix: the not-logged-in branch of the authorize handler at `class-oauth.php:132` was passing `$_SERVER['REQUEST_URI']` through `sanitize_text_field()` before building the post-login redirect URL. `sanitize_text_field` strips `%XX` percent-encoded sequences as an HTML-entity defense, which mangled the inner `redirect_uri` parameter (every `:` and `/` removed) and broke the post-login bounce back to /oauth/authorize. Now uses `wp_unslash` only, which is correct for a server-set value used as a redirect target.
@@ -244,6 +249,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.5 =
+Fixes the rollback MCP tool being invisible on the Settings page and silently stripped from `iato_mcp_tools` on every Settings save (a bug present since v1.4.0 introduced rollback). One-shot migration auto-restores rollback for affected installs on upgrade. Also makes the `initialize` capability advertisement honest about whether rollback is actually registered.
 
 = 1.4.4 =
 Fixes the OAuth flow: clicking Approve on the consent screen now correctly redirects back to the OAuth client (Claude, Cursor, etc.) with an authorization code instead of dumping users on /wp-admin. The connector framework on the client side then transitions to "Connected" as expected. Required for anyone trying to connect via Claude.ai's Add Connector or Claude Desktop's Connectors UI.

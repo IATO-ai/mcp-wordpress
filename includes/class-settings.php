@@ -66,6 +66,8 @@ class IATO_MCP_Settings {
 		'set_heading_level',
 		'set_widget_setting',
 		'resolve_url',
+		// Safety (v1.4.0).
+		'rollback',
 		// IATO bridge (require API key).
 		'get_iato_sitemap',
 		'get_iato_nav_audit',
