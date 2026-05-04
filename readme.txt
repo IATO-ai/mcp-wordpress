@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.6
+Stable tag: 1.4.7
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.7 =
+* Fix: Settings → IATO MCP no longer presents the IATO Platform and Crawl Management tool toggles as functional when no IATO API key is configured. Previously the checkboxes appeared enabled and saveable, but bridge tool registration is gated by a separate condition at `iato-mcp.php:85` (the bridge tool files only `require_once` when the API key is non-empty), so the toggles were placebo — a user could check every box, save, and still get `Unknown tool: get_iato_sitemap` on every call with no UI signal explaining why. The toggle inputs in those two categories are now `disabled` when the API key is empty, the category card grays out (55% opacity), and an inline banner under the heading explains: "These tools require an IATO API key. Add it under 'IATO Platform' above to enable them — until then, these toggles have no effect." When the user pastes an API key and saves, the categories become interactive again.
+
 = 1.4.6 =
 * Fix: `rollback` now appears as a checkbox on the Settings → IATO MCP page (under a new "Safety" category). v1.4.5 added rollback to the `TOOL_NAMES` constant — which fixed the sanitize-strip behavior — but the Settings UI rendering loop iterates a separate constant, `TOOL_CATEGORIES`, which also needed rollback added. Without the category entry, the checkbox was never rendered. Adding `'Safety' => ['rollback']` closes the gap.
 * Polish: unified the inner `mcpServers` server key shown in the Settings page hero card config snippet from `wordpress` to `iato-wordpress`, matching the dismissible setup notice. Cosmetic only — the inner key is a user-facing display name they can rename — but eliminates an unnecessary inconsistency between the two snippets.
@@ -253,6 +256,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.7 =
+Fixes a misleading UX in Settings where IATO Platform and Crawl Management tool toggles appeared enabled even when no IATO API key was configured — making the checkboxes placebo. Toggles are now visually disabled with an inline hint until an API key is set. No backend or auth changes.
 
 = 1.4.6 =
 Completes the rollback Settings UI fix from 1.4.5 by adding rollback to the second gating constant (`TOOL_CATEGORIES`) the rendering loop actually iterates — so the checkbox now actually appears under a new "Safety" category. Also unifies the inner server key in the Settings page config snippet from `wordpress` to `iato-wordpress` to match the dismissible notice.

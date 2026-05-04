@@ -640,8 +640,17 @@ class IATO_MCP_Settings {
 					<?php foreach ( self::TOOL_CATEGORIES as $category => $tools ) :
 						$is_iato_category = in_array( $category, [ 'IATO Platform', 'Crawl Management' ], true );
 						$api_key_present  = ! empty( $iato_api_key );
+						// Gate the bridge categories visually when no API key is set — the
+						// per-tool toggles for these are placebo without a key (the bridge
+						// tool files don't even load — see iato-mcp.php:85). Disable inputs
+						// + show a hint so the UI matches the actual registration logic.
+						$category_gated = $is_iato_category && ! $api_key_present;
+						$category_class = 'iato-tool-category';
+						if ( $category_gated ) {
+							$category_class .= ' iato-tool-category--gated';
+						}
 						?>
-						<div class="iato-tool-category">
+						<div class="<?php echo esc_attr( $category_class ); ?>">
 							<div class="iato-tool-category-header">
 								<h3>
 									<?php echo esc_html( $category ); ?>
@@ -656,19 +665,24 @@ class IATO_MCP_Settings {
 									<?php endif; ?>
 								</h3>
 								<div class="iato-tool-category-actions">
-									<button type="button" class="iato-link-btn iato-select-all"><?php esc_html_e( 'All', 'iato-mcp' ); ?></button>
+									<button type="button" class="iato-link-btn iato-select-all" <?php echo $category_gated ? 'disabled' : ''; ?>><?php esc_html_e( 'All', 'iato-mcp' ); ?></button>
 									<span class="iato-separator">|</span>
-									<button type="button" class="iato-link-btn iato-select-none"><?php esc_html_e( 'None', 'iato-mcp' ); ?></button>
+									<button type="button" class="iato-link-btn iato-select-none" <?php echo $category_gated ? 'disabled' : ''; ?>><?php esc_html_e( 'None', 'iato-mcp' ); ?></button>
 								</div>
 							</div>
+							<?php if ( $category_gated ) : ?>
+								<p class="iato-category-banner">
+									<?php esc_html_e( 'These tools require an IATO API key. Add it under "IATO Platform" above to enable them — until then, these toggles have no effect.', 'iato-mcp' ); ?>
+								</p>
+							<?php endif; ?>
 							<div class="iato-tool-grid">
 								<?php foreach ( $tools as $tool ) :
 									$checked = $all_on || in_array( $tool, $enabled, true );
 									$desc    = self::TOOL_DESCRIPTIONS[ $tool ] ?? '';
 								?>
-									<label class="iato-tool-item">
+									<label class="iato-tool-item<?php echo $category_gated ? ' iato-tool-item--gated' : ''; ?>">
 										<div class="iato-toggle">
-											<input type="checkbox" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" <?php checked( $checked ); ?> />
+											<input type="checkbox" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" <?php checked( $checked ); ?> <?php echo $category_gated ? 'disabled' : ''; ?> />
 											<span class="iato-toggle-slider" role="switch" aria-checked="<?php echo $checked ? 'true' : 'false'; ?>"></span>
 										</div>
 										<div class="iato-tool-info">
@@ -1189,6 +1203,25 @@ class IATO_MCP_Settings {
 				text-transform: none;
 				letter-spacing: normal;
 				margin-left: 6px;
+			}
+			.iato-tool-category--gated .iato-tool-grid {
+				opacity: 0.55;
+			}
+			.iato-tool-category--gated .iato-tool-item {
+				cursor: not-allowed;
+			}
+			.iato-tool-category--gated input[type=checkbox]:disabled + .iato-toggle-slider {
+				cursor: not-allowed;
+			}
+			.iato-category-banner {
+				margin: 0 0 12px;
+				padding: 8px 12px;
+				background: rgba(245, 158, 11, 0.08);
+				border-left: 3px solid #f59e0b;
+				border-radius: 4px;
+				font-size: 12px;
+				color: var(--iato-text-secondary);
+				line-height: 1.5;
 			}
 			.iato-tool-category-actions {
 				display: flex;
