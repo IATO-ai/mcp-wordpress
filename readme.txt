@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.5
+Stable tag: 1.4.6
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,10 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.6 =
+* Fix: `rollback` now appears as a checkbox on the Settings → IATO MCP page (under a new "Safety" category). v1.4.5 added rollback to the `TOOL_NAMES` constant — which fixed the sanitize-strip behavior — but the Settings UI rendering loop iterates a separate constant, `TOOL_CATEGORIES`, which also needed rollback added. Without the category entry, the checkbox was never rendered. Adding `'Safety' => ['rollback']` closes the gap.
+* Polish: unified the inner `mcpServers` server key shown in the Settings page hero card config snippet from `wordpress` to `iato-wordpress`, matching the dismissible setup notice. Cosmetic only — the inner key is a user-facing display name they can rename — but eliminates an unnecessary inconsistency between the two snippets.
+
 = 1.4.5 =
 * Fix: `rollback` tool now appears in the Settings → IATO MCP per-tool toggle list, and the Settings save no longer silently strips it from `iato_mcp_tools`. When v1.4.0 added the rollback MCP tool, the developer forgot to add it to the `TOOL_NAMES` constant in `class-settings.php`. Consequence: no UI checkbox for it, and `sanitize_tools()` (which `array_intersect`s saved values against TOOL_NAMES) was stripping it from existing installs every time a user clicked Save Settings. Once stripped, `is_tool_enabled('rollback')` returned false and the tool stopped registering. Adding rollback to TOOL_NAMES fixes both the UI and the strip behavior.
 * Fix: idempotent migration restores `rollback` to `iato_mcp_tools` for any install where it had been stripped by the previous bug. Runs once on plugin upgrade, no-op for installs that didn't lose it.
@@ -249,6 +253,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.6 =
+Completes the rollback Settings UI fix from 1.4.5 by adding rollback to the second gating constant (`TOOL_CATEGORIES`) the rendering loop actually iterates — so the checkbox now actually appears under a new "Safety" category. Also unifies the inner server key in the Settings page config snippet from `wordpress` to `iato-wordpress` to match the dismissible notice.
 
 = 1.4.5 =
 Fixes the rollback MCP tool being invisible on the Settings page and silently stripped from `iato_mcp_tools` on every Settings save (a bug present since v1.4.0 introduced rollback). One-shot migration auto-restores rollback for affected installs on upgrade. Also makes the `initialize` capability advertisement honest about whether rollback is actually registered.

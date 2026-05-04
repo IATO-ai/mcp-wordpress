@@ -165,6 +165,7 @@ class IATO_MCP_Settings {
 		'Taxonomy'      => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
 		'Redirects'     => [ 'update_redirect' ],
 		'Comments'      => [ 'get_comments' ],
+		'Safety'        => [ 'rollback' ],
 		'Elementor'     => [ 'get_page_builder', 'get_elementor_data', 'update_elementor_data' ],
 		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url' ],
 		'IATO Platform' => [ 'get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report' ],
@@ -453,7 +454,7 @@ class IATO_MCP_Settings {
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
-				'wordpress' => [
+				'iato-wordpress' => [
 					'url'     => $endpoint,
 					'headers' => [
 						'Authorization' => 'Bearer ' . $mcp_key,
