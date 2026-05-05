@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.8
+Stable tag: 1.4.9
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -15,6 +15,8 @@ Exposes an MCP server from any self-hosted WordPress site, enabling AI agents li
 WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 
 [IATO MCP](https://iato.ai/wordpress-mcp) connects your WordPress site to Claude Desktop and other MCP-enabled AI clients. Once connected, you can ask Claude to audit your site and fix SEO issues, identify orphan pages, clean up broken links, and more — all in a single conversation.
+
+https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = How it works =
 
@@ -143,6 +145,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.9 =
+* Docs: added the plugin demo video to the top of the Description section on the WordPress.org plugin page (auto-embedded by WordPress.org's readme renderer when a YouTube URL is on its own line). No code changes; safe to skip if you've already updated to 1.4.8.
+
 = 1.4.8 =
 * New: dynamic page-builder-aware server instructions injected into the MCP `initialize` response. The plugin now detects which page-builder plugins are active on the WordPress site (Elementor, Divi, WPBakery, Beaver Builder, Gutenberg) and emits a context-specific instruction string telling the AI agent which write tools are correct for which builder, with a mandatory `get_page_builder` check-first rule before any content edit. Closes a class of silent-failure bug where `update_post` on an Elementor-built post would succeed at the database level but never reach the frontend (because Elementor stores content in `_elementor_data`, not `post_content`). Detected-but-unsupported builders (Divi, WPBakery, Beaver Builder for writes) are explicitly flagged so the agent tells the user to edit in the WP admin instead of attempting a write that won't take effect. Uses the standard MCP `instructions` field added in spec rev 2025-03-26; older clients on 2024-11-05 cleanly ignore the unknown field.
 * New: `get_page_builder` now detects Beaver Builder posts (via `_fl_builder_enabled` post meta) and returns `beaver-builder`. Previously these posts fell through to the `gutenberg` or `classic` branch, misleading the agent about how to handle them.
@@ -260,6 +265,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.9 =
+Docs-only release: adds the plugin demo video to the WordPress.org plugin page Description. No code changes. Safe to skip if you've already updated to 1.4.8.
 
 = 1.4.8 =
 Adds page-builder-aware safety rails to the MCP `initialize` response: a dynamic instructions string telling the AI agent which write tools to use for which builder, with a mandatory check-first rule before any content edit. Closes a silent-failure class where `update_post` on Elementor-built posts succeeded in the database but never reached the frontend. Also adds Beaver Builder per-post detection.
