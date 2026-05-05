@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.4.7
+ * Version:     1.4.8
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.4.7' );
+define( 'IATO_MCP_VERSION', '1.4.8' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -170,6 +170,122 @@ function iato_mcp_maybe_run_migrations() {
 	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
 	}
+}
+
+/**
+ * Detect which page-builder plugins are active site-wide.
+ *
+ * Different from get_page_builder (per-post detection): this answers
+ * "which plugins are installed and active on this WordPress install?" using
+ * canonical PHP signals, so the MCP server's initialize response can build
+ * builder-aware safety instructions before any tool is called.
+ *
+ * @return array<string,bool> map of builder slug => active flag.
+ */
+function iato_mcp_detect_active_builders(): array {
+	return [
+		'elementor' => defined( 'ELEMENTOR_VERSION' ),
+		'divi'      => function_exists( 'et_setup_theme' ),
+		'wpbakery'  => defined( 'WPB_VC_VERSION' ),
+		'beaver'    => class_exists( 'FLBuilder' ),
+		'gutenberg' => true, // always available in WP 5+
+	];
+}
+
+/**
+ * Build the dynamic instructions string injected into the MCP initialize response.
+ *
+ * Always includes the universal "check first" rule. Then conditionally appends
+ * per-builder guidance: tool routing for supported builders (Elementor,
+ * Gutenberg) and "detected but not supported for writes" warnings for the
+ * others (Divi, WPBakery, Beaver Builder) so the agent refers the user back
+ * to WP admin instead of attempting a write that will silently fail.
+ *
+ * Not cached — regeneration cost is a few constant/class checks plus string
+ * concat, and caching would mask plugin-activation changes mid-session.
+ *
+ * @return string instructions string.
+ */
+function iato_mcp_build_server_instructions(): string {
+	$builders = iato_mcp_detect_active_builders();
+
+	$instructions = <<<END_UNIVERSAL
+This MCP server connects to a self-hosted WordPress site.
+
+MANDATORY RULE BEFORE ANY CONTENT EDIT:
+Always call get_page_builder on a post before editing its content.
+The correct write tool depends entirely on which page builder was
+used to create the post. Using the wrong tool will silently fail.
+Never assume a page builder. Always check first.
+
+Every write tool returns a change_receipt with a unique rollback ID.
+Store these and offer rollback to the user if anything looks wrong.
+Use dry_run=true to preview any edit before committing it.
+END_UNIVERSAL;
+
+	if ( $builders['elementor'] ) {
+		$instructions .= "\n\n" . <<<END_ELEMENTOR
+ELEMENTOR IS ACTIVE ON THIS SITE:
+Elementor stores content in _elementor_data, not in post_content.
+update_post will NOT update what visitors see on Elementor posts.
+
+When get_page_builder returns 'elementor':
+  1. Call list_elementor_widgets to find the correct widget_id
+  2. Use update_elementor_widget for single widget edits
+  3. Use update_elementor_data for full-document replacements
+  4. Always pass if_revision to prevent write conflicts
+  5. Always use dry_run=true before committing
+  6. update_post is only permitted for: status, title, excerpt
+END_ELEMENTOR;
+	}
+
+	if ( $builders['gutenberg'] && ! $builders['elementor'] ) {
+		$instructions .= "\n\n" . <<<END_GUTENBERG
+GUTENBERG IS THE ACTIVE EDITOR ON THIS SITE:
+When get_page_builder returns 'gutenberg':
+  - Use update_post to edit post content
+  - Content is stored as block markup in post_content
+  - Standard WordPress CRUD tools apply
+END_GUTENBERG;
+	}
+
+	if ( $builders['divi'] ) {
+		$instructions .= "\n\n" . <<<END_DIVI
+DIVI DETECTED BUT NOT FULLY SUPPORTED:
+When get_page_builder returns 'divi', inform the user:
+  'This post was built with Divi. IATO MCP does not yet have
+   dedicated Divi write tools. Please edit this post directly
+   in the WordPress admin until Divi support ships.'
+Do not attempt to write Divi post content.
+Read operations are safe.
+END_DIVI;
+	}
+
+	if ( $builders['wpbakery'] ) {
+		$instructions .= "\n\n" . <<<END_WPBAKERY
+WPBAKERY DETECTED BUT NOT FULLY SUPPORTED:
+When get_page_builder returns 'wpbakery', inform the user:
+  'This post was built with WPBakery. IATO MCP does not yet
+   have dedicated WPBakery write tools. Please edit this post
+   directly in the WordPress admin until WPBakery support ships.'
+Do not attempt to write WPBakery post content.
+Read operations are safe.
+END_WPBAKERY;
+	}
+
+	if ( $builders['beaver'] ) {
+		$instructions .= "\n\n" . <<<END_BEAVER
+BEAVER BUILDER DETECTED BUT NOT FULLY SUPPORTED:
+When get_page_builder returns 'beaver-builder', inform the user:
+  'This post was built with Beaver Builder. IATO MCP does not
+   yet have dedicated Beaver Builder write tools. Please edit
+   this post directly in WordPress admin until support ships.'
+Do not attempt to write Beaver Builder post content.
+Read operations are safe.
+END_BEAVER;
+	}
+
+	return trim( $instructions );
 }
 
 /**

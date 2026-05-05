@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.7
+Stable tag: 1.4.8
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,10 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.8 =
+* New: dynamic page-builder-aware server instructions injected into the MCP `initialize` response. The plugin now detects which page-builder plugins are active on the WordPress site (Elementor, Divi, WPBakery, Beaver Builder, Gutenberg) and emits a context-specific instruction string telling the AI agent which write tools are correct for which builder, with a mandatory `get_page_builder` check-first rule before any content edit. Closes a class of silent-failure bug where `update_post` on an Elementor-built post would succeed at the database level but never reach the frontend (because Elementor stores content in `_elementor_data`, not `post_content`). Detected-but-unsupported builders (Divi, WPBakery, Beaver Builder for writes) are explicitly flagged so the agent tells the user to edit in the WP admin instead of attempting a write that won't take effect. Uses the standard MCP `instructions` field added in spec rev 2025-03-26; older clients on 2024-11-05 cleanly ignore the unknown field.
+* New: `get_page_builder` now detects Beaver Builder posts (via `_fl_builder_enabled` post meta) and returns `beaver-builder`. Previously these posts fell through to the `gutenberg` or `classic` branch, misleading the agent about how to handle them.
+
 = 1.4.7 =
 * Fix: Settings → IATO MCP no longer presents the IATO Platform and Crawl Management tool toggles as functional when no IATO API key is configured. Previously the checkboxes appeared enabled and saveable, but bridge tool registration is gated by a separate condition at `iato-mcp.php:85` (the bridge tool files only `require_once` when the API key is non-empty), so the toggles were placebo — a user could check every box, save, and still get `Unknown tool: get_iato_sitemap` on every call with no UI signal explaining why. The toggle inputs in those two categories are now `disabled` when the API key is empty, the category card grays out (55% opacity), and an inline banner under the heading explains: "These tools require an IATO API key. Add it under 'IATO Platform' above to enable them — until then, these toggles have no effect." When the user pastes an API key and saves, the categories become interactive again.
 
@@ -256,6 +260,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.8 =
+Adds page-builder-aware safety rails to the MCP `initialize` response: a dynamic instructions string telling the AI agent which write tools to use for which builder, with a mandatory check-first rule before any content edit. Closes a silent-failure class where `update_post` on Elementor-built posts succeeded in the database but never reached the frontend. Also adds Beaver Builder per-post detection.
 
 = 1.4.7 =
 Fixes a misleading UX in Settings where IATO Platform and Crawl Management tool toggles appeared enabled even when no IATO API key was configured — making the checkboxes placebo. Toggles are now visually disabled with an inline hint until an API key is set. No backend or auth changes.

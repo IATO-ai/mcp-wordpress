@@ -16,7 +16,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_page_builder',
 	[
-		'description' => 'Detects which page builder a post or page uses: elementor, wpbakery, divi, gutenberg, or classic.',
+		'description' => 'Detects which page builder a post or page uses: elementor, wpbakery, divi, beaver-builder, gutenberg, or classic.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -60,6 +60,14 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( [
 				'post_id' => $post_id,
 				'builder' => 'divi',
+			] );
+		}
+
+		// Beaver Builder.
+		if ( get_post_meta( $post_id, '_fl_builder_enabled', true ) ) {
+			return IATO_MCP_Server::ok( [
+				'post_id' => $post_id,
+				'builder' => 'beaver-builder',
 			] );
 		}
 

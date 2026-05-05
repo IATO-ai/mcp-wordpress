@@ -284,6 +284,11 @@ class IATO_MCP_Server {
 				'version' => IATO_MCP_VERSION,
 			],
 			'capabilities'    => $capabilities,
+			// Dynamic page-builder-aware instructions — tells the AI client which
+			// write tools are correct for which builder, with a mandatory
+			// get_page_builder check-first rule before any content edit.
+			// Field added in MCP spec 2025-03-26; older clients ignore unknown fields.
+			'instructions'    => iato_mcp_build_server_instructions(),
 		];
 	}
 
