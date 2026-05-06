@@ -109,7 +109,7 @@ class IATO_MCP_Setup_Wizard {
 		$config_snippet = wp_json_encode(
 			[
 				'mcpServers' => [
-					'iato-wordpress' => [
+					iato_mcp_connection_name() => [
 						'command' => 'npx',
 						'args'    => [
 							'-y',

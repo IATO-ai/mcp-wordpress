@@ -454,7 +454,7 @@ class IATO_MCP_Settings {
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
-				'iato-wordpress' => [
+				iato_mcp_connection_name() => [
 					'url'     => $endpoint,
 					'headers' => [
 						'Authorization' => 'Bearer ' . $mcp_key,
@@ -1641,7 +1641,7 @@ JS;
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
-				'iato-wordpress' => [
+				iato_mcp_connection_name() => [
 					'command' => 'npx',
 					'args'    => [
 						'-y',

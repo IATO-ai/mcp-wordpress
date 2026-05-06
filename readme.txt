@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.9
+Stable tag: 1.4.10
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -145,6 +145,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 
 == Changelog ==
 
+= 1.4.10 =
+* Fix: the JSON config snippets emitted by the plugin (setup wizard Method 3, dismissible "Ready to Connect" notice, Settings hero card) now use a unique-per-site inner `mcpServers` key derived from the WordPress site's hostname (e.g. `iato-garennebigby-dev`, `iato-dynomapper-com`) instead of the hardcoded `iato-wordpress`. Agencies managing multiple WordPress installs from a single AI client (Claude Desktop, Claude Code, etc.) can now paste config snippets from many IATO MCP installs into the same client config file without one silently overwriting another (JSON object keys are unique, so two snippets sharing a key was a silent collision). Existing connections that were set up with the old `iato-wordpress` key continue to work — the inner key is a display name only, not part of any HTTP request — so no migration is needed.
+
 = 1.4.9 =
 * Docs: added the plugin demo video to the top of the Description section on the WordPress.org plugin page (auto-embedded by WordPress.org's readme renderer when a YouTube URL is on its own line). No code changes; safe to skip if you've already updated to 1.4.8.
 
@@ -265,6 +268,9 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.4.10 =
+The JSON config snippets the plugin emits now use a unique-per-site inner `mcpServers` key derived from the site's hostname (e.g. `iato-garennebigby-dev`) instead of the hardcoded `iato-wordpress`. Lets agencies paste config snippets from many WordPress installs into a single Claude Desktop config without silent overwrites. Existing connections keep working unchanged.
 
 = 1.4.9 =
 Docs-only release: adds the plugin demo video to the WordPress.org plugin page Description. No code changes. Safe to skip if you've already updated to 1.4.8.
