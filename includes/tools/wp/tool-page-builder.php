@@ -236,9 +236,18 @@ IATO_MCP_Server::register_tool(
 
 		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
 		// surfaces them, and apply them after the main Elementor write succeeds.
-		// Keys present in the configured list but absent on the source post are
-		// collected into $inherit_skipped so the caller can see what was attempted
-		// but skipped, rather than silently getting fewer receipts than expected.
+		//
+		// Empty-string values are now copied through (they used to be skipped). On
+		// Astra and similar themes, empty strings are stored as meaningful values
+		// (e.g. ast-main-header-display="" is a real per-post override, not "no
+		// override"). WordPress get_post_meta returns '' for both stored-empty and
+		// absent meta, so we can't distinguish; the safer default is to mirror
+		// whatever the source has, since the contract of inherit_settings_from is
+		// "make this target match the source."
+		//
+		// Keys whose source value matches the target's existing value are recorded
+		// in $inherit_skipped (reason: noop) so the caller can see what was planned
+		// but produced no actual change.
 		$inherit_source  = isset( $args['inherit_settings_from'] ) ? absint( $args['inherit_settings_from'] ) : 0;
 		$inherit_plan    = [];
 		$inherit_skipped = [];
@@ -246,12 +255,25 @@ IATO_MCP_Server::register_tool(
 			if ( ! get_post( $inherit_source ) ) {
 				return new WP_Error( 'inherit_source_not_found', 'inherit_settings_from references a post that does not exist.' );
 			}
+			// Default curated list spans Astra per-post overrides + Elementor page
+			// settings + WP page template. Wider than the original 8 because real
+			// cloning workflows also need ast-banner-title-visibility, ast-featured-img,
+			// site-content-style, etc. Callers who want the narrower set can pass
+			// explicit inherit_keys.
 			$default_keys = [
+				// Astra layout overrides (per-post).
 				'site-post-title',
 				'site-sidebar-layout',
 				'site-content-layout',
+				'site-content-style',
+				'site-sidebar-style',
 				'ast-main-header-display',
+				'ast-global-header-display',
+				'ast-banner-title-visibility',
+				'ast-breadcrumbs-content',
+				'ast-featured-img',
 				'footer-sml-layout',
+				// WordPress / Elementor.
 				'_wp_page_template',
 				'_elementor_page_settings',
 				'_elementor_template_type',
@@ -265,12 +287,16 @@ IATO_MCP_Server::register_tool(
 					return $policy;
 				}
 				$source_value = get_post_meta( $inherit_source, $key, true );
-				if ( '' === $source_value || null === $source_value ) {
-					$inherit_skipped[] = [ 'key' => $key, 'reason' => 'source_empty' ];
+				$target_value = get_post_meta( $post_id, $key, true );
+
+				// No-op short-circuit: same value already present on target.
+				// Distinguish by string-compare (covers serialized arrays too).
+				if ( (string) $source_value === (string) $target_value ) {
+					$inherit_skipped[] = [ 'key' => $key, 'reason' => 'noop' ];
 					continue;
 				}
-				$before = get_post_meta( $post_id, $key, true );
-				$before = ( '' === $before ) ? null : $before;
+
+				$before = ( '' === $target_value ) ? null : $target_value;
 				$inherit_plan[] = [ 'key' => $key, 'before' => $before, 'after' => $source_value ];
 			}
 		}

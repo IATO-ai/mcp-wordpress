@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.6.2
+Stable tag: 1.6.3
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,13 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.6.3 =
+* New: `create_media` accepts `defer_subsizes: true` to skip the synchronous `wp_generate_attachment_metadata` call and schedule it via WP-Cron instead. The MCP response returns immediately with `attachment_id` and the canonical URL; intermediate sizes are generated on the next cron tick (typically within seconds). Recommended for any caller running through the Anthropic MCP gateway, which times out around 30 seconds — sites with image-optimisation pipelines (ShortPixel, Imagify, Smush, etc.) intercepting the metadata-generation hook routinely exceed that limit and produce silent hangs where the response never arrives but the attachment also never lands. The default remains synchronous so existing callers see no behaviour change.
+* New: per-phase diagnostic logging in the `create_media` handler. Every call now writes `[iato-mcp create_media:<req_id>] phase=... elapsed=...s` lines to PHP's error log at each stage (entry, source resolve, MIME check, dimension check, sideload, attachment insert, subsize generation, return), including the byte counts and dimensions seen. When a call hangs or fails, the last line in `wp-content/debug.log` (or the host's PHP log) identifies which phase stalled — turning the previously-silent failure mode into a one-line diagnosis. The async cron handler logs its own line on completion with attachment_id, subsize count, and duration.
+* Fix: `update_elementor_data` with `inherit_settings_from` now copies empty-string values from the source post instead of skipping them. WordPress's `get_post_meta` returns `''` for both stored-empty and absent keys, so the prior skip-empty rule turned out to silently drop meaningful Astra layout state on real cloning workflows (Astra stores per-post overrides as empty strings in some configurations, and skipping them caused targets to retain the wrong layout). The contract of `inherit_settings_from` is "make the target match the source"; that now happens uniformly.
+* Fix: the default `inherit_keys` list on `update_elementor_data` is widened from 8 keys to 14 to cover the full Astra per-post override family (`site-content-style`, `site-sidebar-style`, `ast-global-header-display`, `ast-banner-title-visibility`, `ast-breadcrumbs-content`, `ast-featured-img`). Cloning a styled post now transfers the complete layout state in a single call, not just the original 4 brief-flagged keys.
+* Refactor: `inherited_skipped[]` in the `update_elementor_data` response semantics changed from "source value was empty" to "source value matches target's existing value (no-op write)". Each entry now uses `reason: 'noop'`. The new shape surfaces the case where inherit_settings_from would have written a value but the target already had it — useful diagnostic, no behavioural cost.
 
 = 1.6.2 =
 * Refactor: the four hand-written `version_compare` migration blocks that backfill new tool names into the saved `iato_mcp_tools` option are replaced by a single declarative `TOOL_MIGRATION_BACKFILL` map on `IATO_MCP_Settings` plus a one-loop walker in `iato_mcp_maybe_run_migrations()`. Same behavior for every install that was already correctly migrated; the new shape eliminates the "remembered to add a migration block" failure mode that produced the 1.3.0 → 1.3.1 fix, the 1.4.0 → 1.4.5 fix, and the 1.6.0 → 1.6.1 fix. Adding a new tool now requires appending one line to the map alongside the `TOOL_NAMES` edit — colocated, hard to miss at review time.

@@ -39,6 +39,7 @@ IATO_MCP_Server::register_tool(
 				'description'    => [ 'type' => 'string',  'description' => 'Attachment description (post_content).' ],
 				'attach_to_post' => [ 'type' => 'integer', 'description' => 'If set, links the new attachment to that post via post_parent (does NOT set it as the featured image — use set_featured_image for that).' ],
 				'dry_run'        => [ 'type' => 'boolean', 'description' => 'Validate the source without persisting (default false).' ],
+				'defer_subsizes' => [ 'type' => 'boolean', 'description' => 'If true, skip the synchronous wp_generate_attachment_metadata call and schedule it via WP-Cron. The response returns immediately with attachment_id and the canonical URL but `intermediate_sizes` will be empty until the cron tick runs (typically the next request to the site). Recommended when the host has a slow image-resize pipeline (ShortPixel, Imagify, etc.) that pushes synchronous uploads past the MCP gateway timeout. Default false.' ],
 			],
 			'required' => [ 'filename', 'mime_type', 'source' ],
 		],

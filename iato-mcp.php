@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.6.2
+ * Version:     1.6.3
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.6.2' );
+define( 'IATO_MCP_VERSION', '1.6.3' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -117,6 +117,12 @@ function iato_mcp_init() {
 	iato_mcp_maybe_run_migrations();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
+
+// Cron handler for create_media's defer_subsizes path. Generates the
+// intermediate sizes asynchronously so the synchronous MCP response can return
+// before wp_generate_attachment_metadata runs (which can take many seconds on
+// sites with image-optimisation pipelines and exceeds the gateway timeout).
+add_action( 'iato_mcp_generate_subsizes', [ 'IATO_MCP_Media_Uploader', 'generate_subsizes_async' ], 10, 2 );
 
 /**
  * Run idempotent one-shot migrations gated by stored db_version.

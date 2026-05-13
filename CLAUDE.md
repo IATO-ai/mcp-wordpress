@@ -142,6 +142,10 @@ Removing a tool is the reverse: take it out of `TOOL_NAMES` and from any categor
 
 The `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active, plus `capabilities.rollback: true` always — clients can feature-detect without a `tools/list` round-trip.
 
+`create_media` accepts `defer_subsizes: true` (default false) which schedules `wp_generate_attachment_metadata` via WP-Cron instead of running it inline. The response returns immediately with the attachment ID and canonical URL; intermediate sizes appear on the next cron tick. Recommended whenever the call goes through a managed MCP gateway with a request timeout (Anthropic's gateway times out around 30s) — sites with image-optimisation plugins routinely push synchronous metadata generation past that limit. Per-phase timing logs are emitted to PHP's error log under the prefix `[iato-mcp create_media:<req_id>]` for live diagnosis when a call hangs or fails.
+
+`update_elementor_data` accepts `inherit_settings_from: <post_id>` (and optional `inherit_keys: string[]`) to clone a curated set of theme/builder per-post overrides from a source post in the same call. The default key list spans Astra (`site-post-title`, `site-sidebar-layout`, `site-content-layout`, `site-content-style`, `site-sidebar-style`, `ast-main-header-display`, `ast-global-header-display`, `ast-banner-title-visibility`, `ast-breadcrumbs-content`, `ast-featured-img`, `footer-sml-layout`), WordPress (`_wp_page_template`), and Elementor (`_elementor_page_settings`, `_elementor_template_type`). Empty source values are copied through (Astra stores meaningful state as empty strings). Keys that already match between source and target are reported in `inherited_skipped[]` with `reason: 'noop'`.
+
 ### IATO Bridge Tools (require IATO API key)
 
 All bridge tools return `WP_Error` if the API key is missing. Each resolves IATO URLs to WordPress post IDs and slugs before returning.
