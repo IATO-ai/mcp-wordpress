@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.4.10
+ * Version:     1.5.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.4.10' );
+define( 'IATO_MCP_VERSION', '1.5.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -239,6 +239,38 @@ Store these and offer rollback to the user if anything looks wrong.
 Use dry_run=true to preview any edit before committing it.
 END_UNIVERSAL;
 
+	// New-post workflow: fires whenever any non-Gutenberg builder is active.
+	// Plain HTML in post_content renders as an unstyled orphan on builder
+	// sites, so the agent must adopt an existing post's structure first.
+	$primary_builder = match ( true ) {
+		$builders['elementor'] => 'Elementor',
+		$builders['divi']      => 'Divi',
+		$builders['wpbakery']  => 'WPBakery',
+		$builders['beaver']    => 'Beaver Builder',
+		default                => null,
+	};
+	if ( null !== $primary_builder ) {
+		$port_step = $builders['elementor']
+			? '   3. Create the new post with create_post, then port the reference'
+				. "\n      structure via update_elementor_data on the new post ID."
+			: '   3. Create the new post with create_post. ' . $primary_builder
+				. ' content cannot'
+				. "\n      currently be written via MCP — surface this to the user and"
+				. "\n      direct them to finish layout in WP admin.";
+		$instructions .= "\n\n" . <<<END_NEWPOST
+NEW-POST WORKFLOW ON PAGE-BUILDER SITES:
+This site uses {$primary_builder}. Plain HTML posted via create_post
+will not match the visual style of existing posts. Before calling
+create_post, run this workflow:
+   1. Ask the user: "I see this site uses {$primary_builder}. Can you
+      point me to an existing post that has the layout I should match?"
+   2. Once given a URL, call resolve_url then get_post on that reference
+      (and get_elementor_data for Elementor) to read its structure.
+{$port_step}
+Do not create a new post with plain HTML and hope it looks right.
+END_NEWPOST;
+	}
+
 	if ( $builders['elementor'] ) {
 		$instructions .= "\n\n" . <<<END_ELEMENTOR
 ELEMENTOR IS ACTIVE ON THIS SITE:
@@ -302,6 +334,109 @@ END_BEAVER;
 	}
 
 	return trim( $instructions );
+}
+
+/**
+ * Validate a post slug for use with update_post.
+ *
+ * Strict input gate: rejects anything that isn't already a valid lowercase
+ * URL slug, so callers see a clear error instead of WordPress silently
+ * mutating their input (e.g. uppercase folded to lowercase, spaces to
+ * hyphens, or wp_unique_post_slug appending "-2" on collision).
+ *
+ * Order of checks: type → trim/empty → length → character set → defensive
+ * sanitize_title round-trip → uniqueness query.
+ *
+ * @param mixed $raw     Slug as supplied by the caller.
+ * @param int   $post_id Post being updated, excluded from the uniqueness check.
+ * @return string|WP_Error Validated slug, or WP_Error with one of:
+ *                         invalid_slug_format, slug_conflict.
+ */
+function iato_mcp_validate_post_slug( mixed $raw, int $post_id ): string|WP_Error {
+	if ( ! is_string( $raw ) ) {
+		return new WP_Error( 'invalid_slug_format', 'slug must be a string.' );
+	}
+
+	$slug = trim( $raw );
+	if ( '' === $slug ) {
+		return new WP_Error( 'invalid_slug_format', 'slug must not be empty.' );
+	}
+	if ( strlen( $slug ) > 200 ) {
+		return new WP_Error( 'invalid_slug_format', 'slug exceeds the 200-character limit.' );
+	}
+	// Lowercase a-z, 0-9, hyphens; no leading/trailing/double hyphens.
+	if ( ! preg_match( '/^[a-z0-9]+(-[a-z0-9]+)*$/', $slug ) ) {
+		return new WP_Error(
+			'invalid_slug_format',
+			'slug must be lowercase a-z, 0-9, and hyphens, with no leading, trailing, or consecutive hyphens.'
+		);
+	}
+	// Defense in depth: WP's own sanitizer must not change the value.
+	if ( sanitize_title( $slug ) !== $slug ) {
+		return new WP_Error( 'invalid_slug_format', 'slug contains characters that WordPress would normalize. Pass a pre-normalized slug.' );
+	}
+
+	global $wpdb;
+	$conflict_id = (int) $wpdb->get_var( $wpdb->prepare(
+		"SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND ID != %d AND post_status != 'trash' LIMIT 1",
+		$slug,
+		$post_id
+	) );
+	if ( $conflict_id > 0 ) {
+		return new WP_Error(
+			'slug_conflict',
+			"Slug '{$slug}' is already used by post ID {$conflict_id}.",
+			[
+				'conflict_post_id'    => $conflict_id,
+				'conflict_post_title' => get_the_title( $conflict_id ),
+				'requested_slug'      => $slug,
+			]
+		);
+	}
+
+	return $slug;
+}
+
+/**
+ * Build a page-builder formatting notice for create_post / update_post responses.
+ *
+ * Returns null on Gutenberg-only sites so vanilla installs see no warnings.
+ * For builder-driven sites the message tells the AI to fetch a reference
+ * post and adapt its structure — the friction this whole feature targets.
+ *
+ * @param string $context 'create' or 'update'. Influences phrasing only.
+ * @return string|null Notice text, or null when no notice should be surfaced.
+ */
+function iato_mcp_page_builder_notice( string $context = 'create' ): ?string {
+	$builders = iato_mcp_detect_active_builders();
+	// Gutenberg-only is the normal case — no notice.
+	$active = array_filter( [
+		'elementor' => $builders['elementor'],
+		'divi'      => $builders['divi'],
+		'wpbakery'  => $builders['wpbakery'],
+		'beaver'    => $builders['beaver'],
+	] );
+	if ( empty( $active ) ) {
+		return null;
+	}
+
+	$builder = array_key_first( $active );
+	$label   = match ( $builder ) {
+		'elementor' => 'Elementor',
+		'divi'      => 'Divi',
+		'wpbakery'  => 'WPBakery',
+		'beaver'    => 'Beaver Builder',
+	};
+
+	if ( 'elementor' === $builder ) {
+		if ( 'update' === $context ) {
+			return "This site uses Elementor. update_post's content field will NOT change what visitors see on this post — Elementor renders from _elementor_data, not post_content. Use update_elementor_widget for single-widget edits, or update_elementor_data for full-document replacements. If you intended to write fresh content, ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and apply it via update_elementor_data.";
+		}
+		return "This site uses Elementor. The post was created with plain HTML in post_content and will not match your site's existing post format. Recommended: ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and call update_elementor_data on this new post to match.";
+	}
+
+	$action_phrase = 'update' === $context ? 'updated with plain HTML' : 'created with plain HTML';
+	return "This site uses {$label}. The post was {$action_phrase} and may not match your site's existing post format. {$label} content cannot currently be written via MCP — direct the user to edit this post in WP admin to match site styling.";
 }
 
 /**

@@ -135,7 +135,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'create_post',
 	[
-		'description' => 'Create a new post or page. Returns the new post ID and URL.',
+		'description' => 'Create a new post or page. Returns the new post ID and URL. On page-builder sites (Elementor, Divi, etc.), follow the new-post workflow in server instructions BEFORE calling — plain HTML in post_content will not match the site\'s existing post format.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -187,6 +187,11 @@ IATO_MCP_Server::register_tool(
 		];
 		IATO_MCP_Change_Receipt::append( $data, $receipt );
 
+		$notice = iato_mcp_page_builder_notice( 'create' );
+		if ( null !== $notice ) {
+			$data['notice'] = $notice;
+		}
+
 		return IATO_MCP_Server::ok( $data );
 	}
 );
@@ -196,15 +201,17 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_post',
 	[
-		'description' => 'Update an existing post title, content, excerpt, or status.',
+		'description' => 'Update an existing post title, content, slug, excerpt, or status. On page-builder sites (Elementor, Divi, etc.), content edits go through the builder tools — see server instructions.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'id'      => [ 'type' => 'integer', 'description' => 'Post ID to update (required)' ],
-				'title'   => [ 'type' => 'string',  'description' => 'New title' ],
-				'content' => [ 'type' => 'string',  'description' => 'New content' ],
-				'excerpt' => [ 'type' => 'string',  'description' => 'New excerpt (manual summary shown on archive/listing pages)' ],
-				'status'  => [ 'type' => 'string',  'description' => 'New status: draft|publish' ],
+				'id'                 => [ 'type' => 'integer', 'description' => 'Post ID to update (required)' ],
+				'title'              => [ 'type' => 'string',  'description' => 'New title' ],
+				'content'            => [ 'type' => 'string',  'description' => 'New content' ],
+				'slug'               => [ 'type' => 'string',  'description' => 'New post slug (lowercase a-z 0-9 and hyphens, no leading/trailing/double hyphens, max 200 chars). Returns slug_conflict error if taken; non-draft posts also require confirm_url_break=true.' ],
+				'excerpt'            => [ 'type' => 'string',  'description' => 'New excerpt (manual summary shown on archive/listing pages)' ],
+				'status'             => [ 'type' => 'string',  'description' => 'New status: draft|publish' ],
+				'confirm_url_break'  => [ 'type' => 'boolean', 'description' => 'Required true when changing the slug of a non-draft post; acknowledges the URL break.' ],
 			],
 			'required' => [ 'id' ],
 		],
@@ -239,6 +246,26 @@ IATO_MCP_Server::register_tool(
 			$postarr['post_status'] = $args['status'];
 			$before['status']       = $post->post_status;
 		}
+		if ( isset( $args['slug'] ) ) {
+			$slug_or_error = iato_mcp_validate_post_slug( $args['slug'], $post_id );
+			if ( is_wp_error( $slug_or_error ) ) {
+				return $slug_or_error;
+			}
+			// Guard non-draft posts: changing a live slug breaks inbound URLs.
+			if ( 'draft' !== $post->post_status && $slug_or_error !== $post->post_name && empty( $args['confirm_url_break'] ) ) {
+				return new WP_Error(
+					'slug_change_requires_confirmation',
+					'Changing the slug of a non-draft post breaks its current URL. Pass confirm_url_break=true to proceed.',
+					[
+						'current_url'  => get_permalink( $post_id ),
+						'current_slug' => $post->post_name,
+						'post_status'  => $post->post_status,
+					]
+				);
+			}
+			$postarr['post_name'] = $slug_or_error;
+			$before['slug']       = $post->post_name;
+		}
 
 		$result = wp_update_post( $postarr, true );
 		if ( is_wp_error( $result ) ) {
@@ -250,6 +277,7 @@ IATO_MCP_Server::register_tool(
 			'content' => 'post_content',
 			'excerpt' => 'post_excerpt',
 			'status'  => 'post_status',
+			'slug'    => 'post_name',
 		];
 
 		$receipts = [];
@@ -261,16 +289,26 @@ IATO_MCP_Server::register_tool(
 			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post', $field, $before_value, $after_value );
 		}
 
-		$data = [
+		$fresh = get_post( $post_id );
+		$data  = [
 			'id'       => $post_id,
 			'url'      => get_permalink( $post_id ),
-			'modified' => get_post( $post_id )->post_modified_gmt,
+			'slug'     => $fresh->post_name,
+			'modified' => $fresh->post_modified_gmt,
 		];
 
 		if ( count( $receipts ) === 1 ) {
 			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
 		} elseif ( count( $receipts ) > 1 ) {
 			$data['change_receipts'] = $receipts;
+		}
+
+		// Surface a builder-aware notice if content was rewritten on a builder-driven site.
+		if ( isset( $args['content'] ) ) {
+			$notice = iato_mcp_page_builder_notice( 'update' );
+			if ( null !== $notice ) {
+				$data['notice'] = $notice;
+			}
 		}
 
 		return IATO_MCP_Server::ok( $data );

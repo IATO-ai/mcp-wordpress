@@ -213,6 +213,7 @@ class IATO_MCP_Rollback {
 			'content' => 'post_content',
 			'excerpt' => 'post_excerpt',
 			'status'  => 'post_status',
+			'slug'    => 'post_name',
 			default   => null,
 		};
 

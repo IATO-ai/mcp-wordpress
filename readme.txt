@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.4.10
+Stable tag: 1.5.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -144,6 +144,11 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.5.0 =
+* New: `update_post` accepts a `slug` parameter to rename a post's URL slug via MCP — previously the agent had no way to update a slug and the user had to do it manually in the WP editor. Input is strictly validated (lowercase a-z 0-9 and hyphens only, no leading/trailing/double hyphens, max 200 chars, must survive a `sanitize_title()` round-trip unchanged) and conflicts return a `slug_conflict` error with the colliding post's ID and title rather than silently appending `-2` like WordPress would. Changing the slug of a non-draft post additionally requires `confirm_url_break: true` since it breaks every inbound link — drafts are exempt. Slug changes are rollback-able the same way as title/content/status edits: each change emits a `change_receipt` and can be reversed via the `rollback` tool.
+* New: `create_post` and `update_post` responses now include a `notice` field on page-builder-driven sites (Elementor, Divi, WPBakery, Beaver Builder) when the call would produce content that doesn't match the site's existing post format. On Elementor the notice tells the agent to fetch a reference post via `get_post` + `get_elementor_data` and apply its structure via `update_elementor_data`; on Divi/WPBakery/Beaver it tells the agent the layout must be finished in WP admin. On Gutenberg-only sites the field is absent — vanilla installs see no spurious warnings. Closes the gap that left agents creating posts with plain HTML on Elementor sites, producing structurally orphaned drafts that looked nothing like the rest of the site.
+* New: the dynamic instructions injected into the MCP `initialize` response (added in 1.4.8) now include a NEW-POST WORKFLOW block whenever a non-Gutenberg builder is active. The block primes the agent to (1) ask the user for a reference post URL before calling `create_post`, (2) fetch the reference's structure, and (3) port that structure onto the new post — so the right path happens on the first call, not after the user notices the formatting problem.
 
 = 1.4.10 =
 * Fix: the JSON config snippets emitted by the plugin (setup wizard Method 3, dismissible "Ready to Connect" notice, Settings hero card) now use a unique-per-site inner `mcpServers` key derived from the WordPress site's hostname (e.g. `iato-garennebigby-dev`, `iato-dynomapper-com`) instead of the hardcoded `iato-wordpress`. Agencies managing multiple WordPress installs from a single AI client (Claude Desktop, Claude Code, etc.) can now paste config snippets from many IATO MCP installs into the same client config file without one silently overwriting another (JSON object keys are unique, so two snippets sharing a key was a silent collision). Existing connections that were set up with the old `iato-wordpress` key continue to work — the inner key is a display name only, not part of any HTTP request — so no migration is needed.
