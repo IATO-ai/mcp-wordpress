@@ -236,8 +236,12 @@ IATO_MCP_Server::register_tool(
 
 		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
 		// surfaces them, and apply them after the main Elementor write succeeds.
-		$inherit_source = isset( $args['inherit_settings_from'] ) ? absint( $args['inherit_settings_from'] ) : 0;
-		$inherit_plan   = [];
+		// Keys present in the configured list but absent on the source post are
+		// collected into $inherit_skipped so the caller can see what was attempted
+		// but skipped, rather than silently getting fewer receipts than expected.
+		$inherit_source  = isset( $args['inherit_settings_from'] ) ? absint( $args['inherit_settings_from'] ) : 0;
+		$inherit_plan    = [];
+		$inherit_skipped = [];
 		if ( $inherit_source > 0 ) {
 			if ( ! get_post( $inherit_source ) ) {
 				return new WP_Error( 'inherit_source_not_found', 'inherit_settings_from references a post that does not exist.' );
@@ -262,6 +266,7 @@ IATO_MCP_Server::register_tool(
 				}
 				$source_value = get_post_meta( $inherit_source, $key, true );
 				if ( '' === $source_value || null === $source_value ) {
+					$inherit_skipped[] = [ 'key' => $key, 'reason' => 'source_empty' ];
 					continue;
 				}
 				$before = get_post_meta( $post_id, $key, true );
@@ -272,11 +277,12 @@ IATO_MCP_Server::register_tool(
 
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
-				'dry_run'         => true,
-				'post_id'         => $post_id,
-				'action'          => 'would_update',
-				'json_valid'      => true,
-				'inherit_planned' => $inherit_plan,
+				'dry_run'           => true,
+				'post_id'           => $post_id,
+				'action'            => 'would_update',
+				'json_valid'        => true,
+				'inherit_planned'   => $inherit_plan,
+				'inherited_skipped' => $inherit_skipped,
 			] );
 		}
 
@@ -388,6 +394,9 @@ IATO_MCP_Server::register_tool(
 		];
 		if ( ! empty( $inherit_receipts ) ) {
 			$response['change_receipts'] = $inherit_receipts;
+		}
+		if ( ! empty( $inherit_skipped ) ) {
+			$response['inherited_skipped'] = $inherit_skipped;
 		}
 		return IATO_MCP_Server::ok( $response );
 	}

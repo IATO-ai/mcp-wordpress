@@ -78,6 +78,20 @@ On error, return `isError: true` with a message — never throw exceptions out o
 
 ---
 
+## Release Checklist (adding or removing tools)
+
+When adding a new MCP tool, three edits must land together — missing any of them produces a tool that exists in code but is invisible on upgraded installs (the bug class that produced the v1.3.0 → v1.3.1, v1.4.0 → v1.4.5, and v1.6.0 → v1.6.1 follow-up patches):
+
+1. Register the handler with `IATO_MCP_Server::register_tool()` in the appropriate `includes/tools/wp/tool-*.php` or `includes/tools/bridge/tool-*.php` file.
+2. Append the tool name to the `TOOL_NAMES` constant in `includes/class-settings.php`, plus a matching entry in `TOOL_DESCRIPTIONS` and a category placement in `TOOL_CATEGORIES`.
+3. Append the tool name to `IATO_MCP_Settings::TOOL_MIGRATION_BACKFILL` under a gate equal to the release version it ships in. `iato_mcp_maybe_run_migrations()` walks this map once on upgrade and appends any missing names to the saved `iato_mcp_tools` option, so upgraded installs see the new tool the next time they make any request.
+
+Step 3 is the one that historically gets missed. The backfill map lives next to `TOOL_NAMES` in the same file specifically so a reviewer can eyeball the two lists side-by-side and confirm parity. Adding a new tool without a matching backfill entry is the failure mode; the loop walker in `iato-mcp.php` handles every other detail.
+
+Removing a tool is the reverse: take it out of `TOOL_NAMES` and from any category placement; leave `TOOL_MIGRATION_BACKFILL` alone (historical entries are still correct).
+
+---
+
 ## Tool Registry
 
 ### WP Native Tools

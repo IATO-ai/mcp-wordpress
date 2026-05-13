@@ -90,6 +90,68 @@ class IATO_MCP_Settings {
 		'list_iato_crawls',
 	];
 
+	/**
+	 * Tool migration backfill map: db_version gate => tool names to ensure are
+	 * present in the saved `iato_mcp_tools` option.
+	 *
+	 * `is_tool_enabled()` returns false for any tool name not in the saved
+	 * array on an upgraded install whose option was populated before the tool
+	 * existed. This map drives the upgrade-time backfill in
+	 * `iato_mcp_maybe_run_migrations()`: for each gate, if the install's
+	 * `iato_mcp_db_version` is below the gate, the listed tools are appended
+	 * to `iato_mcp_tools` (idempotent — only missing names are added).
+	 *
+	 * Convention: when adding a new tool to `TOOL_NAMES`, also add it here
+	 * with the gate set to the release version it ships in. New installs are
+	 * unaffected because their saved option starts empty (all tools enabled
+	 * by default until the user first saves Settings > IATO MCP).
+	 *
+	 * Three of the four entries below cover migrations that historically
+	 * shipped as hand-written `version_compare` blocks. The `1.6.2` entry
+	 * catches the v1.2.0 crawl-management tools, which originally shipped
+	 * without any migration and have been invisible on any upgraded install
+	 * with a saved option for that whole interval; we backfill them now.
+	 *
+	 * @var array<string,list<string>>
+	 */
+	public const TOOL_MIGRATION_BACKFILL = [
+		// v1.2.0 crawl-management tools — shipped without a migration at
+		// the time, backfilled here in v1.6.2.
+		'1.6.2' => [
+			'start_iato_crawl',
+			'get_iato_crawl_status',
+			'list_iato_crawls',
+		],
+		// v1.3.0 widget-grained Elementor tools — migration originally
+		// shipped as a hand-written block gated at < 1.3.5.
+		'1.3.5' => [
+			'list_elementor_widgets',
+			'get_elementor_widget',
+			'update_elementor_widget',
+			'update_elementor_patch',
+			'update_elementor_widgets_bulk',
+			'find_elementor_widgets',
+			'set_heading_level',
+			'set_widget_setting',
+			'resolve_url',
+		],
+		// rollback tool added in v1.4.0; the 1.4.0 + 1.4.5 hand-written
+		// blocks are folded into a single 1.4.5 entry (the higher gate
+		// captures every install that needs it).
+		'1.4.5' => [
+			'rollback',
+		],
+		// v1.6.0 post-meta + media tools — migration originally shipped
+		// as a hand-written block gated at < 1.6.1.
+		'1.6.1' => [
+			'get_post_meta',
+			'update_post_meta',
+			'set_page_settings',
+			'set_featured_image',
+			'create_media',
+		],
+	];
+
 	/** Tools that require the IATO API key before they'll be registered. */
 	private const IATO_BRIDGE_TOOLS = [
 		'get_iato_sitemap',

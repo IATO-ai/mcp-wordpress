@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.6.1
+Stable tag: 1.6.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,11 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.6.2 =
+* Refactor: the four hand-written `version_compare` migration blocks that backfill new tool names into the saved `iato_mcp_tools` option are replaced by a single declarative `TOOL_MIGRATION_BACKFILL` map on `IATO_MCP_Settings` plus a one-loop walker in `iato_mcp_maybe_run_migrations()`. Same behavior for every install that was already correctly migrated; the new shape eliminates the "remembered to add a migration block" failure mode that produced the 1.3.0 → 1.3.1 fix, the 1.4.0 → 1.4.5 fix, and the 1.6.0 → 1.6.1 fix. Adding a new tool now requires appending one line to the map alongside the `TOOL_NAMES` edit — colocated, hard to miss at review time.
+* Fix: backfills the three crawl-management tools (`start_iato_crawl`, `get_iato_crawl_status`, `list_iato_crawls`) on installs that originally upgraded from 1.1.x to 1.2.x with a saved `iato_mcp_tools` option. v1.2.0 introduced those tools but shipped without the migration to append them, so any user who had saved their per-tool toggles in 1.1.x and configured an IATO API key has had the crawl-management tools invisibly disabled for the entire 1.2 → 1.6 interval. The 1.6.2 backfill catches them automatically on first request after upgrade. No-op for installs that already have the names in the saved option (idempotent), and no-op for fresh installs (the option starts empty and every tool is enabled by default).
+* Fix: `update_elementor_data` with `inherit_settings_from` now returns an `inherited_skipped[]` array in the response listing keys that were in the configured inheritance list but absent on the source post (so the assistant can see which clone targets had no source value rather than silently getting fewer receipts than the default list implies). Each entry is `{ key, reason: 'source_empty' }`. The skip-empty behavior itself is unchanged — copying an explicit empty string from a source post that never set a key would stomp the target's existing value.
 
 = 1.6.1 =
 * Fix: the five new MCP tools added in 1.6.0 (`get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`, `create_media`) now register correctly on sites upgrading from a previous version. v1.6.0 added them to the `TOOL_NAMES` constant but forgot the idempotent migration that appends new tool names to the saved `iato_mcp_tools` per-tool toggle option — the same migration shape used for the Elementor v2 tools in 1.3.5 and for `rollback` in 1.4.0/1.4.5. Without it, `is_tool_enabled()` filtered the new names out of the registry on every upgraded install, so the tools never appeared in `tools/list` despite shipping in the plugin. New installs were unaffected (the option is empty on first activation and all tools are enabled by default). Single one-shot migration; no-op for installs that already have the tool names in the saved option.

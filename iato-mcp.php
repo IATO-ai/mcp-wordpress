@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.6.1
+ * Version:     1.6.2
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.6.1' );
+define( 'IATO_MCP_VERSION', '1.6.2' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -128,70 +128,26 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
 function iato_mcp_maybe_run_migrations() {
 	$db_version = get_option( 'iato_mcp_db_version', '0' );
 
-	// 1.3.5: append v2 tool names to iato_mcp_tools so existing installs
-	// upgrading from 1.2.x don't see the new Elementor v2 tools auto-disabled
-	// (is_tool_enabled() returns false for any name not in the saved array).
-	if ( version_compare( $db_version, '1.3.5', '<' ) ) {
-		$saved = get_option( 'iato_mcp_tools', null );
-		if ( is_array( $saved ) && ! empty( $saved ) ) {
-			$new_v2 = [
-				'list_elementor_widgets',
-				'get_elementor_widget',
-				'update_elementor_widget',
-				'update_elementor_patch',
-				'update_elementor_widgets_bulk',
-				'find_elementor_widgets',
-				'set_heading_level',
-				'set_widget_setting',
-				'resolve_url',
-			];
-			$missing = array_diff( $new_v2, $saved );
-			if ( ! empty( $missing ) ) {
-				update_option( 'iato_mcp_tools', array_values( array_merge( $saved, $missing ) ), false );
-			}
-		}
-	}
-
-	// 1.4.0: append `rollback` to iato_mcp_tools so existing installs don't see
-	// the new tool auto-disabled by the per-tool toggle gate.
-	if ( version_compare( $db_version, '1.4.0', '<' ) ) {
-		$saved = get_option( 'iato_mcp_tools', null );
-		if ( is_array( $saved ) && ! empty( $saved ) && ! in_array( 'rollback', $saved, true ) ) {
-			$saved[] = 'rollback';
-			update_option( 'iato_mcp_tools', array_values( $saved ), false );
-		}
-	}
-
-	// 1.4.5: re-restore `rollback` to iato_mcp_tools for installs where it was
-	// stripped by sanitize_tools() between 1.4.0 and 1.4.5 (TOOL_NAMES was missing
-	// it, so any user-triggered Settings save would array_intersect it out).
-	// Idempotent — no-op for installs that didn't lose it.
-	if ( version_compare( $db_version, '1.4.5', '<' ) ) {
-		$saved = get_option( 'iato_mcp_tools', null );
-		if ( is_array( $saved ) && ! empty( $saved ) && ! in_array( 'rollback', $saved, true ) ) {
-			$saved[] = 'rollback';
-			update_option( 'iato_mcp_tools', array_values( $saved ), false );
-		}
-	}
-
-	// 1.6.1: append v1.6.0 post-meta + media tool names to iato_mcp_tools so
-	// existing installs upgrading from <=1.5.x (and 1.6.0, which shipped without
-	// this migration) don't see the new tools auto-disabled. is_tool_enabled()
-	// returns false for any name not in the saved array — same gap the 1.3.5
-	// (Elementor v2) and 1.4.0/1.4.5 (rollback) migrations closed.
-	if ( version_compare( $db_version, '1.6.1', '<' ) ) {
-		$saved = get_option( 'iato_mcp_tools', null );
-		if ( is_array( $saved ) && ! empty( $saved ) ) {
-			$new_v160 = [
-				'get_post_meta',
-				'update_post_meta',
-				'set_page_settings',
-				'set_featured_image',
-				'create_media',
-			];
-			$missing = array_diff( $new_v160, $saved );
-			if ( ! empty( $missing ) ) {
-				update_option( 'iato_mcp_tools', array_values( array_merge( $saved, $missing ) ), false );
+	// Tool-list backfill — a single declarative loop replaces what used to be
+	// four hand-written `version_compare` blocks (one per release that added
+	// new tool names). The map at IATO_MCP_Settings::TOOL_MIGRATION_BACKFILL
+	// lists "db_version gate => tool names" pairs; for each gate, if the
+	// install's stored db_version is below it, any missing names are appended
+	// to iato_mcp_tools. This closes the long-standing class of bug where
+	// new tool names added to TOOL_NAMES would be invisible to upgraded
+	// installs (is_tool_enabled() returns false for any name not already in
+	// the saved array). Fresh installs are unaffected because their option
+	// starts empty and is_tool_enabled() defaults to true.
+	//
+	// To add a new tool: append it to TOOL_NAMES *and* to the backfill map.
+	foreach ( IATO_MCP_Settings::TOOL_MIGRATION_BACKFILL as $gate => $tools ) {
+		if ( version_compare( $db_version, (string) $gate, '<' ) ) {
+			$saved = get_option( 'iato_mcp_tools', null );
+			if ( is_array( $saved ) && ! empty( $saved ) ) {
+				$missing = array_diff( $tools, $saved );
+				if ( ! empty( $missing ) ) {
+					update_option( 'iato_mcp_tools', array_values( array_merge( $saved, $missing ) ), false );
+				}
 			}
 		}
 	}
