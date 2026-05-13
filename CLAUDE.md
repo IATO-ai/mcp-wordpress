@@ -1,3 +1,7 @@
+> *This file is the architecture reference for the IATO MCP WordPress plugin. It's named CLAUDE.md because it's the project context file consumed by Claude Code (Anthropic's terminal-based coding assistant). Human readers can use it as the technical architecture doc.*
+
+---
+
 # IATO WordPress MCP Plugin
 
 WordPress plugin that exposes an MCP server from any self-hosted WordPress.org install, so AI clients (Claude Desktop, Cursor, etc.) can read and write WordPress content. When the user provides an IATO API key, additional bridge tools expose read-only crawl data (SEO issues, sitemap, orphan pages, broken links, suggestions).
