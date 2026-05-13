@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.6.0
+Stable tag: 1.6.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.6.1 =
+* Fix: the five new MCP tools added in 1.6.0 (`get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`, `create_media`) now register correctly on sites upgrading from a previous version. v1.6.0 added them to the `TOOL_NAMES` constant but forgot the idempotent migration that appends new tool names to the saved `iato_mcp_tools` per-tool toggle option — the same migration shape used for the Elementor v2 tools in 1.3.5 and for `rollback` in 1.4.0/1.4.5. Without it, `is_tool_enabled()` filtered the new names out of the registry on every upgraded install, so the tools never appeared in `tools/list` despite shipping in the plugin. New installs were unaffected (the option is empty on first activation and all tools are enabled by default). Single one-shot migration; no-op for installs that already have the tool names in the saved option.
 
 = 1.6.0 =
 * New: `get_post_meta` and `update_post_meta` expose arbitrary post meta over MCP with a centralised security policy. A credential-shaped denylist (`*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, plus `wp_capabilities` and friends) is hard-rejected on writes and redacted on reads — `force=true` cannot override it. A known-safe allowlist of theme/builder/SEO prefixes (Astra `site-`/`ast-`, Elementor `_elementor_`, Yoast/RankMath/SEOPress, Kadence, GeneratePress, Genesis, plus `_wp_page_template` and `_thumbnail_id`) lets the assistant write the common cases without ceremony; anything outside both lists requires `force=true`. Every write emits a `change_receipt` rollback-able under the new `target_type=post_meta`. Closes the long-standing gap that left the assistant unable to touch per-post theme settings on Astra and similar themes.

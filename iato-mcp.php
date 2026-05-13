@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.6.0
+ * Version:     1.6.1
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.6.0' );
+define( 'IATO_MCP_VERSION', '1.6.1' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -171,6 +171,28 @@ function iato_mcp_maybe_run_migrations() {
 		if ( is_array( $saved ) && ! empty( $saved ) && ! in_array( 'rollback', $saved, true ) ) {
 			$saved[] = 'rollback';
 			update_option( 'iato_mcp_tools', array_values( $saved ), false );
+		}
+	}
+
+	// 1.6.1: append v1.6.0 post-meta + media tool names to iato_mcp_tools so
+	// existing installs upgrading from <=1.5.x (and 1.6.0, which shipped without
+	// this migration) don't see the new tools auto-disabled. is_tool_enabled()
+	// returns false for any name not in the saved array — same gap the 1.3.5
+	// (Elementor v2) and 1.4.0/1.4.5 (rollback) migrations closed.
+	if ( version_compare( $db_version, '1.6.1', '<' ) ) {
+		$saved = get_option( 'iato_mcp_tools', null );
+		if ( is_array( $saved ) && ! empty( $saved ) ) {
+			$new_v160 = [
+				'get_post_meta',
+				'update_post_meta',
+				'set_page_settings',
+				'set_featured_image',
+				'create_media',
+			];
+			$missing = array_diff( $new_v160, $saved );
+			if ( ! empty( $missing ) ) {
+				update_option( 'iato_mcp_tools', array_values( array_merge( $saved, $missing ) ), false );
+			}
 		}
 	}
 
