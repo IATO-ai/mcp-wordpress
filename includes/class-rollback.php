@@ -178,9 +178,88 @@ class IATO_MCP_Rollback {
 				return self::rollback_taxonomy( $field, $post_id, $before_value );
 			case 'redirect':
 				return self::rollback_redirect( $field, $before_value );
+			case 'post_meta':
+				return self::rollback_post_meta( $field, $post_id, $before_value );
+			case 'attachment':
+				return self::rollback_attachment( $field, $post_id, $before_value );
 			default:
 				return new WP_Error( 'unsupported_target_type', "Rollback not supported for target_type: {$target_type}" );
 		}
+	}
+
+	/**
+	 * Rollback an arbitrary post_meta write.
+	 *
+	 * Used by update_post_meta, set_page_settings, and set_featured_image —
+	 * they all record their changes under target_type=post_meta with the
+	 * meta key in `field`. If the before_value was null the key was unset
+	 * before the write, so rollback deletes it; otherwise the previous value
+	 * is restored.
+	 */
+	private static function rollback_post_meta( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( ! $post_id ) {
+			return new WP_Error( 'post_not_found', 'post_id is required for post_meta rollback.' );
+		}
+		if ( '' === $field ) {
+			return new WP_Error( 'unsupported_field', 'post_meta rollback requires a non-empty field (meta key).' );
+		}
+		if ( ! get_post( $post_id ) ) {
+			return new WP_Error( 'post_not_found', 'Post not found.', [ 'status' => 404 ] );
+		}
+
+		if ( null === $before_value ) {
+			delete_post_meta( $post_id, $field );
+		} else {
+			// JSON-encoded arrays/objects were stored as strings; try to decode for round-trip parity.
+			$restore = $before_value;
+			if ( is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) ) {
+				$decoded = json_decode( $restore, true );
+				if ( null !== $decoded ) {
+					$restore = $decoded;
+				}
+			}
+			update_post_meta( $post_id, $field, $restore );
+		}
+
+		clean_post_cache( $post_id );
+		if ( 0 === stripos( $field, '_elementor_' ) ) {
+			delete_post_meta( $post_id, '_elementor_css' );
+			wp_cache_delete( $post_id, 'post_meta' );
+			wp_cache_delete( $post_id, 'posts' );
+			if ( class_exists( '\Elementor\Plugin' ) ) {
+				$plugin = \Elementor\Plugin::$instance;
+				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
+					$plugin->files_manager->clear_cache();
+				}
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Rollback an attachment created via create_media.
+	 *
+	 * field='create' is the only currently-supported attachment receipt; the
+	 * rollback action is to fully delete the attachment (file and post record).
+	 */
+	private static function rollback_attachment( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( 'create' !== $field ) {
+			return new WP_Error( 'unsupported_field', "Rollback not supported for attachment field: {$field}" );
+		}
+		if ( ! $post_id ) {
+			return new WP_Error( 'post_not_found', 'Attachment ID is required for attachment rollback.' );
+		}
+		$attachment = get_post( $post_id );
+		if ( ! $attachment || 'attachment' !== $attachment->post_type ) {
+			// Already removed — treat as success so the receipt can be marked rolled-back.
+			return true;
+		}
+		$deleted = wp_delete_attachment( $post_id, true );
+		if ( ! $deleted ) {
+			return new WP_Error( 'delete_failed', 'Failed to delete attachment.' );
+		}
+		return true;
 	}
 
 	/**

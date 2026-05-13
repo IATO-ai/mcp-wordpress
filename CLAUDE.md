@@ -112,6 +112,11 @@ On error, return `isError: true` with a message — never throw exceptions out o
 | `set_heading_level` / `set_widget_setting` | tools/wp/tool-elementor-helpers.php | edit_posts |
 | `resolve_url` | tools/wp/tool-resolve-url.php | read |
 | `rollback` | tools/wp/tool-rollback.php | edit_posts (manage_options for menu_item / redirect receipts) |
+| `get_post_meta` | tools/wp/tool-post-meta.php | edit_posts |
+| `update_post_meta` | tools/wp/tool-post-meta.php | edit_posts |
+| `set_page_settings` | tools/wp/tool-page-settings.php | edit_posts |
+| `set_featured_image` | tools/wp/tool-featured-image.php | edit_posts |
+| `create_media` | tools/wp/tool-media-upload.php | upload_files |
 
 `get_post` accepts an opt-in `include_shadowing: true` parameter that attaches `is_shadowed_by` when an Elementor Theme Builder template overrides the slug-based render. Default is off so the hot path stays fast.
 
@@ -119,7 +124,7 @@ On error, return `isError: true` with a message — never throw exceptions out o
 
 `update_post` accepts a `slug` parameter alongside title/content/excerpt/status. Slug input is strictly validated (lowercase a-z/0-9/hyphens, no leading/trailing/double hyphens, max 200 chars, must round-trip through `sanitize_title()` unchanged) and conflicts return `slug_conflict` rather than auto-suffixing. Changing the slug of a non-draft post additionally requires `confirm_url_break: true` since it breaks inbound links. `create_post` and `update_post` responses include a `notice` field on builder-driven sites (Elementor / Divi / WPBakery / Beaver Builder) — on Elementor it tells the agent to fetch a reference post and use the Elementor widget tools; on the others it tells the agent the layout must be finished in WP admin. The `notice` field is absent on Gutenberg-only sites.
 
-`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`. `update_post` records one receipt per changed field (`title`, `content`, `slug`, `excerpt`, `status`); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`.
+`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`, `post_meta`, `attachment`. `update_post` records one receipt per changed field (`title`, `content`, `slug`, `excerpt`, `status`); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`. `update_post_meta`, `set_page_settings`, and `set_featured_image` all record under `target_type=post_meta` with the meta key in `field` — rollback restores the previous value or deletes the key if `before_value` was null. `create_media` records `target_type=attachment, field=create` and rolls back via `wp_delete_attachment(force=true)` (the underlying file is removed).
 
 The `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active, plus `capabilities.rollback: true` always — clients can feature-detect without a `tools/list` round-trip.
 
@@ -217,8 +222,37 @@ POST /wp/v2/menu-items               create/update menu item
 - IATO API Key (password input, validated on save)
 - Default crawl ID (text, used as fallback when bridge tools aren't passed a `crawl_id`)
 - Per-tool enable/disable checkboxes
+- Media uploads (v1.6.0): `iato_mcp_media_url_source_enabled` (bool, default false), `iato_mcp_media_url_host_allowlist` (hostnames, one per line), `iato_mcp_media_max_upload_size` (bytes, default 10MB), `iato_mcp_media_upload_rate_limit` (per-user per-minute, default 20)
 
 No governance policy UI, no autopilot toggle, no resync.
+
+---
+
+## Post Meta Policy
+
+`includes/class-meta-policy.php` — shared by `get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`, and `update_elementor_data` (when `inherit_settings_from` is used).
+
+Two layers:
+1. **Denylist** (hard-reject even with `force=true`): keys matching credential / auth / capability patterns — `*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, `wp_capabilities`, `wp_user_level`, `wp_user_roles`, `session_tokens`, `wp_2fa_*`. Case-insensitive substring match.
+2. **Allowlist** (writable without `force=true`): public custom meta (any key not starting with `_`) plus known-safe prefixes — `site-`, `ast-`, `footer-sml-`, `_elementor_`, `_wp_page_template`, `_thumbnail_id`, `_yoast_`, `_genesis_`, `_kadence_`, `_generate_`, `rank_math_`, `_seopress_`.
+
+Anything not in the denylist and not in the allowlist requires `force=true` on writes and returns `meta_requires_force`. `get_post_meta` redacts denylist hits unconditionally and filters out underscore-prefixed keys outside the allowlist unless `include_protected=true`.
+
+---
+
+## Theme Adapter
+
+`includes/class-theme-adapter.php` — detects Astra, Kadence, GeneratePress (mirrors the SEO adapter's static-cache pattern). `set_page_settings` uses `map_page_settings()` to expand abstract setting names (`hide_title`, `sidebar_layout`, `content_layout`, `disable_header`, `disable_footer`, `page_template`, `elementor_hide_title`, `elementor_page_settings`) into the concrete `(meta_key, value)` writes each theme + Elementor combination needs. Keys whose target theme isn't active are reported in `skipped[]` rather than silently dropped.
+
+---
+
+## Media Uploader
+
+`includes/class-media-uploader.php` — implements `create_media`. Sources:
+- `base64` (default, recommended): bytes decoded in-process; no outbound HTTP.
+- `url` (opt-in via setting + host allowlist): SSRF guards resolve the host, reject private/loopback/link-local/cloud-metadata IPs, use `wp_safe_remote_get` with hard timeout + redirect cap, re-validate every redirect destination IP.
+
+Always: MIME verified via `wp_check_filetype_and_ext()` against actual bytes (not the claimed `mime_type`); image-only allowlist (`jpeg`, `png`, `gif`, `webp`, `avif`); SVG hard-rejected this release; size + dimension caps; per-user rate limit transient. Uses `wp_handle_sideload()` + `wp_generate_attachment_metadata()` for the actual filesystem write and intermediate-size generation.
 
 ---
 

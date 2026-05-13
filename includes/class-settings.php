@@ -68,6 +68,12 @@ class IATO_MCP_Settings {
 		'resolve_url',
 		// Safety (v1.4.0).
 		'rollback',
+		// Post meta + media (v1.6.0).
+		'get_post_meta',
+		'update_post_meta',
+		'set_page_settings',
+		'set_featured_image',
+		'create_media',
 		// IATO bridge (require API key).
 		'get_iato_sitemap',
 		'get_iato_nav_audit',
@@ -141,6 +147,11 @@ class IATO_MCP_Settings {
 		'set_heading_level'        => 'Set the header_size on a heading widget (h1-h6)',
 		'set_widget_setting'       => 'Set a single key on a widget\'s settings',
 		'resolve_url'              => 'Resolve a URL to its rendering post, with Theme Builder shadowing detection',
+		'get_post_meta'            => 'Read post meta (single key or all) with credential-shaped keys redacted',
+		'update_post_meta'         => 'Write a single post meta key (allowlist/denylist enforced; force=true to override)',
+		'set_page_settings'        => 'Set per-post theme + Elementor page settings (hide title, sidebar layout, etc.)',
+		'set_featured_image'       => 'Set or clear a post\'s featured image',
+		'create_media'             => 'Upload an image to the media library (base64; URL ingestion optional with allowlist)',
 		'get_iato_sitemap'         => 'Full site hierarchy with WordPress post IDs attached',
 		'get_iato_nav_audit'       => 'Audit menus and identify orphan pages in one call',
 		'get_iato_orphan_pages'    => 'Pages not linked from any navigation menu',
@@ -157,10 +168,10 @@ class IATO_MCP_Settings {
 
 	/** Tool groupings for UI categories. */
 	private const TOOL_CATEGORIES = [
-		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts' ],
+		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts', 'get_post_meta', 'update_post_meta', 'set_page_settings', 'set_featured_image' ],
 		'Site'          => [ 'get_site_info', 'get_site_settings' ],
 		'SEO'           => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
-		'Media'         => [ 'get_media', 'update_alt_text' ],
+		'Media'         => [ 'get_media', 'update_alt_text', 'create_media' ],
 		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details' ],
 		'Taxonomy'      => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
 		'Redirects'     => [ 'update_redirect' ],
@@ -341,6 +352,62 @@ class IATO_MCP_Settings {
 			'default'           => [],
 		] );
 
+		// --- Media upload settings (v1.6.0) ---
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_source_enabled', [
+			'type'              => 'boolean',
+			'sanitize_callback' => 'rest_sanitize_boolean',
+			'default'           => false,
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_host_allowlist', [
+			'type'              => 'array',
+			'sanitize_callback' => [ self::class, 'sanitize_host_list' ],
+			'default'           => [],
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_max_upload_size', [
+			'type'              => 'integer',
+			'sanitize_callback' => 'absint',
+			'default'           => 10 * MB_IN_BYTES,
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_upload_rate_limit', [
+			'type'              => 'integer',
+			'sanitize_callback' => 'absint',
+			'default'           => 20,
+		] );
+	}
+
+	/**
+	 * Sanitize the URL host allowlist (one host per line on the form,
+	 * stored as an array). Strips schemes, paths, and anything that
+	 * isn't a plain hostname.
+	 *
+	 * @param mixed $value Raw value (array of strings, newline-separated string, or anything else).
+	 * @return array<int,string>
+	 */
+	public static function sanitize_host_list( $value ): array {
+		if ( is_string( $value ) ) {
+			$value = preg_split( '/\r\n|\r|\n/', $value );
+		}
+		if ( ! is_array( $value ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $value as $entry ) {
+			$entry = trim( (string) $entry );
+			if ( '' === $entry ) {
+				continue;
+			}
+			// Strip scheme + path if user pasted a full URL.
+			if ( false !== strpos( $entry, '://' ) ) {
+				$entry = (string) wp_parse_url( $entry, PHP_URL_HOST );
+			}
+			$entry = strtolower( $entry );
+			// Hostnames: a-z, 0-9, dot, hyphen. Reject wildcards.
+			if ( '' === $entry || ! preg_match( '/^[a-z0-9.\-]+$/', $entry ) ) {
+				continue;
+			}
+			$out[] = $entry;
+		}
+		return array_values( array_unique( $out ) );
 	}
 
 	// ── Sanitize Callbacks ───────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.5.0
+Stable tag: 1.6.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,19 +26,24 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-**Without an IATO account (40 WordPress tools):**
+**Without an IATO account (45 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
 * Update SEO titles and meta descriptions (Yoast SEO, RankMath, SEOPress)
 * Update canonical URLs
 * Update image alt text
+* Upload new images to the media library (base64 by default; URL ingestion optional with admin allowlist + full SSRF protection)
+* Set and clear the featured image on any post
+* Read and write arbitrary post meta with a credential-key denylist and a known-safe theme/builder/SEO allowlist (force=true required outside the allowlist)
+* Set per-post theme + builder page settings (hide title, sidebar layout, content layout, etc.) on Astra, Kadence, GeneratePress, and Elementor in one call
 * Read and edit navigation menus
 * Manage categories, tags, and taxonomy terms
 * Manage JSON-LD structured data
 * Manage redirect rules
 * Read and write Elementor page builder data
 * Widget-grained Elementor edits with optimistic concurrency, idempotency, and bulk operations
+* Clone the styling of an existing Elementor post in one call via `update_elementor_data(..., inherit_settings_from: <id>)`
 * Resolve URLs to their rendering post (Theme Builder shadowing detection)
 * Search content across the site
 * Read site info and settings
@@ -136,6 +141,10 @@ WordPress content (post titles, meta descriptions, etc.) is never sent to IATO. 
 
 Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can turn off any tool you don't want AI clients to access.
 
+= Can AI clients upload arbitrary files to my media library? =
+
+Only images, and only when the calling user has the `upload_files` capability. The `create_media` tool enforces an image-only MIME allowlist (JPEG, PNG, GIF, WebP, AVIF) verified against actual file bytes — the claimed mime_type is never trusted. SVG uploads are not supported in this release. Files exceeding the size cap (default 10MB) or the dimension cap (default 8000×8000) are rejected, as are filenames containing `.php`, `.phtml`, or `.htaccess`. URL-source ingestion is disabled by default; admins who enable it must also configure a host allowlist, and private/loopback/cloud-metadata IPs are rejected even for allowlisted hosts. Each upload counts against a per-user rate limit (default 20/min) and emits a `change_receipt` — rolling back fully deletes the attachment file. All four limits are configurable from Settings > IATO MCP.
+
 == Screenshots ==
 
 1. Settings page — MCP connection info with endpoint URL and API key
@@ -144,6 +153,14 @@ Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can tu
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.6.0 =
+* New: `get_post_meta` and `update_post_meta` expose arbitrary post meta over MCP with a centralised security policy. A credential-shaped denylist (`*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, plus `wp_capabilities` and friends) is hard-rejected on writes and redacted on reads — `force=true` cannot override it. A known-safe allowlist of theme/builder/SEO prefixes (Astra `site-`/`ast-`, Elementor `_elementor_`, Yoast/RankMath/SEOPress, Kadence, GeneratePress, Genesis, plus `_wp_page_template` and `_thumbnail_id`) lets the assistant write the common cases without ceremony; anything outside both lists requires `force=true`. Every write emits a `change_receipt` rollback-able under the new `target_type=post_meta`. Closes the long-standing gap that left the assistant unable to touch per-post theme settings on Astra and similar themes.
+* New: `set_page_settings` is a one-call convenience wrapper for the most common page-level settings cluster on Astra + Elementor sites. Pass abstract names like `hide_title: true`, `sidebar_layout: "no-sidebar"`, `content_layout: "page-builder"`, `disable_header`, `disable_footer`, `page_template`, or `elementor_page_settings` and the tool maps each to the right concrete meta key for the active theme. Astra-specific keys are silently skipped on non-Astra themes and surfaced in `skipped[]` so the agent can report them back to the user. Returns one `change_receipt` per concrete meta key written, so the whole settings cluster is reversible.
+* New: `set_featured_image` finally closes the "create a post end-to-end" loop — the assistant can now set or clear `_thumbnail_id` directly instead of bouncing the user to wp-admin. Validates that the supplied attachment is an image, captures the previous thumbnail ID in the receipt, and rolls back via the same `post_meta` target_type.
+* New: `create_media` uploads new images to the media library. Two source modes: `base64` (default and recommended — the WordPress server never makes an outbound HTTP request on agent input) and `url` (default-disabled; admins must explicitly enable it and add hosts to an allowlist before any fetch is attempted). The URL path runs full SSRF guards: DNS resolution + private/loopback/link-local/cloud-metadata IP rejection, hard timeout, redirect cap, and re-validation of every redirect destination's resolved IP. MIME is verified against actual file bytes (never the claimed mime_type), filenames containing `.php`, `.phtml`, `.phar`, or `.htaccess` are rejected, and SVG is hard-rejected this release regardless of how the upload is presented. Size (default 10MB) and dimension (default 8000×8000) caps are configurable; per-user rate limit (default 20/min) is enforced via a transient. Successful uploads return the attachment ID, public URL, generated intermediate sizes, and a `change_receipt` under the new `target_type=attachment` — rollback fully deletes the attachment file via `wp_delete_attachment(force=true)`.
+* New: `update_elementor_data` gains `inherit_settings_from: <post_id>` and optional `inherit_keys` parameters. When set, the tool copies a curated default set of theme + Elementor page-level meta keys (`site-post-title`, `site-sidebar-layout`, `site-content-layout`, `ast-main-header-display`, `footer-sml-layout`, `_wp_page_template`, `_elementor_page_settings`, `_elementor_template_type`) from the source post to the target in the same MCP call, returning one `change_receipt` per inherited key in `change_receipts[]`. Collapses the "clone the styling of an existing post" workflow from four or more tool calls to one — and means the new post no longer renders with the wrong theme title bar above the Elementor content.
+* New: four new admin settings under Settings > IATO MCP control upload behaviour — `iato_mcp_media_url_source_enabled` (default off), `iato_mcp_media_url_host_allowlist` (one host per line), `iato_mcp_media_max_upload_size` (bytes; default 10MB), and `iato_mcp_media_upload_rate_limit` (per-user per-minute; default 20). Existing installs upgrade with secure defaults — URL ingestion stays off until explicitly enabled.
 
 = 1.5.0 =
 * New: `update_post` accepts a `slug` parameter to rename a post's URL slug via MCP — previously the agent had no way to update a slug and the user had to do it manually in the WP editor. Input is strictly validated (lowercase a-z 0-9 and hyphens only, no leading/trailing/double hyphens, max 200 chars, must survive a `sanitize_title()` round-trip unchanged) and conflicts return a `slug_conflict` error with the colliding post's ID and title rather than silently appending `-2` like WordPress would. Changing the slug of a non-draft post additionally requires `confirm_url_break: true` since it breaks every inbound link — drafts are exempt. Slug changes are rollback-able the same way as title/content/status edits: each change emits a `change_receipt` and can be reversed via the `rollback` tool.
