@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.5.0
+ * Version:     1.6.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.5.0' );
+define( 'IATO_MCP_VERSION', '1.6.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -52,6 +52,8 @@ function iato_mcp_logo_svg( int $height = 36 ): string {
 require_once IATO_MCP_DIR . 'includes/class-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-iato-client.php';
 require_once IATO_MCP_DIR . 'includes/class-seo-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-theme-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-meta-policy.php';
 require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
@@ -62,6 +64,7 @@ require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
+require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 
 // Phase 1 — WP native tools
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-site.php';
@@ -80,6 +83,10 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-canonical.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-structured-data.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-redirects.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-rollback.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-post-meta.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-settings.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-featured-image.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media-upload.php';
 
 // Phase 2 — IATO bridge tools (loaded only when IATO API key is configured)
 if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {

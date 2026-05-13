@@ -192,13 +192,15 @@ function iato_mcp_apply_compact_recursive( array $elements ): array {
 IATO_MCP_Server::register_tool(
 	'update_elementor_data',
 	[
-		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Requires edit_posts capability.',
+		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Optional inherit_settings_from copies a curated set of theme + Elementor page-level meta keys from a source post in the same call (one change_receipt per inherited key). Requires edit_posts capability.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'id'             => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
-				'elementor_data' => [ 'type' => 'string',  'description' => 'Full Elementor JSON data string (required).' ],
-				'dry_run'        => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+				'id'                    => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
+				'elementor_data'        => [ 'type' => 'string',  'description' => 'Full Elementor JSON data string (required).' ],
+				'dry_run'               => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+				'inherit_settings_from' => [ 'type' => 'integer', 'description' => 'Optional source post ID. When set, copies a curated set of theme + Elementor page-level meta keys onto the target.' ],
+				'inherit_keys'          => [ 'type' => 'array',   'description' => 'Optional override of the inherited key list. Defaults to a built-in curated list when omitted.', 'items' => [ 'type' => 'string' ] ],
 			],
 			'required' => [ 'id', 'elementor_data' ],
 		],
@@ -232,12 +234,49 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_json', 'Invalid JSON: ' . json_last_error_msg() );
 		}
 
+		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
+		// surfaces them, and apply them after the main Elementor write succeeds.
+		$inherit_source = isset( $args['inherit_settings_from'] ) ? absint( $args['inherit_settings_from'] ) : 0;
+		$inherit_plan   = [];
+		if ( $inherit_source > 0 ) {
+			if ( ! get_post( $inherit_source ) ) {
+				return new WP_Error( 'inherit_source_not_found', 'inherit_settings_from references a post that does not exist.' );
+			}
+			$default_keys = [
+				'site-post-title',
+				'site-sidebar-layout',
+				'site-content-layout',
+				'ast-main-header-display',
+				'footer-sml-layout',
+				'_wp_page_template',
+				'_elementor_page_settings',
+				'_elementor_template_type',
+			];
+			$keys = isset( $args['inherit_keys'] ) && is_array( $args['inherit_keys'] )
+				? array_values( array_filter( array_map( 'strval', $args['inherit_keys'] ) ) )
+				: $default_keys;
+			foreach ( $keys as $key ) {
+				$policy = IATO_MCP_Meta_Policy::check_write( $key, true );
+				if ( is_wp_error( $policy ) ) {
+					return $policy;
+				}
+				$source_value = get_post_meta( $inherit_source, $key, true );
+				if ( '' === $source_value || null === $source_value ) {
+					continue;
+				}
+				$before = get_post_meta( $post_id, $key, true );
+				$before = ( '' === $before ) ? null : $before;
+				$inherit_plan[] = [ 'key' => $key, 'before' => $before, 'after' => $source_value ];
+			}
+		}
+
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
-				'dry_run'  => true,
-				'post_id'  => $post_id,
-				'action'   => 'would_update',
-				'json_valid' => true,
+				'dry_run'         => true,
+				'post_id'         => $post_id,
+				'action'          => 'would_update',
+				'json_valid'      => true,
+				'inherit_planned' => $inherit_plan,
 			] );
 		}
 
@@ -314,7 +353,30 @@ IATO_MCP_Server::register_tool(
 		$persisted_meta = get_post_meta( $post_id, '_elementor_data', true );
 		$meta_persisted = ( strlen( $persisted_meta ) === strlen( $elementor_data ) );
 
-		return IATO_MCP_Server::ok( [
+		// Apply inherited meta writes (if any) after the main Elementor write succeeds.
+		$inherit_receipts = [];
+		if ( ! empty( $inherit_plan ) ) {
+			$touched_elementor_meta = false;
+			foreach ( $inherit_plan as $step ) {
+				$key    = $step['key'];
+				$before = $step['before'];
+				$after  = $step['after'];
+				update_post_meta( $post_id, $key, $after );
+				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
+				if ( 0 === stripos( $key, '_elementor_' ) ) {
+					$touched_elementor_meta = true;
+				}
+			}
+			clean_post_cache( $post_id );
+			if ( $touched_elementor_meta && class_exists( '\Elementor\Plugin' ) ) {
+				$plugin = \Elementor\Plugin::$instance;
+				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
+					$plugin->files_manager->clear_cache();
+				}
+			}
+		}
+
+		$response = [
 			'post_id'              => $post_id,
 			'success'              => $meta_persisted,
 			'regenerated'          => $regenerated,
@@ -323,6 +385,10 @@ IATO_MCP_Server::register_tool(
 			'meta_persisted'       => $meta_persisted,
 			'meta_length'          => strlen( $persisted_meta ),
 			'input_length'         => strlen( $elementor_data ),
-		] );
+		];
+		if ( ! empty( $inherit_receipts ) ) {
+			$response['change_receipts'] = $inherit_receipts;
+		}
+		return IATO_MCP_Server::ok( $response );
 	}
 );

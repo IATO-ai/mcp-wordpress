@@ -69,8 +69,9 @@ class IATO_MCP_Change_Receipt {
 	 * Record a change receipt after a successful write.
 	 *
 	 * @param int|null $post_id     WordPress post/attachment/menu-item ID, or null for non-post targets.
-	 * @param string   $target_type One of: page, image, menu_item, taxonomy, redirect, structured_data.
-	 * @param string   $field       The field that was changed.
+	 * @param string   $target_type One of: post, page, image, menu_item, taxonomy, redirect, structured_data,
+	 *                              elementor_widget, post_meta, attachment.
+	 * @param string   $field       The field that was changed (for target_type=post_meta this is the meta key).
 	 * @param mixed    $before      Value before the write. null if field was unset. Arrays are JSON-encoded.
 	 * @param mixed    $after       Value after the write. null if field was deleted. Arrays are JSON-encoded.
 	 * @return array The change receipt array (ready to append to tool response).
