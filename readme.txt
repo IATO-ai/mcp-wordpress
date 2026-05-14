@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.6.3
+Stable tag: 1.6.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.6.4 =
+* Fix: `create_media` now actually accepts uploads under Bearer-token MCP auth. The v1.6.0 implementation gated the handler on `current_user_can('upload_files')` and `current_user_can('edit_post', $attach_to_post)`, but Bearer-authenticated MCP requests don't establish a logged-in WordPress user — `wp_get_current_user()` returns 0 and meta-cap checks against the empty user object always fail, so every call returned "You do not have permission to upload files." regardless of who initiated it. Switched to `IATO_MCP_Auth::require_cap()`, which honors the documented "plugin key grants full administrative access" auth model — exactly the same fix shape v1.3.1 applied to `update_elementor_widgets_bulk` and `find_elementor_widgets` for the same bug class. Audited the other v1.6.0 tools (`get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`) and confirmed they all use `require_cap()` correctly — `create_media` was the only regression.
 
 = 1.6.3 =
 * New: `create_media` accepts `defer_subsizes: true` to skip the synchronous `wp_generate_attachment_metadata` call and schedule it via WP-Cron instead. The MCP response returns immediately with `attachment_id` and the canonical URL; intermediate sizes are generated on the next cron tick (typically within seconds). Recommended for any caller running through the Anthropic MCP gateway, which times out around 30 seconds — sites with image-optimisation pipelines (ShortPixel, Imagify, Smush, etc.) intercepting the metadata-generation hook routinely exceed that limit and produce silent hangs where the response never arrives but the attachment also never lands. The default remains synchronous so existing callers see no behaviour change.

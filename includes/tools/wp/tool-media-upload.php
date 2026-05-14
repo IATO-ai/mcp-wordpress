@@ -45,13 +45,22 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		if ( ! current_user_can( 'upload_files' ) ) {
-			return new WP_Error( 'iato_mcp_forbidden', 'You do not have permission to upload files.', [ 'status' => 403 ] );
+		// Use IATO_MCP_Auth::require_cap (not current_user_can) so plugin-Bearer
+		// authenticated requests grant the cap. current_user_can() always returns
+		// false under Bearer auth because wp_get_current_user() returns 0 and
+		// meta-cap checks against the empty WP_User object always fail. Same bug
+		// class fixed in v1.3.1 for update_elementor_widgets_bulk / find_elementor_widgets.
+		$cap_check = IATO_MCP_Auth::require_cap( 'upload_files' );
+		if ( is_wp_error( $cap_check ) ) {
+			return $cap_check;
 		}
 
 		$attach_to_post = isset( $args['attach_to_post'] ) ? absint( $args['attach_to_post'] ) : 0;
-		if ( $attach_to_post > 0 && ! current_user_can( 'edit_post', $attach_to_post ) ) {
-			return new WP_Error( 'iato_mcp_forbidden', 'You cannot attach media to that post.', [ 'status' => 403 ] );
+		if ( $attach_to_post > 0 ) {
+			$edit_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
+			if ( is_wp_error( $edit_check ) ) {
+				return $edit_check;
+			}
 		}
 
 		$user_id = get_current_user_id() ?: 0;
