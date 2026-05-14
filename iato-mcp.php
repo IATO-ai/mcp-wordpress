@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.6.4
+ * Version:     1.7.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.6.4' );
+define( 'IATO_MCP_VERSION', '1.7.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -65,6 +65,7 @@ require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
+require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 
 // Phase 1 — WP native tools
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-site.php';
@@ -122,7 +123,7 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
 // intermediate sizes asynchronously so the synchronous MCP response can return
 // before wp_generate_attachment_metadata runs (which can take many seconds on
 // sites with image-optimisation pipelines and exceeds the gateway timeout).
-add_action( 'iato_mcp_generate_subsizes', [ 'IATO_MCP_Media_Uploader', 'generate_subsizes_async' ], 10, 2 );
+add_action( 'iato_mcp_generate_subsizes', [ 'IATO_MCP_Media_Uploader', 'generate_subsizes_async' ], 10, 3 );
 
 /**
  * Run idempotent one-shot migrations gated by stored db_version.
@@ -159,6 +160,11 @@ function iato_mcp_maybe_run_migrations() {
 	}
 
 	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
+		// Idempotent dbDelta call so upgraded installs (where the activation
+		// hook didn't fire) pick up new tables on first load after update.
+		if ( class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
+			IATO_MCP_Media_Phase_Log::create_table();
+		}
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
 	}
 }
@@ -437,6 +443,7 @@ function iato_mcp_activate() {
 	IATO_MCP_Auth::maybe_generate_key();
 	IATO_MCP_Change_Receipt::create_table();
 	IATO_MCP_Call_Log::create_table();
+	IATO_MCP_Media_Phase_Log::create_table();
 	update_option( 'iato_mcp_show_wizard', true );
 
 	// Clear stale suggestion generation transients so a fresh install/update

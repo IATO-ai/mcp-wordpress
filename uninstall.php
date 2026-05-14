@@ -23,6 +23,11 @@ delete_option( 'iato_mcp_setup_complete' );
 delete_option( 'iato_mcp_wizard_step' );
 delete_option( 'iato_mcp_redirects' );
 delete_option( 'iato_mcp_api_key_valid' );
+delete_option( 'iato_mcp_db_version' );
+delete_option( 'iato_mcp_media_url_source_enabled' );
+delete_option( 'iato_mcp_media_url_host_allowlist' );
+delete_option( 'iato_mcp_media_max_upload_size' );
+delete_option( 'iato_mcp_media_upload_rate_limit' );
 
 // Transients.
 delete_transient( 'iato_mcp_oauth_pkce' );
@@ -33,6 +38,8 @@ global $wpdb;
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_change_receipts" );
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_mcp_call_log" );
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_mcp_media_phase_log" );
 
 // Delete suggestion generation transients.
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Uninstall bulk delete of our own transient keys; delete_transient() cannot do pattern matching.

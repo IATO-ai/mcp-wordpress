@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.6.4
+Stable tag: 1.7.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,14 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.7.0 =
+* New: `Settings > IATO MCP` now includes a Media Uploads card. The four media settings (`iato_mcp_media_url_source_enabled`, `iato_mcp_media_url_host_allowlist`, `iato_mcp_media_max_upload_size`, `iato_mcp_media_upload_rate_limit`) were registered and enforced at runtime in 1.6.0 but never surfaced in admin UI, so the only way to enable URL-source ingestion or configure the host allowlist was via WP-CLI or a direct database edit. The `url_source_disabled` error message returned by `create_media` continues to point admins to "Settings > IATO MCP > Media uploads" — that path now exists.
+* New: Diagnostics page gains a "Recent media uploads" panel showing the last 100 `create_media` calls with their full per-phase trace, outcome badge, error code, attachment metadata (MIME, dimensions, size), and total duration. Each row expands inline via a native `<details>` element to show the phase-by-phase timing. Triage that previously required enabling `WP_DEBUG_LOG` mid-session and tailing the host's PHP error log is now one click on the Diagnostics tab. The on-disk `error_log()` mirror is preserved for environments that already aggregate logs centrally.
+* New: backing infrastructure — `IATO_MCP_Media_Phase_Log` class and `{prefix}iato_mcp_media_phase_log` table store one ring-buffered row per `create_media` call. The deferred-subsizes cron path threads its `req_id` through `wp_schedule_single_event` and appends an `async-subsizes-done` phase to the parent row on completion, so a single Diagnostics row captures the entire end-to-end timeline of an upload — including the async tick that lands minutes later. DB writes are wrapped in try/catch so an observability hiccup cannot regress `create_media` itself. Table creation is dbDelta-idempotent and runs from both the activation hook and the migration gate, so upgraded installs pick it up without a reactivation.
+* Improved: `create_media` tool description now includes practical guidance on when to use base64 vs URL ingestion. Base64 is reliable for small assets (icons, badges, screenshots under ~100 KB); URL ingestion is the recommended path for production-scale photography and requires admin opt-in via the new Media Uploads settings card.
+* Fix: `uninstall.php` now drops the `iato_mcp_media_phase_log` table on plugin delete and cleans up `iato_mcp_db_version` plus the four `iato_mcp_media_*` options that the 1.6.0 release introduced without matching uninstall coverage.
+* Audit: the other four tools from the 1.6.0 batch (`set_featured_image`, `update_post_meta`, `get_post_meta`, `set_page_settings`) were audited for the same "admin-controlled toggle without UI" pattern that the `create_media` URL-source feature exhibited. None of them read any `iato_mcp_*` options at runtime — the missing-UI gap was isolated to `create_media`. No changes to those four were required.
 
 = 1.6.4 =
 * Fix: `create_media` now actually accepts uploads under Bearer-token MCP auth. The v1.6.0 implementation gated the handler on `current_user_can('upload_files')` and `current_user_can('edit_post', $attach_to_post)`, but Bearer-authenticated MCP requests don't establish a logged-in WordPress user — `wp_get_current_user()` returns 0 and meta-cap checks against the empty user object always fail, so every call returned "You do not have permission to upload files." regardless of who initiated it. Switched to `IATO_MCP_Auth::require_cap()`, which honors the documented "plugin key grants full administrative access" auth model — exactly the same fix shape v1.3.1 applied to `update_elementor_widgets_bulk` and `find_elementor_widgets` for the same bug class. Audited the other v1.6.0 tools (`get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`) and confirmed they all use `require_cap()` correctly — `create_media` was the only regression.

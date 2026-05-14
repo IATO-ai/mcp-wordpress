@@ -571,6 +571,13 @@ class IATO_MCP_Settings {
 		$enabled      = get_option( 'iato_mcp_tools', [] );
 		$all_on       = empty( $enabled );
 
+		$media_url_enabled = (bool) get_option( 'iato_mcp_media_url_source_enabled', false );
+		$media_host_list   = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
+		$media_max_bytes   = (int) get_option( 'iato_mcp_media_max_upload_size', 10 * MB_IN_BYTES );
+		$media_rate_limit  = (int) get_option( 'iato_mcp_media_upload_rate_limit', 20 );
+		$media_host_text   = implode( "\n", array_map( 'strval', $media_host_list ) );
+		$media_max_mb      = $media_max_bytes > 0 ? round( $media_max_bytes / MB_IN_BYTES, 2 ) : 0;
+
 		$regenerate_url = wp_nonce_url(
 			admin_url( 'admin-post.php?action=iato_mcp_regenerate_key' ),
 			'iato_mcp_regenerate_key'
@@ -825,6 +832,66 @@ class IATO_MCP_Settings {
 							</div>
 						</div>
 					<?php endforeach; ?>
+				</div>
+
+				<!-- Card 4: Media Uploads -->
+				<div class="iato-card">
+					<div class="iato-card-header">
+						<div class="iato-card-title">
+							<span class="dashicons dashicons-format-image"></span>
+							<h2><?php esc_html_e( 'Media Uploads', 'iato-mcp' ); ?></h2>
+						</div>
+						<?php if ( $media_url_enabled ) : ?>
+							<span class="iato-badge iato-badge--success"><?php esc_html_e( 'URL ingestion on', 'iato-mcp' ); ?></span>
+						<?php else : ?>
+							<span class="iato-badge iato-badge--neutral"><?php esc_html_e( 'Base64 only', 'iato-mcp' ); ?></span>
+						<?php endif; ?>
+					</div>
+					<p class="iato-card-desc"><?php esc_html_e( 'Controls for the create_media tool: URL ingestion gating, host allowlist, size and rate caps. Base64 uploads are always allowed; URL ingestion is opt-in and restricted to the allowlist below.', 'iato-mcp' ); ?></p>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_url_source_enabled"><?php esc_html_e( 'URL source', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_media_url_source_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_media_url_source_enabled" id="iato_mcp_media_url_source_enabled" value="1" <?php checked( $media_url_enabled ); ?> />
+								<span><?php esc_html_e( 'Allow create_media to fetch images from an https URL', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint"><?php esc_html_e( 'SSRF guards (private / loopback / link-local / cloud-metadata IP rejection) still apply when enabled. Base64 remains the default safe path; turn this on only when an agent needs to ingest images by URL.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_url_host_allowlist"><?php esc_html_e( 'Host allowlist', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<textarea name="iato_mcp_media_url_host_allowlist" id="iato_mcp_media_url_host_allowlist" class="iato-input" rows="4" placeholder="cdn.example.com&#10;images.example.org" style="font-family:JetBrains Mono,monospace;font-size:12px;width:100%;"><?php echo esc_textarea( $media_host_text ); ?></textarea>
+							<p class="iato-hint"><?php esc_html_e( 'One hostname per line. Only these hosts are accepted for URL-source uploads. Schemes and paths are stripped on save. Wildcards are not supported.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_max_upload_size"><?php esc_html_e( 'Max upload size', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="number" name="iato_mcp_media_max_upload_size" id="iato_mcp_media_max_upload_size" value="<?php echo esc_attr( (string) $media_max_bytes ); ?>" min="0" step="1024" class="iato-input" style="max-width:240px;" />
+							<p class="iato-hint">
+								<?php
+								printf(
+									/* translators: %s: size in megabytes */
+									esc_html__( 'Bytes. Currently ≈ %s MB. Decoded base64 or fetched URL payloads exceeding this are rejected with file_too_large. Default 10485760 (10 MB).', 'iato-mcp' ),
+									esc_html( (string) $media_max_mb )
+								);
+								?>
+							</p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_upload_rate_limit"><?php esc_html_e( 'Rate limit', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="number" name="iato_mcp_media_upload_rate_limit" id="iato_mcp_media_upload_rate_limit" value="<?php echo esc_attr( (string) $media_rate_limit ); ?>" min="0" step="1" class="iato-input" style="max-width:240px;" />
+							<p class="iato-hint"><?php esc_html_e( 'Uploads per minute per authenticated user. Set to 0 to disable rate limiting. Default 20.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
 				</div>
 
 				<div class="iato-submit">

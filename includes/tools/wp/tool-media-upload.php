@@ -18,7 +18,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'create_media',
 	[
-		'description' => 'Upload a new image to the media library. source.type=base64 is the default and safest mode; source.type=url is supported only when the admin enables URL ingestion and adds the host to the allowlist (SSRF guards always apply). SVG is not supported. Returns the new attachment_id, URL, intermediate sizes, and a change_receipt that fully deletes the attachment on rollback.',
+		'description' => 'Upload a new image to the media library. source.type=base64 is the default and safest mode; source.type=url is supported only when the admin enables URL ingestion and adds the host to the allowlist (SSRF guards always apply). Practical guidance: base64 is reliable for small assets like icons, badges, and screenshots under ~100 KB. For production-scale photography or anything larger, URL ingestion is the recommended path — it avoids encoding overhead and MCP-gateway payload limits, but the admin must first enable it under Settings > IATO MCP > Media Uploads and add the source host to the allowlist. SVG is not supported. Returns the new attachment_id, URL, intermediate sizes, and a change_receipt that fully deletes the attachment on rollback.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [

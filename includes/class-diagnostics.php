@@ -19,6 +19,7 @@ class IATO_MCP_Diagnostics {
 	 */
 	public static function init(): void {
 		add_action( 'admin_post_iato_mcp_diag_clear_log', [ self::class, 'handle_clear_log' ] );
+		add_action( 'admin_post_iato_mcp_diag_clear_media_log', [ self::class, 'handle_clear_media_log' ] );
 	}
 
 	/**
@@ -43,6 +44,16 @@ class IATO_MCP_Diagnostics {
 .iato-diag .badge.success { background: #d1fae5; color: #065f46; }
 .iato-diag .badge.error { background: #fee2e2; color: #991b1b; }
 .iato-diag .badge.unauthorized { background: #fef3c7; color: #92400e; }
+.iato-diag .badge.rejected { background: #fee2e2; color: #991b1b; }
+.iato-diag .badge.deferred { background: #dbeafe; color: #1e40af; }
+.iato-diag .badge.dry_run { background: #f3f4f6; color: #374151; }
+.iato-diag details.phase-trace { margin-top: 4px; }
+.iato-diag details.phase-trace summary { cursor: pointer; color: #2563eb; font-size: 12px; user-select: none; }
+.iato-diag details.phase-trace table { margin-top: 8px; width: 100%; font-size: 11px; border-collapse: collapse; }
+.iato-diag details.phase-trace td { padding: 4px 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+.iato-diag details.phase-trace td.phase-name { font-weight: 600; color: #374151; width: 220px; }
+.iato-diag details.phase-trace td.phase-elapsed { width: 80px; color: #6b7280; font-variant-numeric: tabular-nums; }
+.iato-diag details.phase-trace td.phase-extras { color: #6b7280; font-family: JetBrains Mono, monospace; word-break: break-all; }
 CSS;
 	}
 
@@ -89,8 +100,168 @@ CSS;
 			</div>
 
 			<?php self::render_call_log(); ?>
+			<?php self::render_media_phase_log(); ?>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Render the recent create_media phase traces. Each row is one upload;
+	 * the phase trace is collapsed into a native <details> element so admins
+	 * can drill in without leaving the page (no JS required).
+	 */
+	private static function render_media_phase_log(): void {
+		if ( ! class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
+			return;
+		}
+		$rows = IATO_MCP_Media_Phase_Log::get_recent( 50 );
+		?>
+		<div class="section">
+			<h2><?php esc_html_e( 'Recent media uploads', 'iato-mcp' ); ?></h2>
+			<p style="color:#6b7280;font-size:13px">
+				<?php esc_html_e( 'Last 100 create_media calls with per-phase timings. Use this to triage upload failures (oversized images, MIME mismatches, gateway timeouts) without enabling WP_DEBUG_LOG. Expand a row to see the phase trace.', 'iato-mcp' ); ?>
+			</p>
+
+			<?php if ( empty( $rows ) ) : ?>
+				<div class="empty">
+					<?php esc_html_e( 'No create_media calls recorded yet. Once an AI client uploads media, attempts will appear here — including rejections.', 'iato-mcp' ); ?>
+				</div>
+			<?php else : ?>
+				<table class="diag-list">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'When', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'req_id', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'File', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Outcome', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Last phase', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Total', 'iato-mcp' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ( $rows as $r ) :
+							$req_id    = (string) ( $r['req_id'] ?? '' );
+							$filename  = (string) ( $r['filename'] ?? '' );
+							$outcome   = (string) ( $r['outcome'] ?? 'unknown' );
+							$total_ms  = (int) ( $r['total_ms'] ?? 0 );
+							$err_code  = (string) ( $r['error_code'] ?? '' );
+							$created   = (string) ( $r['created_at'] ?? '' );
+							$updated   = (string) ( $r['updated_at'] ?? '' );
+							$mime      = (string) ( $r['mime_type'] ?? '' );
+							$width     = (int) ( $r['width'] ?? 0 );
+							$height    = (int) ( $r['height'] ?? 0 );
+							$bytes     = (int) ( $r['bytes'] ?? 0 );
+							$attach_id = (int) ( $r['attachment_id'] ?? 0 );
+
+							$phases = json_decode( (string) ( $r['phases'] ?? '[]' ), true );
+							if ( ! is_array( $phases ) ) {
+								$phases = [];
+							}
+							$last_phase = '';
+							if ( ! empty( $phases ) ) {
+								$last = end( $phases );
+								$last_phase = is_array( $last ) ? (string) ( $last['p'] ?? '' ) : '';
+							}
+							?>
+							<tr>
+								<td>
+									<?php echo esc_html( $created ); ?>
+									<?php if ( $updated !== $created && $updated !== '' ) : ?>
+										<div style="color:#9ca3af;font-size:10px"><?php echo esc_html( sprintf( /* translators: %s: timestamp */ __( 'updated %s', 'iato-mcp' ), $updated ) ); ?></div>
+									<?php endif; ?>
+								</td>
+								<td><code style="font-size:11px"><?php echo esc_html( $req_id ); ?></code></td>
+								<td>
+									<?php echo $filename !== '' ? '<code style="font-size:11px">' . esc_html( $filename ) . '</code>' : '<span style="color:#9ca3af">—</span>'; ?>
+									<?php if ( $attach_id > 0 ) : ?>
+										<div style="color:#9ca3af;font-size:10px"><?php echo esc_html( sprintf( /* translators: %d: attachment id */ __( 'attachment #%d', 'iato-mcp' ), $attach_id ) ); ?></div>
+									<?php endif; ?>
+									<?php if ( $mime !== '' || $width > 0 || $bytes > 0 ) : ?>
+										<div style="color:#9ca3af;font-size:10px">
+											<?php
+											$dim_parts = [];
+											if ( $mime !== '' ) {
+												$dim_parts[] = $mime;
+											}
+											if ( $width > 0 && $height > 0 ) {
+												$dim_parts[] = $width . '×' . $height;
+											}
+											if ( $bytes > 0 ) {
+												$dim_parts[] = size_format( $bytes );
+											}
+											echo esc_html( implode( ' · ', $dim_parts ) );
+											?>
+										</div>
+									<?php endif; ?>
+								</td>
+								<td>
+									<span class="badge <?php echo esc_attr( $outcome ); ?>">
+										<?php echo esc_html( $outcome ); ?>
+									</span>
+									<?php if ( $err_code !== '' ) : ?>
+										<div style="margin-top:4px"><code style="color:#991b1b;font-size:11px"><?php echo esc_html( $err_code ); ?></code></div>
+									<?php endif; ?>
+								</td>
+								<td><code style="font-size:11px"><?php echo esc_html( $last_phase ); ?></code></td>
+								<td><?php echo esc_html( $total_ms . ' ms' ); ?></td>
+							</tr>
+							<?php if ( ! empty( $phases ) ) : ?>
+								<tr>
+									<td colspan="6" style="padding:0 8px 8px;">
+										<details class="phase-trace">
+											<summary><?php echo esc_html( sprintf( /* translators: %d: number of phases */ _n( '%d phase', '%d phases', count( $phases ), 'iato-mcp' ), count( $phases ) ) ); ?></summary>
+											<table>
+												<?php foreach ( $phases as $phase ) :
+													$pn   = (string) ( $phase['p'] ?? '' );
+													$pe   = isset( $phase['e'] ) ? (float) $phase['e'] : 0.0;
+													$px   = isset( $phase['x'] ) && is_array( $phase['x'] ) ? $phase['x'] : [];
+													$extras_str = '';
+													if ( ! empty( $px ) ) {
+														$kv = [];
+														foreach ( $px as $k => $v ) {
+															$kv[] = $k . '=' . ( is_scalar( $v ) ? (string) $v : wp_json_encode( $v ) );
+														}
+														$extras_str = implode( ' ', $kv );
+													}
+													?>
+													<tr>
+														<td class="phase-name"><?php echo esc_html( $pn ); ?></td>
+														<td class="phase-elapsed"><?php echo esc_html( sprintf( '%.3fs', $pe ) ); ?></td>
+														<td class="phase-extras"><?php echo esc_html( $extras_str ); ?></td>
+													</tr>
+												<?php endforeach; ?>
+											</table>
+										</details>
+									</td>
+								</tr>
+							<?php endif; ?>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+
+				<p style="margin-top:12px">
+					<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_diag_clear_media_log' ), 'iato_mcp_diag_clear_media_log' ) ); ?>" class="button" onclick="return confirm('Clear all recorded media upload traces?');">
+						<?php esc_html_e( 'Clear media log', 'iato-mcp' ); ?>
+					</a>
+				</p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Handler: clear the media phase log table. Returns to the Diagnostics tab.
+	 */
+	public static function handle_clear_media_log(): void {
+		check_admin_referer( 'iato_mcp_diag_clear_media_log' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		if ( class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
+			IATO_MCP_Media_Phase_Log::purge();
+		}
+		wp_safe_redirect( admin_url( 'options-general.php?page=iato-mcp&tab=diagnostics' ) );
+		exit;
 	}
 
 	/**

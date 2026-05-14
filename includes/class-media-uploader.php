@@ -44,10 +44,16 @@ class IATO_MCP_Media_Uploader {
 	 *
 	 * Wired up in iato-mcp.php via add_action( 'iato_mcp_generate_subsizes', ... ).
 	 */
-	public static function generate_subsizes_async( int $attachment_id, ?string $alt_text = null ): void {
+	public static function generate_subsizes_async( int $attachment_id, ?string $alt_text = null, ?string $req_id = null ): void {
 		$file = get_attached_file( $attachment_id );
 		if ( ! $file || ! file_exists( $file ) ) {
 			error_log( sprintf( '[iato-mcp create_media] async-subsizes: attachment %d has no file on disk', $attachment_id ) );
+			if ( $req_id && class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
+				IATO_MCP_Media_Phase_Log::append_async_phase(
+					$req_id,
+					[ 'p' => 'async-subsizes-missing-file', 'e' => 0, 'x' => [ 'attachment_id' => $attachment_id ] ]
+				);
+			}
 			return;
 		}
 		require_once ABSPATH . 'wp-admin/includes/image.php';
@@ -57,12 +63,25 @@ class IATO_MCP_Media_Uploader {
 		if ( null !== $alt_text && '' !== $alt_text ) {
 			update_post_meta( $attachment_id, '_wp_attachment_image_alt', sanitize_text_field( $alt_text ) );
 		}
+		$sizes_count = isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ? count( $metadata['sizes'] ) : 0;
+		$duration    = microtime( true ) - $start;
 		error_log( sprintf(
 			'[iato-mcp create_media] async-subsizes done attachment=%d sizes=%d duration=%.2fs',
 			$attachment_id,
-			isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ? count( $metadata['sizes'] ) : 0,
-			microtime( true ) - $start
+			$sizes_count,
+			$duration
 		) );
+		if ( $req_id && class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
+			IATO_MCP_Media_Phase_Log::append_async_phase(
+				$req_id,
+				[
+					'p' => 'async-subsizes-done',
+					'e' => round( $duration, 4 ),
+					'x' => [ 'attachment_id' => $attachment_id, 'sizes' => $sizes_count ],
+				],
+				[ 'outcome' => 'success' ]
+			);
+		}
 	}
 
 	/**
@@ -87,7 +106,8 @@ class IATO_MCP_Media_Uploader {
 		$req_id   = substr( bin2hex( random_bytes( 4 ) ), 0, 8 );
 		$t_start  = microtime( true );
 		$log_prefix = '[iato-mcp create_media:' . $req_id . ']';
-		$log = static function ( string $phase, array $extra = [] ) use ( $log_prefix, $t_start ): void {
+		$phases   = [];
+		$log = static function ( string $phase, array $extra = [] ) use ( $log_prefix, $t_start, &$phases ): void {
 			$elapsed = microtime( true ) - $t_start;
 			$pairs   = [];
 			foreach ( $extra as $k => $v ) {
@@ -100,7 +120,14 @@ class IATO_MCP_Media_Uploader {
 				$elapsed,
 				$pairs ? ' ' . implode( ' ', $pairs ) : ''
 			) );
+			$phases[] = [
+				'p' => $phase,
+				'e' => round( $elapsed, 4 ),
+				'x' => $extra ? $extra : null,
+			];
 		};
+
+		try {
 		$log( 'enter', [ 'user' => $user_id ] );
 
 		$rate_check = self::check_rate_limit( $user_id );
@@ -239,7 +266,7 @@ class IATO_MCP_Media_Uploader {
 			if ( '' !== $alt_text ) {
 				update_post_meta( $attachment_id, '_wp_attachment_image_alt', sanitize_text_field( $alt_text ) );
 			}
-			wp_schedule_single_event( time(), 'iato_mcp_generate_subsizes', [ $attachment_id, $alt_text ] );
+			wp_schedule_single_event( time(), 'iato_mcp_generate_subsizes', [ $attachment_id, $alt_text, $req_id ] );
 			$metadata = [];
 			$log( 'subsizes_deferred' );
 		} else {
@@ -289,6 +316,91 @@ class IATO_MCP_Media_Uploader {
 			'intermediate_sizes' => $intermediates,
 			'subsizes_deferred'  => $defer_subsizes,
 		];
+		} finally {
+			self::flush_phase_log( $req_id, $phases, $t_start, $user_id );
+		}
+	}
+
+	/**
+	 * Flush the captured phase trace from a create_media call into the
+	 * IATO_MCP_Media_Phase_Log ring buffer. Derives outcome, attachment id,
+	 * filename, mime, dims and error_code from the phase stream so the
+	 * existing $log call sites stay untouched.
+	 *
+	 * Wrapped on the storage side in try/catch so a DB failure here cannot
+	 * regress create_media itself.
+	 */
+	private static function flush_phase_log( string $req_id, array $phases, float $t_start, int $user_id ): void {
+		if ( empty( $phases ) || ! class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
+			return;
+		}
+
+		$attachment_id = 0;
+		$filename      = null;
+		$mime_type     = null;
+		$width         = null;
+		$height        = null;
+		$bytes         = null;
+		$error_code    = null;
+		$outcome       = 'unknown';
+
+		foreach ( $phases as $entry ) {
+			$name  = (string) ( $entry['p'] ?? '' );
+			$extra = isset( $entry['x'] ) && is_array( $entry['x'] ) ? $entry['x'] : [];
+
+			if ( 'attachment_inserted' === $name && isset( $extra['attachment_id'] ) ) {
+				$attachment_id = (int) $extra['attachment_id'];
+			}
+			if ( 'rejected_unsafe_filename' === $name && isset( $extra['name'] ) ) {
+				$filename = (string) $extra['name'];
+			}
+			if ( 'sideload_ok' === $name && isset( $extra['file'] ) ) {
+				$filename = (string) $extra['file'];
+			}
+			if ( 'source_resolved' === $name && isset( $extra['tmp_size'] ) ) {
+				$bytes = (int) $extra['tmp_size'];
+			}
+			if ( 'mime_ok' === $name && isset( $extra['type'] ) ) {
+				$mime_type = (string) $extra['type'];
+			}
+			if ( ( 'dim_ok' === $name || 'rejected_dimensions' === $name ) && isset( $extra['w'], $extra['h'] ) ) {
+				$width  = (int) $extra['w'];
+				$height = (int) $extra['h'];
+			}
+			if ( str_starts_with( $name, 'rejected_' ) && isset( $extra['code'] ) ) {
+				$error_code = (string) $extra['code'];
+			}
+
+			if ( str_starts_with( $name, 'rejected_' ) ) {
+				$outcome = 'rejected';
+				if ( null === $error_code ) {
+					$error_code = $name;
+				}
+			} elseif ( 'dry_run_returned' === $name ) {
+				$outcome = 'dry_run';
+			} elseif ( 'subsizes_deferred' === $name ) {
+				$outcome = 'deferred';
+			} elseif ( 'returning' === $name && 'deferred' !== $outcome ) {
+				$outcome = 'success';
+			}
+		}
+
+		$total_ms = (int) round( ( microtime( true ) - $t_start ) * 1000 );
+
+		IATO_MCP_Media_Phase_Log::record( [
+			'req_id'        => $req_id,
+			'auth_user_id'  => $user_id,
+			'attachment_id' => $attachment_id,
+			'filename'      => $filename,
+			'mime_type'     => $mime_type,
+			'width'         => $width,
+			'height'        => $height,
+			'bytes'         => $bytes,
+			'outcome'       => $outcome,
+			'error_code'    => $error_code,
+			'total_ms'      => $total_ms,
+			'phases'        => $phases,
+		] );
 	}
 
 	// ── Source resolvers ────────────────────────────────────────────────────────
