@@ -292,12 +292,45 @@ class IATO_MCP_Settings {
 		$tools = self::sanitize_tools( $tools_raw );
 		update_option( 'iato_mcp_tools', $tools );
 
+		// Media uploads — URL source toggle. The render emits a hidden value=0
+		// sibling so the key is always present in $_POST regardless of checkbox
+		// state (unchecked => "0", checked => "1" wins because PHP keeps the
+		// last $_POST occurrence). rest_sanitize_boolean handles both.
+		$media_url_enabled = isset( $_POST['iato_mcp_media_url_source_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_media_url_source_enabled'] ) )
+			: false;
+		update_option( 'iato_mcp_media_url_source_enabled', $media_url_enabled );
+
+		// Host allowlist — newline-delimited textarea. sanitize_host_list()
+		// strips schemes/paths and rejects malformed hostnames.
+		$host_list_raw = isset( $_POST['iato_mcp_media_url_host_allowlist'] )
+			? wp_unslash( $_POST['iato_mcp_media_url_host_allowlist'] )
+			: '';
+		$host_list = self::sanitize_host_list( $host_list_raw );
+		update_option( 'iato_mcp_media_url_host_allowlist', $host_list );
+
+		// Max upload size (bytes).
+		$max_bytes = isset( $_POST['iato_mcp_media_max_upload_size'] )
+			? absint( wp_unslash( $_POST['iato_mcp_media_max_upload_size'] ) )
+			: 0;
+		update_option( 'iato_mcp_media_max_upload_size', $max_bytes );
+
+		// Per-user upload rate limit (per minute). 0 disables.
+		$rate_limit = isset( $_POST['iato_mcp_media_upload_rate_limit'] )
+			? absint( wp_unslash( $_POST['iato_mcp_media_upload_rate_limit'] ) )
+			: 0;
+		update_option( 'iato_mcp_media_upload_rate_limit', $rate_limit );
+
 		wp_send_json_success( [
 			'message' => __( 'Settings saved.', 'iato-mcp' ),
 			'values'  => [
-				'api_key_length' => strlen( $api_key ),
-				'crawl_id'       => $crawl_id,
-				'tools_enabled'  => count( $tools ),
+				'api_key_length'      => strlen( $api_key ),
+				'crawl_id'            => $crawl_id,
+				'tools_enabled'       => count( $tools ),
+				'media_url_enabled'   => $media_url_enabled,
+				'media_hosts_count'   => count( $host_list ),
+				'media_max_bytes'     => $max_bytes,
+				'media_rate_limit'    => $rate_limit,
 			],
 		] );
 	}

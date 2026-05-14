@@ -92,6 +92,18 @@ Removing a tool is the reverse: take it out of `TOOL_NAMES` and from any categor
 
 ---
 
+## Release Checklist (adding a new admin setting)
+
+When adding a new option to the Settings page, three edits must land together — missing any of them produces a setting that renders in the UI but silently discards on save (the bug class that produced the v1.7.0 → v1.7.1 follow-up patch):
+
+1. Register it with `register_setting()` in `IATO_MCP_Settings::register_settings()` using the shared `OPTION_GROUP` constant. The sanitize_callback runs through both `options.php` and admin-ajax persistence paths.
+2. Render the input in `IATO_MCP_Settings::render_page()` with a `name="..."` attribute that exactly matches the option key passed to `register_setting()`. The field must live inside the `<form method="post" action="options.php">` opened at the top of the General tab. For checkboxes, emit a hidden `<input type="hidden" value="0">` sibling with the same name so unchecked state still POSTs the key.
+3. Wire the corresponding `$_POST` → sanitize → `update_option()` line into `IATO_MCP_Settings::ajax_save_settings()`. This is the step that historically gets missed: the form is hijacked through admin-ajax (some hosts 503 on options.php POSTs due to upstream WAF / timeout rules), so the `register_setting()` allowlist never gets a chance to apply. The AJAX handler hardcodes the keys it persists — anything not explicitly handled there is silently dropped.
+
+Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` in `class-settings.php`; co-locate any new field's persistence line there alongside its peer registrations so a reviewer can eyeball the two lists side-by-side.
+
+---
+
 ## Tool Registry
 
 ### WP Native Tools

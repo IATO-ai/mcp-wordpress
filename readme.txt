@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.7.0
+Stable tag: 1.7.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,10 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.7.1 =
+* Fix: the four Media Uploads settings shipped in 1.7.0 (`iato_mcp_media_url_source_enabled`, `iato_mcp_media_url_host_allowlist`, `iato_mcp_media_max_upload_size`, `iato_mcp_media_upload_rate_limit`) silently failed to persist on Save. The UI rendered correctly and the fields were properly registered with `register_setting()`, but the General-tab form is hijacked through an admin-ajax handler (some hosts 503 on `options.php` POSTs due to upstream WAF/timeout rules) and that handler hardcoded the keys it persisted — anything not explicitly listed fell off the floor. 1.7.1 extends `ajax_save_settings()` to call the matching sanitize-and-update path for each of the four media keys, mirroring the existing `iato_mcp_api_key` / `iato_mcp_crawl_id` / `iato_mcp_tools` lines.
+* Docs: CLAUDE.md gains a "Release Checklist (adding a new admin setting)" section calling out the three places a new option must land — `register_setting()`, the rendered `<input name="...">`, and the AJAX persist handler. Same shape as the existing tool-release checklist; closes the structural failure mode that produced this 1.7.0 → 1.7.1 follow-up.
 
 = 1.7.0 =
 * New: `Settings > IATO MCP` now includes a Media Uploads card. The four media settings (`iato_mcp_media_url_source_enabled`, `iato_mcp_media_url_host_allowlist`, `iato_mcp_media_max_upload_size`, `iato_mcp_media_upload_rate_limit`) were registered and enforced at runtime in 1.6.0 but never surfaced in admin UI, so the only way to enable URL-source ingestion or configure the host allowlist was via WP-CLI or a direct database edit. The `url_source_disabled` error message returned by `create_media` continues to point admins to "Settings > IATO MCP > Media uploads" — that path now exists.
