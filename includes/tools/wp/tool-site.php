@@ -41,12 +41,18 @@ IATO_MCP_Server::register_tool(
 		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
+		// title, tagline, permalink_structure are returned raw — sanitize_text_field
+		// runs _sanitize_text_fields which strips %[a-f0-9]{2} octets, destroying
+		// legitimate placeholder/literal content in these fields (e.g. /%category%/
+		// in permalink_structure). admin_email and timezone retain sanitize_text_field
+		// because their value types cannot legitimately carry %xx. JSON encoding in
+		// IATO_MCP_Server::ok() handles transport-level escaping. See v1.8.2 changelog.
 		return IATO_MCP_Server::ok( [
-			'title'               => sanitize_text_field( get_option( 'blogname', '' ) ),
-			'tagline'             => sanitize_text_field( get_option( 'blogdescription', '' ) ),
+			'title'               => (string) get_option( 'blogname', '' ),
+			'tagline'             => (string) get_option( 'blogdescription', '' ),
 			'admin_email'         => sanitize_text_field( get_option( 'admin_email', '' ) ),
 			'timezone'            => sanitize_text_field( get_option( 'timezone_string', '' ) ),
-			'permalink_structure' => sanitize_text_field( get_option( 'permalink_structure', '' ) ),
+			'permalink_structure' => (string) get_option( 'permalink_structure', '' ),
 		] );
 	}
 );

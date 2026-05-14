@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.8.1
+Stable tag: 1.8.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,13 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.8.2 =
+* Fix: `get_site_settings` no longer corrupts `permalink_structure`, `title`, or `tagline`. The five-field tool was wrapping every value in `sanitize_text_field()`, which calls `_sanitize_text_fields()` — a function that repeatedly strips `%[a-f0-9]{2}` octets as a transport-safety measure for URL-encoded strings. Applied to fields that legitimately carry literal `%xx` content, that's actively destructive. Three field-level changes follow, with deliberately distinct framing because they're different categories of fix:
+  * **(a) `permalink_structure` — pure bug fix.** The sanitized output was always wrong for this field. WordPress's permalink structure legitimately carries `%category%`, `%postname%`, `%year%`, `%monthnum%`, `%day%`, `%post_id%`, and `%author%` as literal placeholder tokens; `_sanitize_text_fields` ate the `%xx` prefixes of those tokens (e.g. `/%category%/%postname%/` came back as `/tegory%/%postname%/`). Now returns the raw value as WordPress stores it — matching what WP core uses internally when generating URLs.
+  * **(b) `title` and `tagline` — broader behavior change.** These now return the raw stored value, not the `sanitize_text_field`-processed form. Practical implications beyond `%xx`: HTML entities, leading/trailing whitespace, line breaks, and collapsed multiple spaces in the site title or tagline now surface to the read tool instead of being stripped or collapsed. Rationale: an admin read tool's contract is to surface what's stored, not a display-rendered form. Most sites won't notice the change because typical site titles are plain text; sites with unusual characters in their title/tagline will see the raw form they actually stored.
+  * **(c) `admin_email` and `timezone` — unchanged.** Explicit decision: these value types don't legitimately carry `%xx` in practice. PHP timezone identifiers are a controlled list with no `%`; `admin_email`'s RFC percent-encoding form is exceedingly rare in single-mailbox use. `sanitize_text_field` is WP-canonical for these and stays.
+* Downstream: v1.8.1's archive-detection path reads `category_base`/`tag_base` directly via `get_option()` inside the router (not via this MCP tool) and is unaffected. No internal callers of `get_site_settings` output exist in the codebase. External MCP callers now receive faithful DB values for the three fixed fields.
 
 = 1.8.1 =
 * Fix: `resolve_url` correctly identifies Elementor Theme Builder archive templates as the renderer for Yoast-stripped category URLs (e.g. `/build/` instead of `/category/build/`). Previously such URLs returned `route_type=404` even though a Theme Builder template was rendering them. Root cause was two independent bugs:
