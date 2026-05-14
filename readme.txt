@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.8.0
+Stable tag: 1.8.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,14 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.8.1 =
+* Fix: `resolve_url` correctly identifies Elementor Theme Builder archive templates as the renderer for Yoast-stripped category URLs (e.g. `/build/` instead of `/category/build/`). Previously such URLs returned `route_type=404` even though a Theme Builder template was rendering them. Root cause was two independent bugs:
+  - **Detect_archive_info gap.** The URL classifier only recognised the default `/category/<slug>/`, `/tag/<slug>/`, and `/author/<slug>/` patterns. Sites with Yoast's "Remove the categories prefix" enabled — or with a custom `category_base` / `tag_base` configured in Settings > Permalinks — served archives at URLs that didn't match those patterns, so the classifier returned null and the shadowing check had no archive context to evaluate against. A three-stage cascade now handles all three cases: default patterns first (zero new cost on standard sites), then configured-base patterns, then a bounded reverse lookup through `get_term_link()` that goes through any active `term_link` filter (Yoast, RankMath, etc.) and matches the resulting URL against the input.
+  - **Shadowing-dispatch bug.** `detect_theme_builder_shadowing` treated Elementor Pro's `find_via_theme_builder_module` `false` return (Pro loaded but `get_documents_for_location` matched nothing) as authoritative, returning that `false` directly and never reaching the `find_via_conditions_meta` fallback. In REST context — which is 100% of MCP traffic — `get_documents_for_location` is bound to the current `$wp_query` (the REST endpoint, not the URL being asked about) so it consistently returns nothing; the dispatch bug meant the conditions-meta scan that DOES evaluate against our explicit URL context was unreachable on every Pro-installed site. Fix is a one-line change from `if ( null !== $found )` to `if ( is_array( $found ) )` so both `false` and `null` fall through to the meta scan; `array` (a positive match) still returns immediately. Bug has existed since v1.7.x; v1.8.0's archive plumbing landed correctly but the dispatch bug blocked it from firing.
+* Bonus: the dispatch fix also restores singular page shadowing detection on Pro-installed sites. `get_post(id, include_shadowing:true)` now correctly surfaces `is_shadowed_by` when an Elementor Theme Builder single template overrides the slug-based render. Same dispatch bug had been blocking this since v1.7.x.
+* `rendering_post_id` semantics UNCHANGED from v1.7.x. v1.8.0's additive `resolve_url` contract fully preserved — all new fields (`effective_render_id`, `template{}`, `shadowed_route_type`, etc.) populated correctly by v1.8.0 already; v1.8.1 just makes the shadowing detection that fills them actually fire in REST context.
+* Documented limitation: plugins that strip the category base via raw `.htaccess` rewrites without using the `term_link` filter won't be detected by Stage 3 of `detect_archive_info`. Rare; rely on a `term_link`-based stripper (Yoast, RankMath, etc.) until a workaround is needed.
 
 = 1.8.0 =
 * Fix: `resolve_url` now resolves Elementor Theme Builder archive routes. Archive URLs served by a Theme Builder template (e.g. a category or CPT archive whose render is provided by an `elementor_library` document) previously returned `route_type=404` because the conditions evaluator only matched `include/singular/...` patterns against `url_to_postid()`'s post ID — which is 0 on archives. The conditions parser now evaluates `include/archive/...` patterns (taxonomies, terms, authors, CPT archives, `in_taxonomy`, `post_archive`) against URL-derived context, so archive shadowing is correctly detected. `find_via_theme_builder_module` also captures the matching location into `template_type`. The condition string that fired is surfaced as `template.condition_matched` for callers who need to see the match logic.

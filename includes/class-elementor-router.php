@@ -237,10 +237,23 @@ class IATO_MCP_Elementor_Router {
 	 * resolved here so the condition matcher can do exact-term checks against
 	 * include/archive/{taxonomy}/{term_id} patterns.
 	 *
+	 * Three-stage cascade (cheap → expensive):
+	 *   1. Default-pattern regex (covers default-permalink sites at zero new cost).
+	 *   2. Configured-base regex (handles sites that changed category_base/tag_base
+	 *      via Settings > Permalinks but don't strip the prefix).
+	 *   3. Reverse lookup via get_term_link() (handles Yoast strip-category-base
+	 *      and any other filter-based URL rewriter; bounded segment walk).
+	 *
+	 * The Stage 3 reverse lookup is empirically validated by Gate-1 of v1.8.1's
+	 * verification list — /build/ is the Yoast-stripped URL, so Gate-1 passing
+	 * proves get_term_link() returned the stripped URL inside the REST callback.
+	 *
 	 * @return array{archive_kind:string,term_id?:?int,taxonomy?:?string,cpt_name?:?string,author_id?:?int}|null
 	 */
 	private static function detect_archive_info( string $url ): ?array {
 		$path = wp_parse_url( $url, PHP_URL_PATH ) ?? '';
+
+		// ── Stage 1: default patterns ────────────────────────────────────────
 		if ( preg_match( '#/category/([^/]+)/?$#', $path, $m ) ) {
 			$term = get_term_by( 'slug', $m[1], 'category' );
 			return [
@@ -264,7 +277,99 @@ class IATO_MCP_Elementor_Router {
 				'author_id'    => $user ? (int) $user->ID : null,
 			];
 		}
-		// CPT archive: top-level path segment matches a registered public CPT slug.
+
+		// ── Stage 2: configured-base patterns ────────────────────────────────
+		// Handles sites that changed Settings > Permalinks > Category base /
+		// Tag base to a non-default value but did not strip it.
+		$cat_base = trim( (string) get_option( 'category_base', '' ), '/' );
+		if ( '' !== $cat_base && 'category' !== $cat_base ) {
+			$pattern = '#/' . preg_quote( $cat_base, '#' ) . '/([^/]+)/?$#';
+			if ( preg_match( $pattern, $path, $m ) ) {
+				$term = get_term_by( 'slug', $m[1], 'category' );
+				return [
+					'archive_kind' => 'category_archive',
+					'taxonomy'     => 'category',
+					'term_id'      => ( $term && ! is_wp_error( $term ) ) ? (int) $term->term_id : null,
+				];
+			}
+		}
+		$tag_base = trim( (string) get_option( 'tag_base', '' ), '/' );
+		if ( '' !== $tag_base && 'tag' !== $tag_base ) {
+			$pattern = '#/' . preg_quote( $tag_base, '#' ) . '/([^/]+)/?$#';
+			if ( preg_match( $pattern, $path, $m ) ) {
+				$term = get_term_by( 'slug', $m[1], 'post_tag' );
+				return [
+					'archive_kind' => 'tag_archive',
+					'taxonomy'     => 'post_tag',
+					'term_id'      => ( $term && ! is_wp_error( $term ) ) ? (int) $term->term_id : null,
+				];
+			}
+		}
+
+		// ── Stage 3: reverse lookup via get_term_link() ──────────────────────
+		// For each path segment (right-to-left, capped at 5 to bound cost),
+		// try category-then-tag as a candidate slug. If get_term_link() of
+		// the matched term equals the normalised input path, the URL is that
+		// term's archive. get_term_link() goes through Yoast's term_link
+		// filter (registered unconditionally at plugins_loaded priority 14),
+		// so Yoast strip-category-base is handled automatically — we don't
+		// need to detect Yoast specifically.
+		//
+		// REST-context premise: get_term_link()'s filter pipeline runs in REST.
+		// Empirically validated by Gate-1 (/build/ → template 309). If that
+		// breaks, this premise is the first hypothesis to check.
+		$normalised_input = self::normalise_archive_path( $path );
+		if ( '' !== $normalised_input ) {
+			$segments     = explode( '/', trim( $path, '/' ) );
+			$segment_cap  = 5;
+			$start_index  = max( 0, count( $segments ) - $segment_cap );
+
+			for ( $i = count( $segments ) - 1; $i >= $start_index; $i-- ) {
+				$candidate_slug = $segments[ $i ];
+				if ( '' === $candidate_slug ) {
+					continue;
+				}
+
+				foreach ( [ 'category', 'post_tag' ] as $taxonomy ) {
+					$term = get_term_by( 'slug', $candidate_slug, $taxonomy );
+					if ( ! $term || is_wp_error( $term ) ) {
+						continue;
+					}
+					$term_url = get_term_link( $term );
+					if ( is_wp_error( $term_url ) || ! is_string( $term_url ) ) {
+						continue;
+					}
+					$term_path        = wp_parse_url( $term_url, PHP_URL_PATH ) ?? '';
+					$normalised_term  = self::normalise_archive_path( $term_path );
+					if ( '' !== $normalised_term && $normalised_term === $normalised_input ) {
+						return [
+							'archive_kind' => 'category' === $taxonomy ? 'category_archive' : 'tag_archive',
+							'taxonomy'     => $taxonomy,
+							'term_id'      => (int) $term->term_id,
+						];
+					}
+				}
+			}
+
+			// Author reverse lookup — only meaningful when the path looks like
+			// it could be a single nicename segment.
+			if ( count( $segments ) === 1 && '' !== $segments[0] ) {
+				$user = get_user_by( 'slug', $segments[0] );
+				if ( $user ) {
+					$author_url      = get_author_posts_url( (int) $user->ID );
+					$author_path     = wp_parse_url( (string) $author_url, PHP_URL_PATH ) ?? '';
+					$normalised_auth = self::normalise_archive_path( $author_path );
+					if ( '' !== $normalised_auth && $normalised_auth === $normalised_input ) {
+						return [
+							'archive_kind' => 'author_archive',
+							'author_id'    => (int) $user->ID,
+						];
+					}
+				}
+			}
+		}
+
+		// ── CPT archive: top-level path segment matches a registered public CPT slug.
 		$top = trim( $path, '/' );
 		if ( '' !== $top && false === strpos( $top, '/' ) ) {
 			$post_types = get_post_types( [ 'public' => true, '_builtin' => false ], 'objects' );
@@ -281,6 +386,15 @@ class IATO_MCP_Elementor_Router {
 	}
 
 	/**
+	 * Normalise a URL path for archive comparison. Strips leading and
+	 * trailing slashes so equivalent paths compare equal regardless of
+	 * trailing-slash style. Returns '' for the root path.
+	 */
+	private static function normalise_archive_path( string $path ): string {
+		return trim( $path, '/' );
+	}
+
+	/**
 	 * @param array<string,mixed> $ctx URL-derived context.
 	 * @return array{template_id:int,template_type:?string,condition_matched:?string}|false|null
 	 */
@@ -290,8 +404,16 @@ class IATO_MCP_Elementor_Router {
 		}
 
 		// Preferred path: Elementor Pro's Theme_Builder Locations API.
+		// Return only on a positive match (array). The module's `false` return
+		// means "Pro loaded but get_documents_for_location matched nothing" —
+		// which is unreliable in REST context, because that method is bound to
+		// the current $wp_query (the REST endpoint, not the URL we're asking
+		// about). Treating `false` as authoritative would skip the conditions
+		// scan that DOES evaluate against our explicit URL context. Both
+		// `false` and `null` (Pro class not loaded) fall through to the meta
+		// scan below.
 		$found = self::find_via_theme_builder_module( $ctx );
-		if ( null !== $found ) {
+		if ( is_array( $found ) ) {
 			return $found;
 		}
 
