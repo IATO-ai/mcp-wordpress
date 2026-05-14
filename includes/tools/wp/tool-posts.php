@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_posts',
 	[
-		'description' => 'List posts or pages with optional filters. Returns ID, title, slug, status, URL, and modified date.',
+		'description' => 'List posts or pages with optional filters. Returns ID, title, slug, status, URL, and modified date. Scope note: post_type accepts post|page|any and `any` expands to [post, page] only — Elementor Theme Builder templates (post_type=elementor_library) are NOT returned by this tool in v1.8.0; a dedicated templates listing tool lands in Layer 2 of the discovery work. If you\'re looking for what renders a specific URL, use resolve_url instead.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [

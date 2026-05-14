@@ -746,6 +746,21 @@ class IATO_MCP_Elementor_Adapter {
 						return false;
 					}
 					break;
+				case 'contains':
+					// Case-insensitive substring match against scalar settings.
+					// Useful for finding a widget by its content ("editor" field
+					// stores HTML, "title" is a heading string, etc.). Scalar-only
+					// by design — never recurses into nested arrays.
+					if ( ! $has || ! is_scalar( $value ) || ! is_scalar( $expected ) ) {
+						return false;
+					}
+					if ( '' === (string) $expected ) {
+						return false;
+					}
+					if ( false === stripos( (string) $value, (string) $expected ) ) {
+						return false;
+					}
+					break;
 				default:
 					return false;
 			}

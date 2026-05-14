@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.7.2
+Stable tag: 1.8.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,14 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.8.0 =
+* Fix: `resolve_url` now resolves Elementor Theme Builder archive routes. Archive URLs served by a Theme Builder template (e.g. a category or CPT archive whose render is provided by an `elementor_library` document) previously returned `route_type=404` because the conditions evaluator only matched `include/singular/...` patterns against `url_to_postid()`'s post ID — which is 0 on archives. The conditions parser now evaluates `include/archive/...` patterns (taxonomies, terms, authors, CPT archives, `in_taxonomy`, `post_archive`) against URL-derived context, so archive shadowing is correctly detected. `find_via_theme_builder_module` also captures the matching location into `template_type`. The condition string that fired is surfaced as `template.condition_matched` for callers who need to see the match logic.
+* New: `resolve_url` response gains four additive fields. `rendering_post_id` semantics are UNCHANGED — still the canonical/slug-based post (now normalized to `null` instead of `0` on archives so `=== null` checks work). The new fields are: `rendering_post_type`, `effective_render_id` (single field answering "what actually renders" — template ID when shadowed, canonical post ID otherwise, `null` only on a true 404), `effective_render_post_type`, `shadowed_route_type` (route the URL would have had absent the template), and a structured `template{template_id,template_type,condition_matched,builder}` object present when shadowing applies. `rendering_template_id` continues to work exactly as documented; the new fields are additive only.
+* New: `find_elementor_widgets` auto-resolves revision IDs to their parent post. Passing a revision ID via `post_ids` previously returned matches tagged with the revision's own ID, leaking the parent only through the `NNN-revision-vN` slug — the brute-force discovery path that motivated this work. Revision IDs are now mapped to their parent via `wp_is_post_revision()`, deduped, and each match scanned from a revision input carries `resolved_from_revision_id` so callers can see the mapping. Default auto-scan also tightens `post_status` from `any` to `[publish, draft, pending, private]` — trash and auto-draft are no longer scanned by default.
+* New: `find_elementor_widgets` filter gains a `contains` operator (case-insensitive substring match against scalar settings), alongside the existing `eq|ne|in|nin|exists`. Useful for finding a widget by its content rather than exact-match on a heading — e.g. `setting.editor.contains="some phrase"`. Scalar-only by design; never recurses into nested settings arrays. The `regex` operator is deferred to a future release where it can get proper backtracking-DoS guards.
+* Docs: `get_posts`, `find_elementor_widgets`, and `resolve_url` descriptions now state the current scope honestly. `get_posts` notes that `post_type=any` expands to `[post, page]` and does NOT return `elementor_library`. `find_elementor_widgets` notes that templates are not yet scanned. Both point at the upcoming Layer 2 work.
+* Note on disclosure surface: the new fields (`condition_matched`, `template_type`, `effective_render_*`) widen what an authenticated caller can learn about site structure on a per-URL basis. `resolve_url` continues to require only authentication (no capability check), unchanged from v1.7.x — Theme Builder shadowing was already disclosed per-URL since v1.5. The forthcoming template-listing tool (Layer 2) will gate full enumeration behind `edit_posts`.
 
 = 1.7.2 =
 * Fix: `create_media` no longer hard-rejects payloads that omit `source.type`. v1.7.1 began requiring an explicit `type` field, breaking callers that worked under v1.6.x where the type was inferred from the presence of `source.data` (base64) or `source.url` (URL ingestion). Restored that inference — supply either field and the right mode is picked automatically. Explicit `type` continues to work and remains the documented preferred form.

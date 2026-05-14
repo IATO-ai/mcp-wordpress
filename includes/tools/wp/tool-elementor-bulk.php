@@ -156,12 +156,12 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'find_elementor_widgets',
 	[
-		'description' => 'Search every Elementor post for widgets matching a filter. filter: { type?: string, setting?: { key: { eq|ne|in|nin|exists: value } } }. post_ids=[] scans all Elementor-flagged posts (capped at 500 in v1.3.0).',
+		'description' => 'Search every Elementor post for widgets matching a filter. filter: { type?: string, setting?: { key: { eq|ne|in|nin|exists|contains: value } } }. The `contains` operator (added v1.8.0) does a case-insensitive substring match against scalar settings — useful for finding a widget by its content (e.g. setting.editor.contains="<phrase>"). post_ids=[] auto-scans all Elementor-flagged posts (post + page) with status publish/draft/pending/private, capped at 500. Revision IDs passed via post_ids are auto-resolved to their parent post; the matching row carries resolved_from_revision_id so callers can see the input mapped through. NOTE: elementor_library templates are NOT scanned in v1.8.0 — that lands in Layer 2 of the discovery work.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'post_ids' => [ 'type' => 'array',  'description' => 'Post IDs to scan. Empty = all Elementor posts (capped at 500).' ],
-				'filter'   => [ 'type' => 'object', 'description' => 'Filter spec (required): { type?, setting?: { key: { op: value } } }.' ],
+				'post_ids' => [ 'type' => 'array',  'description' => 'Post IDs to scan. Empty = all Elementor posts (capped at 500). Revision IDs are auto-resolved to their parent post.' ],
+				'filter'   => [ 'type' => 'object', 'description' => 'Filter spec (required): { type?, setting?: { key: { op: value } } }. Operators: eq, ne, in, nin, exists, contains (case-insensitive substring).' ],
 			],
 			'required' => [ 'filter' ],
 		],
@@ -175,11 +175,14 @@ IATO_MCP_Server::register_tool(
 		}
 
 		// Resolve scan set.
-		$truncated = false;
+		$truncated            = false;
+		$revision_to_parent   = []; // parent_id => first revision_id that resolved to it
 		if ( empty( $post_ids ) ) {
 			$post_ids = get_posts( [
 				'post_type'      => [ 'post', 'page' ],
-				'post_status'    => 'any',
+				// Exclude trash and auto-draft from the default scan. Callers who
+				// need those can pass explicit post_ids.
+				'post_status'    => [ 'publish', 'draft', 'pending', 'private' ],
 				'posts_per_page' => IATO_MCP_FIND_POST_CAP,
 				'fields'         => 'ids',
 				// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- single meta key, indexed in typical setups.
@@ -194,7 +197,31 @@ IATO_MCP_Server::register_tool(
 				$truncated = true;
 			}
 		} else {
-			$post_ids = array_values( array_unique( array_map( 'absint', $post_ids ) ) );
+			// Auto-resolve any revision IDs to their parent. wp_is_post_revision
+			// returns the parent ID for revisions, false for everything else.
+			// Without this, the post_content (= revision body) decode works but
+			// every match carries the revision's ID, which leaks the parent only
+			// via the NNN-revision-vN slug — the exact "brute-force discovery"
+			// pain point that motivated v1.8.0.
+			$resolved = [];
+			foreach ( $post_ids as $raw ) {
+				$pid = absint( $raw );
+				if ( $pid <= 0 ) {
+					continue;
+				}
+				$parent = wp_is_post_revision( $pid );
+				if ( $parent ) {
+					$parent_id = (int) $parent;
+					$resolved[] = $parent_id;
+					// Keep the first revision ID that mapped to each parent.
+					if ( ! isset( $revision_to_parent[ $parent_id ] ) ) {
+						$revision_to_parent[ $parent_id ] = $pid;
+					}
+				} else {
+					$resolved[] = $pid;
+				}
+			}
+			$post_ids = array_values( array_unique( $resolved ) );
 		}
 
 		// Bearer auth grants full admin access (see class-auth.php), so per-post
@@ -211,9 +238,19 @@ IATO_MCP_Server::register_tool(
 			}
 			[ $elements, ] = $decoded;
 			$post_matches  = IATO_MCP_Elementor_Adapter::find_by_filter( $elements, $filter, $pid );
-			if ( ! empty( $post_matches ) ) {
-				$matches = array_merge( $matches, $post_matches );
+			if ( empty( $post_matches ) ) {
+				continue;
 			}
+			// Tag matches whose scanned post_id came from a revision input, so the
+			// caller can see the input → parent mapping.
+			if ( isset( $revision_to_parent[ $pid ] ) ) {
+				$rev_id = $revision_to_parent[ $pid ];
+				foreach ( $post_matches as &$m ) {
+					$m['resolved_from_revision_id'] = $rev_id;
+				}
+				unset( $m );
+			}
+			$matches = array_merge( $matches, $post_matches );
 		}
 
 		$response = [
