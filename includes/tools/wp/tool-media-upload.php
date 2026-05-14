@@ -18,7 +18,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'create_media',
 	[
-		'description' => 'Upload a new image to the media library. source.type=base64 is the default and safest mode; source.type=url is supported only when the admin enables URL ingestion and adds the host to the allowlist (SSRF guards always apply). Practical guidance: base64 is reliable for small assets like icons, badges, and screenshots under ~100 KB. For production-scale photography or anything larger, URL ingestion is the recommended path — it avoids encoding overhead and MCP-gateway payload limits, but the admin must first enable it under Settings > IATO MCP > Media Uploads and add the source host to the allowlist. SVG is not supported. Returns the new attachment_id, URL, intermediate sizes, and a change_receipt that fully deletes the attachment on rollback.',
+		'description' => 'Upload a new image to the media library. Two source modes: base64 inline bytes (default) or URL ingestion. Use base64 ONLY for tiny assets — favicons, sprite icons, ~4 KB or under of decoded image. The MCP transport truncates or drops larger JSON-RPC payloads before they reach the plugin, which presents as the call hanging; this is a hard transport constraint, not a server-side limit. For anything bigger (photos, screenshots, full-size images) use URL ingestion. URL ingestion requires the admin to enable it once under Settings > IATO MCP > Media Uploads. The site\'s own host is implicitly trusted; external hosts must be added to the allowlist. The URL must point to the raw image bytes — viewer/share pages do NOT work (Google Drive share links return HTML, not the file; Dropbox links need ?dl=1, not ?dl=0). Most reliable workflow for non-trivial images: upload to the site\'s WordPress media library first (or any host serving the raw bytes), then pass that URL here. source.type is inferred from the presence of data vs url when omitted. SVG is not supported. Returns the new attachment_id, URL, intermediate sizes, and a change_receipt that fully deletes the attachment on rollback.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -26,11 +26,11 @@ IATO_MCP_Server::register_tool(
 				'mime_type'      => [ 'type' => 'string',  'description' => 'Claimed MIME — verified against actual bytes, not trusted.' ],
 				'source'         => [
 					'type'        => 'object',
-					'description' => 'Discriminated union: { type: "base64", data: <b64> } or { type: "url", url: <https-url> }.',
+					'description' => 'Discriminated union: { type: "base64", data: <b64> } or { type: "url", url: <https-url> }. type is inferred when omitted — supply data for base64 or url for url ingestion and the plugin will pick the right mode.',
 					'properties'  => [
-						'type' => [ 'type' => 'string', 'enum' => [ 'base64', 'url' ] ],
-						'data' => [ 'type' => 'string', 'description' => 'Base64-encoded bytes (for type=base64). data: URI prefix is stripped if present.' ],
-						'url'  => [ 'type' => 'string', 'description' => 'Absolute https URL (for type=url).' ],
+						'type' => [ 'type' => 'string', 'enum' => [ 'base64', 'url' ], 'description' => 'Optional. Inferred from data/url presence if omitted.' ],
+						'data' => [ 'type' => 'string', 'description' => 'Base64-encoded bytes (for type=base64). data: URI prefix is stripped if present. Practical ceiling ~4 KB of decoded image — larger payloads are truncated by the MCP transport. Use url for anything bigger.' ],
+						'url'  => [ 'type' => 'string', 'description' => 'Absolute http(s) URL pointing directly at the raw image bytes (not a viewer / share page). Requires URL ingestion to be enabled in Settings > IATO MCP > Media Uploads; the site\'s own host is implicitly trusted, external hosts must be allowlisted.' ],
 					],
 				],
 				'alt_text'       => [ 'type' => 'string',  'description' => 'Stored as _wp_attachment_image_alt. Strongly encouraged.' ],

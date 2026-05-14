@@ -213,7 +213,7 @@ class IATO_MCP_Settings {
 		'update_post_meta'         => 'Write a single post meta key (allowlist/denylist enforced; force=true to override)',
 		'set_page_settings'        => 'Set per-post theme + Elementor page settings (hide title, sidebar layout, etc.)',
 		'set_featured_image'       => 'Set or clear a post\'s featured image',
-		'create_media'             => 'Upload an image to the media library (base64; URL ingestion optional with allowlist)',
+		'create_media'             => 'Upload an image to the media library — base64 for tiny assets (~4 KB), URL ingestion for anything larger (own host implicitly trusted)',
 		'get_iato_sitemap'         => 'Full site hierarchy with WordPress post IDs attached',
 		'get_iato_nav_audit'       => 'Audit menus and identify orphan pages in one call',
 		'get_iato_orphan_pages'    => 'Pages not linked from any navigation menu',

@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.7.1
+Stable tag: 1.7.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,12 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.7.2 =
+* Fix: `create_media` no longer hard-rejects payloads that omit `source.type`. v1.7.1 began requiring an explicit `type` field, breaking callers that worked under v1.6.x where the type was inferred from the presence of `source.data` (base64) or `source.url` (URL ingestion). Restored that inference — supply either field and the right mode is picked automatically. Explicit `type` continues to work and remains the documented preferred form.
+* Fix: URL ingestion no longer rejects the site's own host. Plugins installed on `example.com` could not ingest `https://example.com/wp-content/uploads/foo.jpg` without manually adding `example.com` to the URL allowlist — the allowlist defends against fetching arbitrary external hosts, not the site's own media library, and forcing every admin to allowlist their own domain was the most common papercut on this tool. The site's `home_url()` and `site_url()` host(s) are now implicitly trusted. The SSRF IP-resolution guard (`check_host_resolves_publicly`) still runs in both branches, so the bypass only skips the manual allowlist; private/loopback/link-local IPs continue to be rejected.
+* Improved: `create_media` tool description rewritten to reflect real-world transport behaviour. Base64 is documented as suitable ONLY for tiny assets (favicons, sprite icons, ~4 KB of decoded image); larger JSON-RPC payloads are truncated by the MCP transport before reaching the plugin, which presents as the call hanging silently. URL ingestion is named as the path for anything bigger, with explicit warnings that share/viewer pages (Google Drive share links, Dropbox `?dl=0`) return HTML rather than the file. The previous "~100 KB" guidance was wrong in practice and trained agents to attempt uploads that would silently hang.
+* Improved: `file_too_large` errors on the base64 path now mention URL ingestion as the alternative, mirroring the helpful tone of the existing `url_source_disabled` error. The agent gets a clear next step instead of an opaque size-cap message.
 
 = 1.7.1 =
 * Fix: the four Media Uploads settings shipped in 1.7.0 (`iato_mcp_media_url_source_enabled`, `iato_mcp_media_url_host_allowlist`, `iato_mcp_media_max_upload_size`, `iato_mcp_media_upload_rate_limit`) silently failed to persist on Save. The UI rendered correctly and the fields were properly registered with `register_setting()`, but the General-tab form is hijacked through an admin-ajax handler (some hosts 503 on `options.php` POSTs due to upstream WAF/timeout rules) and that handler hardcoded the keys it persisted — anything not explicitly listed fell off the floor. 1.7.1 extends `ajax_save_settings()` to call the matching sanitize-and-update path for each of the four media keys, mirroring the existing `iato_mcp_api_key` / `iato_mcp_crawl_id` / `iato_mcp_tools` lines.

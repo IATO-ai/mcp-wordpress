@@ -154,9 +154,21 @@ class IATO_MCP_Media_Uploader {
 
 		// 2. Resolve the bytes.
 		$source = $args['source'] ?? null;
-		if ( ! is_array( $source ) || empty( $source['type'] ) ) {
+		if ( ! is_array( $source ) ) {
 			$log( 'rejected_missing_source' );
-			return new WP_Error( 'missing_source', 'source.type is required (base64 or url).' );
+			return new WP_Error( 'missing_source', 'source object is required.' );
+		}
+		// BC with v1.6.x: infer type from presence of data/url when omitted.
+		// v1.7.1 hard-rejected payloads without source.type; restore inference.
+		if ( empty( $source['type'] ) ) {
+			if ( isset( $source['data'] ) && '' !== $source['data'] ) {
+				$source['type'] = 'base64';
+			} elseif ( isset( $source['url'] ) && '' !== $source['url'] ) {
+				$source['type'] = 'url';
+			} else {
+				$log( 'rejected_missing_source' );
+				return new WP_Error( 'missing_source', 'source must include either data (for base64) or url (for url ingestion).' );
+			}
 		}
 		$max_bytes = self::max_upload_bytes();
 		$log( 'source_dispatch', [ 'type' => $source['type'], 'max_bytes' => $max_bytes ] );
@@ -423,7 +435,11 @@ class IATO_MCP_Media_Uploader {
 		if ( strlen( $bytes ) > $max_bytes ) {
 			return new WP_Error(
 				'file_too_large',
-				sprintf( 'Decoded payload (%d bytes) exceeds the %d-byte cap.', strlen( $bytes ), $max_bytes )
+				sprintf(
+					'Decoded payload (%d bytes) exceeds the %d-byte cap. For larger uploads, switch to URL ingestion: set source.type=\'url\' and configure the host under Settings > IATO MCP > Media Uploads.',
+					strlen( $bytes ),
+					$max_bytes
+				)
 			);
 		}
 		$tmp = wp_tempnam( $filename );
@@ -455,13 +471,20 @@ class IATO_MCP_Media_Uploader {
 			return new WP_Error( 'invalid_url_scheme', 'Only http(s) URLs are accepted.' );
 		}
 
-		$allowlist = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
-		$host      = strtolower( $parsed['host'] );
-		if ( ! in_array( $host, array_map( 'strtolower', $allowlist ), true ) ) {
-			return new WP_Error(
-				'host_not_allowed',
-				sprintf( 'Host %s is not in the URL ingestion allowlist.', $host )
-			);
+		$host = strtolower( $parsed['host'] );
+		// The site's own host is implicitly trusted — ingesting from the site's
+		// own media library is not the SSRF threat the allowlist defends against,
+		// and forcing every admin to allowlist their own domain is the most common
+		// papercut on this tool. The IP guard at check_host_resolves_publicly()
+		// still runs below, so this bypass only skips the *manual* allowlist.
+		if ( ! self::is_own_host( $host ) ) {
+			$allowlist = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
+			if ( ! in_array( $host, array_map( 'strtolower', $allowlist ), true ) ) {
+				return new WP_Error(
+					'host_not_allowed',
+					sprintf( 'Host %s is not in the URL ingestion allowlist.', $host )
+				);
+			}
 		}
 
 		$ip_check = self::check_host_resolves_publicly( $host );
@@ -514,6 +537,20 @@ class IATO_MCP_Media_Uploader {
 			);
 		}
 		return $tmp;
+	}
+
+	/**
+	 * True when $host matches the site's own host (home_url or site_url).
+	 * Used to bypass the manual URL-ingestion allowlist for the site itself —
+	 * the allowlist defends against arbitrary external hosts, not the site's
+	 * own media library.
+	 */
+	private static function is_own_host( string $host ): bool {
+		$self_hosts = array_filter( array_map(
+			static fn( $u ) => strtolower( (string) wp_parse_url( $u, PHP_URL_HOST ) ),
+			[ home_url(), site_url() ]
+		) );
+		return in_array( strtolower( $host ), $self_hosts, true );
 	}
 
 	/**
