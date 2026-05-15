@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.8.2
+Stable tag: 1.10.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,15 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.10.0 =
+* Security: `IATO_MCP_Auth::require_cap()` now actually enforces the capability argument. Previously the function checked only whether the request was authenticated and returned `true` regardless of the cap string passed — a documented but long-deferred limitation (the file's own docblock acknowledged it as a v1.6 hardening item). Every existing `require_cap()` call site (`edit_posts` on write tools, `manage_options` on `get_site_settings`, `upload_files` on `create_media`, etc.) was cosmetic until this release. Now real.
+* Mechanism: `authenticate()` carries the authenticated `WP_User` object through to `require_cap()` for the Application Password path. `require_cap()` calls `user_can($user, $cap)` against that user. Bearer plugin-key authentication remains documented full-administrative-access (intentional — the key itself is the gate; security comes from key issuance being admin-only); the change applies to per-user auth paths only.
+* Observable contract change: any Application Password user below admin level who previously could call `manage_options`-gated MCP tools will now be correctly rejected. This is the security boundary tightening — semver minor, not patch, even though the surface change is "tiny" by line count. The `edit_posts` auth-time baseline in `authenticate()` is preserved (Subscribers still rejected at auth time, not per-tool time).
+* Audit: every `require_cap()` call site reviewed under enforcement. 21 sites confirmed-correct without code change. Two structural changes:
+  - **Menus (4 tools: `update_menu_item`, `create_menu_item`, `delete_menu_item`, `update_menu_item_details`)** — switched from `manage_options` to `edit_theme_options`, the WP-canonical cap for nav-menu structure (matches `wp-admin/nav-menus.php`). Functionally identical on default WP (both admin-only); observably different for sites that grant `edit_theme_options` to non-admin via a role-management plugin.
+  - **Rollback (`tool-rollback.php`)** — replaced the hand-maintained `$elevated_types` switch with a per-receipt-type cap map in `IATO_MCP_Change_Receipt::cap_required_for()`. Fail-closed default: unknown target_types are gated at `manage_options` until they're explicitly added to the map, so a new receipt type can't silently inherit a lower cap. The map lives adjacent to the existing target_type docblock so future developers see the cap requirement at the receipt-type declaration site. The `'taxonomy'` entry is field-discriminated — `assign`/`terms` operations stay at `edit_posts` (match `assign_term` / `update_taxonomy` create-time caps), `create_term`/`update_term`/`delete_term` go to `manage_categories` (match the create-time caps). Convention: rollback cap === create-time cap.
+* Known issue (not addressed in this release): the OAuth flow at `/oauth/token` returns the plugin's `iato_mcp_key` (admin-only MCP key) as the OAuth `access_token` — see `class-oauth.php:486-489`. This means OAuth-issued tokens are admin-key-equivalent regardless of which user originally authorized the OAuth flow, and OAuth-authenticated MCP requests flow through the Bearer plugin-key path in `authenticate()` (which intentionally bypasses per-user cap checks). The OAuth `/oauth/authorize` gate at `manage_options` is one-time at issuance, not ongoing per-request. Fixing this requires per-user OAuth token issuance (new token storage, per-user issuance with scoping, revocation, an alternate access-token format that encodes user identity) — substantial separate design tracked for a future cycle. Severity is bounded by the issuance-time `manage_options` gate (only admins can ever obtain an OAuth token in the first place); the failure mode is "OAuth-authorized client retains admin-equivalent access even if the originally-authorizing admin's role is later downgraded."
 
 = 1.8.2 =
 * Fix: `get_site_settings` no longer corrupts `permalink_structure`, `title`, or `tagline`. The five-field tool was wrapping every value in `sanitize_text_field()`, which calls `_sanitize_text_fields()` — a function that repeatedly strips `%[a-f0-9]{2}` octets as a transport-safety measure for URL-encoded strings. Applied to fields that legitimately carry literal `%xx` content, that's actively destructive. Three field-level changes follow, with deliberately distinct framing because they're different categories of fix:

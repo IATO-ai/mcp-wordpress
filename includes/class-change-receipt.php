@@ -66,6 +66,72 @@ class IATO_MCP_Change_Receipt {
 	}
 
 	/**
+	 * Required capability for rolling back a receipt.
+	 *
+	 * Convention: **rollback cap === create-time cap.** A user who could do
+	 * the operation can undo it; a user who couldn't, can't. The map below
+	 * mirrors the cap each recording tool enforces at its create-time
+	 * require_cap() call. Keep them in lockstep — if a tool's create-time
+	 * cap changes, the rollback entry here changes too.
+	 *
+	 * Lookup keys off the receipt's target_type, with a single field-
+	 * discriminated branch for 'taxonomy' (because that target_type covers
+	 * both editorial assign-term operations at edit_posts and admin-level
+	 * term CRUD at manage_categories — neither single cap matches both
+	 * create-time tools).
+	 *
+	 * Unknown target_types fail closed at manage_options — adding a new
+	 * receipt type without an entry here means rollback for that type is
+	 * gated at admin-only until the entry is added. Same fail-closed
+	 * semantics extend to unknown fields under 'taxonomy': any field not in
+	 * the known editorial set falls through to manage_categories (the
+	 * higher of the two taxonomy caps), so an unrecognised taxonomy field
+	 * doesn't silently inherit the lower cap.
+	 *
+	 *   target_type        record-time tool's require_cap      rollback cap (this map)
+	 *   post / page        edit_posts                          edit_posts
+	 *   image / attachment edit_posts / upload_files           edit_posts
+	 *   post_meta          edit_posts                          edit_posts
+	 *   elementor_widget   edit_posts                          edit_posts
+	 *   menu_item          edit_theme_options (v1.10.0)        edit_theme_options
+	 *   redirect           manage_options                      manage_options
+	 *   taxonomy + assign/terms     edit_posts                 edit_posts
+	 *   taxonomy + create/update/delete_term  manage_categories  manage_categories
+	 *   <unknown>          n/a                                  manage_options (fail closed)
+	 *
+	 * @param array $receipt Receipt row (must contain at least target_type; field is consulted for taxonomy).
+	 * @return string A WordPress capability string.
+	 */
+	public static function cap_required_for( array $receipt ): string {
+		$target_type = isset( $receipt['target_type'] ) ? (string) $receipt['target_type'] : '';
+		$field       = isset( $receipt['field'] )       ? (string) $receipt['field']       : '';
+
+		// Field-discriminated branch: 'taxonomy' covers both editorial and
+		// admin operations. Term CRUD requires the higher cap; assign / update
+		// at the post level stays at edit_posts.
+		if ( 'taxonomy' === $target_type ) {
+			$admin_fields = [ 'create_term', 'update_term', 'delete_term' ];
+			return in_array( $field, $admin_fields, true ) ? 'manage_categories' : 'edit_posts';
+		}
+
+		$caps = [
+			'post'             => 'edit_posts',
+			'page'             => 'edit_posts',
+			'image'            => 'edit_posts',
+			'attachment'       => 'edit_posts',
+			'post_meta'        => 'edit_posts',
+			'elementor_widget' => 'edit_posts',
+			'menu_item'        => 'edit_theme_options',
+			'redirect'         => 'manage_options',
+		];
+
+		// Fail closed: unknown target_types are gated at manage_options
+		// until they're explicitly added to the map. A new receipt type
+		// shouldn't silently inherit a lower cap.
+		return $caps[ $target_type ] ?? 'manage_options';
+	}
+
+	/**
 	 * Record a change receipt after a successful write.
 	 *
 	 * @param int|null $post_id     WordPress post/attachment/menu-item ID, or null for non-post targets.

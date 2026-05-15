@@ -28,9 +28,13 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$cap_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
-		if ( is_wp_error( $cap_check ) ) {
-			return $cap_check;
+		// Auth baseline — must be authenticated to even look up a receipt.
+		// edit_posts is the minimum any rollback could require (post / page /
+		// image / attachment / post_meta / elementor_widget all use it; menus
+		// and redirects raise the bar via the cap map below).
+		$auth_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
+		if ( is_wp_error( $auth_check ) ) {
+			return $auth_check;
 		}
 
 		$change_id = sanitize_text_field( $args['change_id'] ?? '' );
@@ -38,20 +42,25 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_change_id', 'change_id must match ^wr_[a-f0-9]{16}$' );
 		}
 
-		// Elevated capability check for receipt types whose original write
-		// required manage_options. Mirror the cap the original tool enforced
-		// so a Subscriber with edit_posts cannot reverse an Admin's menu/redirect change.
 		$receipt = IATO_MCP_Change_Receipt::get( $change_id );
 		if ( ! $receipt ) {
 			return new WP_Error( 'not_found', 'change_id not found.' );
 		}
 
-		$elevated_types = [ 'menu_item', 'redirect' ];
-		if ( in_array( $receipt['target_type'], $elevated_types, true ) ) {
-			$elevated = IATO_MCP_Auth::require_cap( 'manage_options' );
-			if ( is_wp_error( $elevated ) ) {
-				return $elevated;
-			}
+		// Per-receipt-type cap enforcement. The cap map lives in
+		// IATO_MCP_Change_Receipt::cap_required_for so a developer adding a
+		// new target_type sees the cap requirement at the receipt-type
+		// declaration site. Unknown types fail closed at manage_options.
+		//
+		// v1.10.0 replaced the prior hand-maintained `$elevated_types` switch
+		// (only menu_item + redirect were elevated). New shape catches drift:
+		// any future receipt type without an explicit cap entry rolls back
+		// only for admins until the entry is added, instead of silently
+		// inheriting edit_posts.
+		$required_cap = IATO_MCP_Change_Receipt::cap_required_for( $receipt );
+		$type_check   = IATO_MCP_Auth::require_cap( $required_cap );
+		if ( is_wp_error( $type_check ) ) {
+			return $type_check;
 		}
 
 		$result = IATO_MCP_Rollback::rollback_by_id( $change_id );
