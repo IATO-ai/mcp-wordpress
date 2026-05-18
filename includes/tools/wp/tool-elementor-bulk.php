@@ -156,19 +156,21 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'find_elementor_widgets',
 	[
-		'description' => 'Search every Elementor post for widgets matching a filter. filter: { type?: string, setting?: { key: { eq|ne|in|nin|exists|contains: value } } }. The `contains` operator (added v1.8.0) does a case-insensitive substring match against scalar settings — useful for finding a widget by its content (e.g. setting.editor.contains="<phrase>"). post_ids=[] auto-scans all Elementor-flagged posts (post + page) with status publish/draft/pending/private, capped at 500. Revision IDs passed via post_ids are auto-resolved to their parent post; the matching row carries resolved_from_revision_id so callers can see the input mapped through. NOTE: elementor_library templates are NOT scanned in v1.8.0 — that lands in Layer 2 of the discovery work.',
+		'description' => 'Search every Elementor post for widgets matching a filter. filter: { type?: string, setting?: { key: { eq|ne|in|nin|exists|contains: value } } }. The `contains` operator (added v1.8.0) does a case-insensitive substring match against scalar settings — useful for finding a widget by its content (e.g. setting.editor.contains="<phrase>"). post_ids=[] auto-scans all Elementor-flagged posts (post + page) with status publish/draft/pending/private, capped at 500. Revision IDs passed via post_ids are auto-resolved to their parent post; the matching row carries resolved_from_revision_id so callers can see the input mapped through. Pass include_templates:true (added v1.11.0) to expand the auto-scan to elementor_library templates as well — default is false to preserve BC for existing callers. For listing templates and their Display Conditions without searching widgets, use list_elementor_templates (also v1.11.0).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'post_ids' => [ 'type' => 'array',  'description' => 'Post IDs to scan. Empty = all Elementor posts (capped at 500). Revision IDs are auto-resolved to their parent post.' ],
-				'filter'   => [ 'type' => 'object', 'description' => 'Filter spec (required): { type?, setting?: { key: { op: value } } }. Operators: eq, ne, in, nin, exists, contains (case-insensitive substring).' ],
+				'post_ids'          => [ 'type' => 'array',   'description' => 'Post IDs to scan. Empty = all Elementor posts (capped at 500). Revision IDs are auto-resolved to their parent post.' ],
+				'filter'            => [ 'type' => 'object',  'description' => 'Filter spec (required): { type?, setting?: { key: { op: value } } }. Operators: eq, ne, in, nin, exists, contains (case-insensitive substring).' ],
+				'include_templates' => [ 'type' => 'boolean', 'description' => 'When true, the auto-scan (post_ids=[]) expands to include elementor_library templates alongside post and page. Default false. Has no effect when explicit post_ids are passed.' ],
 			],
 			'required' => [ 'filter' ],
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$post_ids = is_array( $args['post_ids'] ?? null ) ? $args['post_ids'] : [];
-		$filter   = is_array( $args['filter'] ?? null ) ? $args['filter'] : null;
+		$post_ids          = is_array( $args['post_ids'] ?? null ) ? $args['post_ids'] : [];
+		$filter            = is_array( $args['filter'] ?? null ) ? $args['filter'] : null;
+		$include_templates = ! empty( $args['include_templates'] );
 
 		if ( null === $filter ) {
 			return new WP_Error( 'missing_filter', 'filter is required.' );
@@ -178,8 +180,15 @@ IATO_MCP_Server::register_tool(
 		$truncated            = false;
 		$revision_to_parent   = []; // parent_id => first revision_id that resolved to it
 		if ( empty( $post_ids ) ) {
+			// include_templates is the only knob that widens the post_type list
+			// past [post, page]. Default false preserves v1.8.x BC — silently
+			// adding elementor_library to every existing caller's scan would
+			// change match counts unpredictably.
+			$scan_post_types = $include_templates
+				? [ 'post', 'page', 'elementor_library' ]
+				: [ 'post', 'page' ];
 			$post_ids = get_posts( [
-				'post_type'      => [ 'post', 'page' ],
+				'post_type'      => $scan_post_types,
 				// Exclude trash and auto-draft from the default scan. Callers who
 				// need those can pass explicit post_ids.
 				'post_status'    => [ 'publish', 'draft', 'pending', 'private' ],

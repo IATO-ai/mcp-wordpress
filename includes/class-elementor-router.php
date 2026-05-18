@@ -709,4 +709,152 @@ class IATO_MCP_Elementor_Router {
 		}
 		return 'Theme Builder template matches the rendering location';
 	}
+
+	/**
+	 * Parse a single Elementor condition string into a structured representation.
+	 *
+	 * Returns a five-field array describing what the condition targets, without
+	 * applying it to any URL context. Used by the `list_elementor_templates`
+	 * tool (Layer 2 / v1.11.0) to surface human-readable condition information
+	 * in template listings without requiring the caller to parse the raw
+	 * string themselves.
+	 *
+	 * Intentionally an additive sibling to `condition_matches_context()` rather
+	 * than a refactor — the matcher passed v1.8.1's empirical gates and shouldn't
+	 * be disturbed by a structural refactor for unrelated downstream work.
+	 *
+	 * Supported patterns (kept in lockstep with condition_matches_context):
+	 *   include/general
+	 *   include/singular
+	 *   include/singular/{post_type}
+	 *   include/singular/{post_type}/{post_id}
+	 *   include/archive
+	 *   include/archive/{taxonomy}
+	 *   include/archive/{taxonomy}/{term_id}
+	 *   include/archive/in_taxonomy/{term_id}
+	 *   include/archive/by_author
+	 *   include/archive/by_author/{author_id}
+	 *   include/archive/post_archive
+	 *   include/archive/{cpt}_archive
+	 *   exclude/...  (same patterns, mode='exclude')
+	 *
+	 * Returns null when the condition string isn't recognized — callers should
+	 * surface the raw string when parsed is null so unknown formats stay visible.
+	 *
+	 * @return array{mode:string,scope:string,subscope:?string,target_id:?int,target_label:?string}|null
+	 */
+	public static function parse_condition_string( string $condition ): ?array {
+		$parts = explode( '/', $condition );
+		$mode  = $parts[0] ?? '';
+		if ( 'include' !== $mode && 'exclude' !== $mode ) {
+			return null;
+		}
+		$scope = $parts[1] ?? '';
+		if ( ! in_array( $scope, [ 'general', 'singular', 'archive' ], true ) ) {
+			return null;
+		}
+
+		$result = [
+			'mode'         => $mode,
+			'scope'        => $scope,
+			'subscope'     => null,
+			'target_id'    => null,
+			'target_label' => null,
+		];
+
+		if ( 'general' === $scope ) {
+			return $result;
+		}
+
+		if ( 'singular' === $scope ) {
+			if ( ! isset( $parts[2] ) ) {
+				return $result; // include/singular bare
+			}
+			$result['subscope'] = $parts[2]; // post_type slug
+			if ( isset( $parts[3] ) && ctype_digit( $parts[3] ) ) {
+				$result['target_id']    = (int) $parts[3];
+				$result['target_label'] = self::resolve_target_label( 'singular', $result['subscope'], $result['target_id'] );
+			}
+			return $result;
+		}
+
+		// 'archive' scope.
+		if ( ! isset( $parts[2] ) ) {
+			return $result; // include/archive bare
+		}
+		$result['subscope'] = $parts[2];
+
+		// Author archive: include/archive/by_author or include/archive/by_author/{id}
+		if ( 'by_author' === $result['subscope'] ) {
+			if ( isset( $parts[3] ) && ctype_digit( $parts[3] ) ) {
+				$result['target_id']    = (int) $parts[3];
+				$result['target_label'] = self::resolve_target_label( 'author', null, $result['target_id'] );
+			}
+			return $result;
+		}
+
+		// Taxonomy-agnostic term match: include/archive/in_taxonomy/{term_id}
+		if ( 'in_taxonomy' === $result['subscope'] ) {
+			if ( isset( $parts[3] ) && ctype_digit( $parts[3] ) ) {
+				$result['target_id']    = (int) $parts[3];
+				$result['target_label'] = self::resolve_target_label( 'term', null, $result['target_id'] );
+			}
+			return $result;
+		}
+
+		// post_archive — the WordPress blog index.
+		if ( 'post_archive' === $result['subscope'] ) {
+			return $result;
+		}
+
+		// {cpt}_archive — CPT-specific archive.
+		if ( substr( $result['subscope'], -8 ) === '_archive' ) {
+			return $result;
+		}
+
+		// Taxonomy slug: include/archive/{taxonomy} or include/archive/{taxonomy}/{term_id}
+		if ( isset( $parts[3] ) && ctype_digit( $parts[3] ) ) {
+			$result['target_id']    = (int) $parts[3];
+			$result['target_label'] = self::resolve_target_label( 'term', $result['subscope'], $result['target_id'] );
+		}
+		return $result;
+	}
+
+	/**
+	 * Best-effort label resolution for a condition target. Returns null when
+	 * the target was deleted or isn't resolvable. Never throws.
+	 *
+	 * @param string      $kind     'singular' | 'term' | 'author'
+	 * @param string|null $context  post_type slug for 'singular', taxonomy slug for 'term', ignored for 'author'
+	 * @param int         $id       target ID
+	 */
+	private static function resolve_target_label( string $kind, ?string $context, int $id ): ?string {
+		if ( $id <= 0 ) {
+			return null;
+		}
+		try {
+			if ( 'singular' === $kind ) {
+				$title = get_the_title( $id );
+				return is_string( $title ) && '' !== $title ? $title : null;
+			}
+			if ( 'term' === $kind ) {
+				$taxonomy = $context ?: '';
+				$term     = '' !== $taxonomy ? get_term( $id, $taxonomy ) : get_term( $id );
+				if ( $term && ! is_wp_error( $term ) && isset( $term->name ) ) {
+					return (string) $term->name;
+				}
+				return null;
+			}
+			if ( 'author' === $kind ) {
+				$user = get_userdata( $id );
+				if ( $user && isset( $user->display_name ) && '' !== $user->display_name ) {
+					return (string) $user->display_name;
+				}
+				return null;
+			}
+		} catch ( \Throwable $e ) {
+			return null;
+		}
+		return null;
+	}
 }

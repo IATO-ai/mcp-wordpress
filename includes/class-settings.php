@@ -66,6 +66,8 @@ class IATO_MCP_Settings {
 		'set_heading_level',
 		'set_widget_setting',
 		'resolve_url',
+		// Elementor v2 — template discovery (Layer 2, v1.11.0).
+		'list_elementor_templates',
 		// Safety (v1.4.0).
 		'rollback',
 		// Post meta + media (v1.6.0).
@@ -150,6 +152,10 @@ class IATO_MCP_Settings {
 			'set_featured_image',
 			'create_media',
 		],
+		// v1.11.0 Layer 2 — elementor_library discovery tool.
+		'1.11.0' => [
+			'list_elementor_templates',
+		],
 	];
 
 	/** Tools that require the IATO API key before they'll be registered. */
@@ -226,6 +232,7 @@ class IATO_MCP_Settings {
 		'start_iato_crawl'         => 'Start a new IATO crawl of this site (admin only — consumes IATO quota)',
 		'get_iato_crawl_status'    => 'Check status of a specific crawl job',
 		'list_iato_crawls'         => 'List recent IATO crawl jobs with status and IDs',
+		'list_elementor_templates' => 'Enumerate Theme Builder templates with their Display Conditions parsed (admin only — manage_options)',
 	];
 
 	/** Tool groupings for UI categories. */
@@ -240,7 +247,7 @@ class IATO_MCP_Settings {
 		'Comments'      => [ 'get_comments' ],
 		'Safety'        => [ 'rollback' ],
 		'Elementor'     => [ 'get_page_builder', 'get_elementor_data', 'update_elementor_data' ],
-		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url' ],
+		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates' ],
 		'IATO Platform' => [ 'get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report' ],
 		'Crawl Management' => [ 'start_iato_crawl', 'get_iato_crawl_status', 'list_iato_crawls' ],
 	];

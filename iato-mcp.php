@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.10.0
+ * Version:     1.11.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.10.0' );
+define( 'IATO_MCP_VERSION', '1.11.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -79,6 +79,7 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-builder.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-widgets.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-bulk.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-helpers.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-elementor-templates.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-resolve-url.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-canonical.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-structured-data.php';
