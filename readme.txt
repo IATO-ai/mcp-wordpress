@@ -154,6 +154,13 @@ Only images, and only when the calling user has the `upload_files` capability. T
 
 == Changelog ==
 
+= 1.12.0 =
+* Elementor Atomic Editor (V4) read support. list_elementor_widgets, get_elementor_data (summary), get_elementor_widget and find_elementor_widgets now return correct content for atomic elements (e-heading, e-paragraph, e-image, e-button, e-flexbox, e-div-block, ...) and for pages mixing classic and atomic elements, in document order. Every node carries schema: "classic" | "atomic"; atomic nodes are normalised to the classic peek keys (title, header_size, editor, text, link) plus tag, link_new_tab, image_url, image_id, image_alt, image_alt_source.
+* get_elementor_widget returns settings_plain (typed envelopes unwrapped, unsaved schema defaults filled and listed in defaulted_keys) alongside the raw settings. get_page_builder returns elementor_schema: classic | atomic | mixed | empty. initialize advertises capabilities.elementor.atomic_read.
+* find_elementor_widgets setting filters match atomic nodes on unwrapped values, so setting.title.contains and setting.header_size.eq work on both schemas; type accepts atomic names.
+* Reads parse _elementor_data directly with no call into Elementor code, so they work on Elementor 3.x, 4.0-4.2, with the Elementor MCP module off, and with Elementor deactivated. Classic-only pages return the same output as 1.11.0 apart from the added schema key.
+* Writes to atomic elements are not yet supported (planned next release).
+
 = 1.10.0 =
 * Security: `IATO_MCP_Auth::require_cap()` now actually enforces the capability argument. Previously the function checked only whether the request was authenticated and returned `true` regardless of the cap string passed — a documented but long-deferred limitation (the file's own docblock acknowledged it as a v1.6 hardening item). Every existing `require_cap()` call site (`edit_posts` on write tools, `manage_options` on `get_site_settings`, `upload_files` on `create_media`, etc.) was cosmetic until this release. Now real.
 * Mechanism: `authenticate()` carries the authenticated `WP_User` object through to `require_cap()` for the Application Password path. `require_cap()` calls `user_can($user, $cap)` against that user. Bearer plugin-key authentication remains documented full-administrative-access (intentional — the key itself is the gate; security comes from key issuance being admin-only); the change applies to per-user auth paths only.
