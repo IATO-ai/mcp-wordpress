@@ -204,6 +204,23 @@ List endpoints return the list under an endpoint-specific key inside `data` — 
 
 ---
 
+## Elementor Atomic (Editor V4) Reader
+
+`includes/class-elementor-atomic.php` — `IATO_MCP_Elementor_Atomic`. Pure-PHP normalisation layer for Elementor 4.x atomic elements stored in `_elementor_data` (`e-heading`, `e-paragraph`, `e-image`, `e-button`, `e-flexbox`, `e-div-block`, …). It never calls Elementor code, so reads work on Elementor 3.x, 4.0–4.2, with the Elementor MCP module off, and with Elementor deactivated.
+
+- **Detection**: a node is atomic iff `elType` or `widgetType` starts with `e-`, or any top-level setting is a typed envelope. The stored `version` key is not a signal (Elementor writes `"0.0"`, never `4`).
+- **Envelopes**: settings are `{"$$type": key, "value": payload, "disabled"?: true}`. `unwrap()` flattens them (text family `string|html|escaped-html|html-v2|html-v3` → string, `url` → string, `query` → `{post_id,label}`, `attributes` → map, `dynamic` → `{"$dynamic": …}`, unknown types recurse). `plain_settings()` also fills unsaved schema defaults from `includes/data/elementor-atomic-defaults.php` and reports them in `defaulted_keys`.
+- **Normalised view** (`normalize()`): `schema: "atomic"`, rendered `tag`, and the same peek keys classic widgets emit (`title`, `header_size`, `editor`, `text`, `link`) plus `link_new_tab`, `link_post_id`, `image_url`, `image_id`, `image_alt`, `image_alt_source` (`attachment` for Media Library images, `element` for URL images).
+- **Wiring**: `IATO_MCP_Elementor_Adapter::peek_fields()` delegates to it; every node from `flatten_widgets` / `summary` / `find_by_filter` carries `schema: classic|atomic`; `matches_filter()` evaluates atomic nodes against `match_settings()` (plain values + derived `header_size`, `editor`, `link_url`, `image_*`). `get_elementor_widget` adds `settings_plain`, `defaulted_keys`, `tag`, `peek` for atomic nodes while keeping `settings` raw. `get_page_builder` adds `elementor_schema: classic|atomic|mixed|empty`. `initialize` advertises `capabilities.elementor.atomic_read`.
+- **WP calls** (attachment alt/URL, permalink) go through an injectable resolver (`set_resolver()`), which is how the unit tests run without WordPress.
+- **Writes to atomic elements are not supported yet** (planned: delegate to Elementor's `manage-elements` ability). Note that Bearer-authenticated MCP requests run as WP user 0 (see `includes/class-auth.php` KI-1), which Elementor's own save path rejects.
+
+### Tests
+
+`composer install && vendor/bin/phpunit`. Standalone PHPUnit with WP stubs in `tests/bootstrap.php`; fixtures in `tests/fixtures/elementor/` (`classic-only`, `atomic-only`, `mixed` captured from a wp-env site running Elementor 4.3.4 through `tests/wp-env/create-fixture-pages.php`; `legacy-and-edge-cases` hand-written; `*.expected.json` snapshots regenerated with `tests/tools/dump-read-output.php`). `classic-only.pre-sprint-a.expected.json` is the pre-atomic golden output and must keep matching, minus the `schema` key. `.wp-env.json` + `tests/wp-env/read-tools-smoke.sh` drive the live site. None of this ships (see `.distignore`).
+
+---
+
 ## SEO Plugin Adapter
 
 `class-seo-adapter.php` detects which SEO plugin is active and reads/writes accordingly.

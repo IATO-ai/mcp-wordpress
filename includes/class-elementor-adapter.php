@@ -163,6 +163,7 @@ class IATO_MCP_Elementor_Adapter {
 			$node = [
 				'widget_id' => isset( $element['id'] ) ? (string) $element['id'] : null,
 				'type'      => 'widget' === $type ? (string) ( $element['widgetType'] ?? 'widget' ) : $type,
+				'schema'    => IATO_MCP_Elementor_Atomic::schema_of( $element ),
 				'parent_id' => $parent_id,
 				'depth'     => $depth,
 			];
@@ -183,6 +184,7 @@ class IATO_MCP_Elementor_Adapter {
 		$node = [
 			'widget_id' => isset( $element['id'] ) ? (string) $element['id'] : null,
 			'type'      => 'widget' === $type ? (string) ( $element['widgetType'] ?? 'widget' ) : $type,
+			'schema'    => IATO_MCP_Elementor_Atomic::schema_of( $element ),
 		];
 		$peek = self::peek_fields( $element );
 		if ( ! empty( $peek ) ) {
@@ -199,8 +201,19 @@ class IATO_MCP_Elementor_Adapter {
 	/**
 	 * Pluck the 1–3 most useful settings fields per widget for the flat list.
 	 * Heuristic: the fields humans use to identify a widget at a glance.
+	 *
+	 * Atomic (Elementor V4) nodes are delegated to IATO_MCP_Elementor_Atomic,
+	 * which unwraps the typed settings envelopes and emits the same key names
+	 * (title, header_size, text, editor, link) plus `tag` and image/link
+	 * extras. Classic nodes keep the original scalar-only heuristic.
 	 */
 	private static function peek_fields( array $element ): array {
+		if ( IATO_MCP_Elementor_Atomic::is_atomic( $element ) ) {
+			$peek = IATO_MCP_Elementor_Atomic::normalize( $element );
+			unset( $peek['schema'] ); // Node builders already set it.
+			return $peek;
+		}
+
 		$settings = $element['settings'] ?? [];
 		if ( ! is_array( $settings ) ) {
 			return [];
@@ -225,6 +238,7 @@ class IATO_MCP_Elementor_Adapter {
 		$out  = [
 			'widget_id' => isset( $element['id'] ) ? (string) $element['id'] : null,
 			'type'      => 'widget' === $type ? (string) ( $element['widgetType'] ?? 'widget' ) : $type,
+			'schema'    => IATO_MCP_Elementor_Atomic::schema_of( $element ),
 		];
 		$peek = self::peek_fields( $element );
 		if ( ! empty( $peek ) ) {
@@ -636,9 +650,14 @@ class IATO_MCP_Elementor_Adapter {
 	 * Walk all widgets in $elements and return those matching $filter.
 	 *
 	 * Filter shape: {
-	 *   type?: string,                    // matches widgetType
-	 *   setting: { key: { op: value } }   // op = eq | ne | in | nin | exists ; bare value = eq
+	 *   type?: string,                    // matches widgetType (e.g. heading, e-heading) or elType (e-flexbox)
+	 *   setting: { key: { op: value } }   // op = eq | ne | in | nin | exists | contains ; bare value = eq
 	 * }
+	 *
+	 * Setting clauses are evaluated against raw settings for classic widgets
+	 * and against IATO_MCP_Elementor_Atomic::match_settings() for atomic nodes
+	 * (unwrapped values plus derived header_size / editor / link_url /
+	 * image_url / image_id / image_alt), so the same filter works on both.
 	 *
 	 * @return array list of { post_id?, widget_id, type, ...peek }
 	 */
@@ -652,6 +671,7 @@ class IATO_MCP_Elementor_Adapter {
 			$summary = [
 				'widget_id' => isset( $element['id'] ) ? (string) $element['id'] : null,
 				'type'      => 'widget' === $type ? (string) ( $element['widgetType'] ?? 'widget' ) : $type,
+				'schema'    => IATO_MCP_Elementor_Atomic::schema_of( $element ),
 			];
 			if ( null !== $post_id ) {
 				$summary = [ 'post_id' => $post_id ] + $summary;
@@ -684,7 +704,9 @@ class IATO_MCP_Elementor_Adapter {
 			return true;
 		}
 
-		$settings = is_array( $element['settings'] ?? null ) ? $element['settings'] : [];
+		$settings = IATO_MCP_Elementor_Atomic::is_atomic( $element )
+			? IATO_MCP_Elementor_Atomic::match_settings( $element )
+			: ( is_array( $element['settings'] ?? null ) ? $element['settings'] : [] );
 		foreach ( $filter['setting'] as $key => $clause ) {
 			if ( ! self::matches_setting( $settings, (string) $key, $clause ) ) {
 				return false;

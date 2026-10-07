@@ -16,7 +16,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_page_builder',
 	[
-		'description' => 'Detects which page builder a post or page uses: elementor, wpbakery, divi, beaver-builder, gutenberg, or classic.',
+		'description' => 'Detects which page builder a post or page uses: elementor, wpbakery, divi, beaver-builder, gutenberg, or classic. For Elementor posts also returns elementor_schema: "classic" (V3 widgets only), "atomic" (V4 Atomic Editor elements only), "mixed", or "empty".',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -40,11 +40,25 @@ IATO_MCP_Server::register_tool(
 
 		// Elementor.
 		if ( get_post_meta( $post_id, '_elementor_edit_mode', true ) === 'builder' ) {
-			return IATO_MCP_Server::ok( [
+			$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
+			$response       = [
 				'post_id'  => $post_id,
 				'builder'  => 'elementor',
-				'has_data' => ! empty( get_post_meta( $post_id, '_elementor_data', true ) ),
-			] );
+				'has_data' => ! empty( $elementor_data ),
+			];
+			// classic | atomic | mixed | empty — lets clients know whether the
+			// document contains Elementor V4 (Atomic Editor) elements before they
+			// pick a write path. Decode failures leave the key out rather than
+			// failing the builder detection.
+			if ( ! empty( $elementor_data ) ) {
+				$decoded = json_decode( (string) $elementor_data, true );
+				if ( is_array( $decoded ) ) {
+					$response['elementor_schema'] = IATO_MCP_Elementor_Atomic::document_schema(
+						IATO_MCP_Elementor_Adapter::force_arrays( $decoded )
+					);
+				}
+			}
+			return IATO_MCP_Server::ok( $response );
 		}
 
 		// WPBakery — shortcodes in post_content.
@@ -92,7 +106,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_elementor_data',
 	[
-		'description' => 'Returns Elementor data for a post. format=raw (default) returns the original stored JSON; format=compact decodes and strips default-valued settings; format=summary returns a tree of {widget_id, type, peek_fields}. Always includes the revision hash for use with v2 if_revision guards.',
+		'description' => 'Returns Elementor data for a post. format=raw (default) returns the original stored JSON; format=compact decodes and strips default-valued settings (classic widgets only; atomic nodes pass through unchanged); format=summary returns a tree of {widget_id, type, schema, peek_fields} where schema is "classic" or "atomic" (Elementor V4) and atomic nodes are normalised to the classic peek keys plus tag / image / link fields. Always includes the revision hash for use with v2 if_revision guards.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [

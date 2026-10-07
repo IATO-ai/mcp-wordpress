@@ -1,0 +1,413 @@
+{
+    "flat": [
+        {
+            "widget_id": "a7e4d00",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "parent_id": null,
+            "depth": 0,
+            "tag": "div"
+        },
+        {
+            "widget_id": "a7e4d01",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "h1",
+            "title": "Atomic H1 heading",
+            "header_size": "h1"
+        },
+        {
+            "widget_id": "a7e4d02",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "h2",
+            "title": "Atomic heading with default tag",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "a7e4d03",
+            "type": "e-paragraph",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "p",
+            "editor": "Atomic paragraph with <strong>inline HTML</strong> and a <a href=\"https://exampl…"
+        },
+        {
+            "widget_id": "a7e4d04",
+            "type": "e-image",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "img",
+            "image_url": "http://localhost:8888/wp-content/uploads/2026/10/iato-fixture-image.png",
+            "image_id": 5,
+            "image_alt": "Library image alt text",
+            "image_alt_source": "attachment"
+        },
+        {
+            "widget_id": "a7e4d05",
+            "type": "e-image",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "img",
+            "image_url": "https://example.com/photos/external.jpg",
+            "image_id": null,
+            "image_alt": "External image alt text",
+            "image_alt_source": "element",
+            "link": "https://example.com/photo-target",
+            "link_new_tab": false
+        },
+        {
+            "widget_id": "a7e4d06",
+            "type": "e-button",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "a",
+            "text": "Atomic button",
+            "link": "https://example.com/go",
+            "link_new_tab": true
+        },
+        {
+            "widget_id": "a7e4d07",
+            "type": "e-button",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "button",
+            "text": "Atomic button without link"
+        },
+        {
+            "widget_id": "a7e4d10",
+            "type": "e-div-block",
+            "schema": "atomic",
+            "parent_id": "a7e4d00",
+            "depth": 1,
+            "tag": "div"
+        },
+        {
+            "widget_id": "a7e4d20",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "parent_id": null,
+            "depth": 0,
+            "tag": "a",
+            "link": "https://example.com/container-link",
+            "link_new_tab": false
+        }
+    ],
+    "tree": [
+        {
+            "widget_id": "a7e4d00",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "div",
+            "children": [
+                {
+                    "widget_id": "a7e4d01",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h1",
+                    "title": "Atomic H1 heading",
+                    "header_size": "h1"
+                },
+                {
+                    "widget_id": "a7e4d02",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h2",
+                    "title": "Atomic heading with default tag",
+                    "header_size": "h2"
+                },
+                {
+                    "widget_id": "a7e4d03",
+                    "type": "e-paragraph",
+                    "schema": "atomic",
+                    "tag": "p",
+                    "editor": "Atomic paragraph with <strong>inline HTML</strong> and a <a href=\"https://exampl…"
+                },
+                {
+                    "widget_id": "a7e4d04",
+                    "type": "e-image",
+                    "schema": "atomic",
+                    "tag": "img",
+                    "image_url": "http://localhost:8888/wp-content/uploads/2026/10/iato-fixture-image.png",
+                    "image_id": 5,
+                    "image_alt": "Library image alt text",
+                    "image_alt_source": "attachment"
+                },
+                {
+                    "widget_id": "a7e4d05",
+                    "type": "e-image",
+                    "schema": "atomic",
+                    "tag": "img",
+                    "image_url": "https://example.com/photos/external.jpg",
+                    "image_id": null,
+                    "image_alt": "External image alt text",
+                    "image_alt_source": "element",
+                    "link": "https://example.com/photo-target",
+                    "link_new_tab": false
+                },
+                {
+                    "widget_id": "a7e4d06",
+                    "type": "e-button",
+                    "schema": "atomic",
+                    "tag": "a",
+                    "text": "Atomic button",
+                    "link": "https://example.com/go",
+                    "link_new_tab": true
+                },
+                {
+                    "widget_id": "a7e4d07",
+                    "type": "e-button",
+                    "schema": "atomic",
+                    "tag": "button",
+                    "text": "Atomic button without link"
+                },
+                {
+                    "widget_id": "a7e4d10",
+                    "type": "e-div-block",
+                    "schema": "atomic",
+                    "tag": "div"
+                }
+            ]
+        },
+        {
+            "widget_id": "a7e4d20",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "a",
+            "link": "https://example.com/container-link",
+            "link_new_tab": false
+        }
+    ],
+    "summary": [
+        {
+            "widget_id": "a7e4d00",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "div"
+        },
+        {
+            "widget_id": "a7e4d01",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h1",
+            "title": "Atomic H1 heading",
+            "header_size": "h1"
+        },
+        {
+            "widget_id": "a7e4d02",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Atomic heading with default tag",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "a7e4d03",
+            "type": "e-paragraph",
+            "schema": "atomic",
+            "tag": "p",
+            "editor": "Atomic paragraph with <strong>inline HTML</strong> and a <a href=\"https://exampl…"
+        },
+        {
+            "widget_id": "a7e4d04",
+            "type": "e-image",
+            "schema": "atomic",
+            "tag": "img",
+            "image_url": "http://localhost:8888/wp-content/uploads/2026/10/iato-fixture-image.png",
+            "image_id": 5,
+            "image_alt": "Library image alt text",
+            "image_alt_source": "attachment"
+        },
+        {
+            "widget_id": "a7e4d05",
+            "type": "e-image",
+            "schema": "atomic",
+            "tag": "img",
+            "image_url": "https://example.com/photos/external.jpg",
+            "image_id": null,
+            "image_alt": "External image alt text",
+            "image_alt_source": "element",
+            "link": "https://example.com/photo-target",
+            "link_new_tab": false
+        },
+        {
+            "widget_id": "a7e4d06",
+            "type": "e-button",
+            "schema": "atomic",
+            "tag": "a",
+            "text": "Atomic button",
+            "link": "https://example.com/go",
+            "link_new_tab": true
+        },
+        {
+            "widget_id": "a7e4d07",
+            "type": "e-button",
+            "schema": "atomic",
+            "tag": "button",
+            "text": "Atomic button without link"
+        },
+        {
+            "widget_id": "a7e4d10",
+            "type": "e-div-block",
+            "schema": "atomic",
+            "tag": "div"
+        },
+        {
+            "widget_id": "a7e4d20",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "a",
+            "link": "https://example.com/container-link",
+            "link_new_tab": false
+        }
+    ],
+    "find_untyped": [
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d01",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h1",
+            "title": "Atomic H1 heading",
+            "header_size": "h1"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d02",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Atomic heading with default tag",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d03",
+            "type": "e-paragraph",
+            "schema": "atomic",
+            "tag": "p",
+            "editor": "Atomic paragraph with <strong>inline HTML</strong> and a <a href=\"https://exampl…"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d04",
+            "type": "e-image",
+            "schema": "atomic",
+            "tag": "img",
+            "image_url": "http://localhost:8888/wp-content/uploads/2026/10/iato-fixture-image.png",
+            "image_id": 5,
+            "image_alt": "Library image alt text",
+            "image_alt_source": "attachment"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d05",
+            "type": "e-image",
+            "schema": "atomic",
+            "tag": "img",
+            "image_url": "https://example.com/photos/external.jpg",
+            "image_id": null,
+            "image_alt": "External image alt text",
+            "image_alt_source": "element",
+            "link": "https://example.com/photo-target",
+            "link_new_tab": false
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d06",
+            "type": "e-button",
+            "schema": "atomic",
+            "tag": "a",
+            "text": "Atomic button",
+            "link": "https://example.com/go",
+            "link_new_tab": true
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d07",
+            "type": "e-button",
+            "schema": "atomic",
+            "tag": "button",
+            "text": "Atomic button without link"
+        }
+    ],
+    "find_e_heading": [
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d01",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h1",
+            "title": "Atomic H1 heading",
+            "header_size": "h1"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d02",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Atomic heading with default tag",
+            "header_size": "h2"
+        }
+    ],
+    "find_h1": [
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d01",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h1",
+            "title": "Atomic H1 heading",
+            "header_size": "h1"
+        }
+    ],
+    "find_title_atomic": [
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d01",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h1",
+            "title": "Atomic H1 heading",
+            "header_size": "h1"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d02",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Atomic heading with default tag",
+            "header_size": "h2"
+        }
+    ],
+    "find_e_flexbox": [
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d00",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "div"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "a7e4d20",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "a",
+            "link": "https://example.com/container-link",
+            "link_new_tab": false
+        }
+    ],
+    "document_schema": "atomic"
+}

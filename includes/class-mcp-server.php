@@ -275,7 +275,12 @@ class IATO_MCP_Server {
 		// actually active — tells clients they can hand off to v2 tools without
 		// a tools/list round-trip.
 		if ( class_exists( '\Elementor\Plugin' ) ) {
-			$capabilities['elementor'] = [ 'v2' => true ];
+			// atomic_read: read tools normalise Elementor V4 (atomic) elements —
+			// e-heading / e-paragraph / e-image / e-button / e-flexbox etc. — and
+			// mark every node with schema: classic | atomic. Pure _elementor_data
+			// parsing, so it does not depend on the Elementor version or the
+			// Elementor MCP module.
+			$capabilities['elementor'] = [ 'v2' => true, 'atomic_read' => true ];
 		}
 		return [
 			'protocolVersion' => $negotiated,
