@@ -24,6 +24,7 @@ delete_option( 'iato_mcp_wizard_step' );
 delete_option( 'iato_mcp_redirects' );
 delete_option( 'iato_mcp_api_key_valid' );
 delete_option( 'iato_mcp_db_version' );
+delete_option( 'iato_mcp_abilities_enabled' );
 delete_option( 'iato_mcp_media_url_source_enabled' );
 delete_option( 'iato_mcp_media_url_host_allowlist' );
 delete_option( 'iato_mcp_media_max_upload_size' );

@@ -299,6 +299,15 @@ class IATO_MCP_Settings {
 		$tools = self::sanitize_tools( $tools_raw );
 		update_option( 'iato_mcp_tools', $tools );
 
+		// WordPress Abilities exposure toggle (hidden value=0 sibling pattern,
+		// see the media URL toggle below for why rest_sanitize_boolean suffices).
+		$abilities_enabled = isset( $_POST['iato_mcp_abilities_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_abilities_enabled'] ) )
+			: true;
+		// '1' / '0', see register_settings(): a boolean false would not be stored
+		// the first time the option is saved.
+		update_option( 'iato_mcp_abilities_enabled', self::sanitize_bool_flag( $abilities_enabled ) );
+
 		// Media uploads — URL source toggle. The render emits a hidden value=0
 		// sibling so the key is always present in $_POST regardless of checkbox
 		// state (unchecked => "0", checked => "1" wins because PHP keeps the
@@ -334,6 +343,7 @@ class IATO_MCP_Settings {
 				'api_key_length'      => strlen( $api_key ),
 				'crawl_id'            => $crawl_id,
 				'tools_enabled'       => count( $tools ),
+				'abilities_enabled'   => $abilities_enabled,
 				'media_url_enabled'   => $media_url_enabled,
 				'media_hosts_count'   => count( $host_list ),
 				'media_max_bytes'     => $max_bytes,
@@ -454,6 +464,17 @@ class IATO_MCP_Settings {
 			'default'           => [],
 		] );
 
+		// --- WordPress Abilities exposure (see IATO_MCP_Abilities) ---
+		// Stored as '1' / '0' strings, not booleans: update_option( $name, false )
+		// on a fresh install (no row yet) is a silent no-op because false
+		// serialises identically to "missing", so the first "off" save would be
+		// dropped. A string flag always creates the row.
+		register_setting( self::OPTION_GROUP, 'iato_mcp_abilities_enabled', [
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '1',
+		] );
+
 		// --- Media upload settings (v1.6.0) ---
 		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_source_enabled', [
 			'type'              => 'boolean',
@@ -545,6 +566,14 @@ class IATO_MCP_Settings {
 	/**
 	 * Sanitize the enabled tools array.
 	 */
+	/**
+	 * Normalise a checkbox value to the '1' / '0' string flag used by
+	 * iato_mcp_abilities_enabled (see register_settings() for why not bool).
+	 */
+	public static function sanitize_bool_flag( $value ): string {
+		return rest_sanitize_boolean( $value ) ? '1' : '0';
+	}
+
 	public static function sanitize_tools( $value ): array {
 		if ( ! is_array( $value ) ) {
 			return [];
@@ -610,6 +639,9 @@ class IATO_MCP_Settings {
 		$crawl_id     = sanitize_text_field( get_option( 'iato_mcp_crawl_id', '' ) );
 		$enabled      = get_option( 'iato_mcp_tools', [] );
 		$all_on       = empty( $enabled );
+
+		$abilities_enabled   = IATO_MCP_Abilities::is_enabled();
+		$abilities_api_exists = function_exists( 'wp_register_ability' );
 
 		$media_url_enabled = (bool) get_option( 'iato_mcp_media_url_source_enabled', false );
 		$media_host_list   = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
@@ -792,6 +824,23 @@ class IATO_MCP_Settings {
 									'<a href="https://iato.ai/dashboard" target="_blank" rel="noopener">' . esc_html__( 'IATO dashboard', 'iato-mcp' ) . '</a>'
 								);
 								?>
+							</p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_abilities_enabled"><?php esc_html_e( 'WordPress Abilities', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_abilities_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_abilities_enabled" id="iato_mcp_abilities_enabled" value="1" <?php checked( $abilities_enabled ); ?> />
+								<span><?php esc_html_e( 'Expose crawl tools as WordPress Abilities', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint">
+								<?php esc_html_e( 'Registers the read-only IATO crawl tools (broken links, orphan pages, SEO fixes, suggestions, sitemap, …) as iato/* abilities so any MCP server built on the WordPress MCP Adapter, and the wp-abilities/v1 REST API, can discover and run them. Each ability requires the manage_options capability by default (lower it with the iato_mcp_ability_capability filter) and uses the API key above. Requires WordPress 6.9 or later.', 'iato-mcp' ); ?>
+								<?php if ( ! $abilities_api_exists ) : ?>
+									<br /><strong><?php esc_html_e( 'The Abilities API is not available on this WordPress version, so nothing is registered until you upgrade.', 'iato-mcp' ); ?></strong>
+								<?php endif; ?>
 							</p>
 						</div>
 					</div>

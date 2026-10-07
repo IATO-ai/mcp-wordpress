@@ -204,6 +204,23 @@ List endpoints return the list under an endpoint-specific key inside `data` — 
 
 ---
 
+## WordPress Abilities Bridge
+
+`includes/class-abilities.php` — `IATO_MCP_Abilities`. Registers the eleven read-only bridge tools as `iato/*` abilities through the core Abilities API (WordPress 6.9+) so any MCP server built on the WordPress MCP Adapter, and the `wp-abilities/v1` REST API, can discover and run them. `start_iato_crawl` and every write tool are deliberately not registered.
+
+- **One implementation.** `IATO_MCP_Server` keeps a `$catalog` of every tool passed to `register_tool()` (definition + handler), separate from `$tools` (what `tools/list` exposes). Each ability's `execute_callback` calls `IATO_MCP_Server::invoke_tool()`, which runs the same closure the MCP tool uses and unwraps the `ok()` text envelope. `WP_Error`s pass through with array messages JSON-encoded, exactly as `handle_tools_call()` does, so both surfaces return identical text.
+- **Catalog-only loading.** `iato-mcp.php` loads the bridge tool files when an IATO key is set (as before) *or* when abilities exposure is on; in the second case `IATO_MCP_Server::set_catalog_only(true)` wraps the requires so nothing is added to `tools/list`. An unconnected site therefore still registers the abilities, and executing one returns `iato_not_connected` with instructions.
+- **Names, labels, descriptions** live in `IATO_MCP_Abilities::ABILITIES` (slug → tool, label, description). Descriptions are written for discovery (≤ 400 chars, crawl source + question answered + when to use). Input schemas are derived from the tool's `inputSchema` (`type: object`, `default: []`; `get-sitemap` additionally documents `crawl_id`, which its handler already reads). `output_schema` is `{type: object}`.
+- **Permissions.** `permission_callback` is `current_user_can( IATO_MCP_Abilities::capability_for( $slug ) )`: `manage_options` for all eleven by default, lowerable per ability with the `iato_mcp_ability_capability` filter (`function( string $cap, string $ability, string $tool ): string`). The filter is evaluated on every call, not captured at registration. Abilities run as the REST-authenticated WordPress user; `IATO_MCP_Auth::require_cap()` is not involved. Every IATO call uses the stored API key only.
+- **Meta.** `public`, `show_in_rest`, `mcp.public` all `true`; annotations `readonly: true, destructive: false, idempotent: true` (`DEFAULT_ANNOTATIONS`), except `get-suggestions`, which is only `destructive: false` because it can trigger suggestion generation on IATO (a per-entry `annotations` override in the table). Non-readonly abilities run over POST on core's `wp-abilities/v1` route. The MCP Adapter decides exposure from `meta.mcp.public`; core REST from `meta.show_in_rest`.
+- **Setting.** `iato_mcp_abilities_enabled` (boolean, default on, "IATO Platform" card, admin-ajax persisted per the settings checklist). Off → no hooks are attached and no `iato/` abilities exist. The per-tool toggles in the Tools card are honoured too: a tool switched off disappears from both surfaces.
+- **Hooks.** `IATO_MCP_Abilities::init()` runs on `plugins_loaded` and attaches `wp_abilities_api_categories_init` / `wp_abilities_api_init` (both fire lazily on first registry access after `init`). Every entry point is guarded with `function_exists('wp_register_ability')`, so WordPress below 6.9 is a silent no-op.
+- **Known quirk (pre-existing).** Saving the Settings form before an IATO key exists stores `iato_mcp_tools` without the bridge tools, which then count as toggled off on both surfaces once a key is added. Clearing the option (or re-saving with the bridge tools checked) restores them.
+
+Tests: `tests/AbilitiesRegistrationTest.php` (loads the production bridge files in catalog-only mode; stubs in `tests/stubs-abilities.php`), `tests/wp-env/abilities-smoke.sh` (three-way parity: core REST run, adapter `execute-ability`, IATO `tools/call`), `tests/wp-env/abilities-settings-save.php` (admin-ajax save path).
+
+---
+
 ## Elementor Atomic (Editor V4) Reader
 
 `includes/class-elementor-atomic.php` — `IATO_MCP_Elementor_Atomic`. Pure-PHP normalisation layer for Elementor 4.x atomic elements stored in `_elementor_data` (`e-heading`, `e-paragraph`, `e-image`, `e-button`, `e-flexbox`, `e-div-block`, …). It never calls Elementor code, so reads work on Elementor 3.x, 4.0–4.2, with the Elementor MCP module off, and with Elementor deactivated.

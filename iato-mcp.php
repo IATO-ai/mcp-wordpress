@@ -62,6 +62,7 @@ require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
 require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
+require_once IATO_MCP_DIR . 'includes/class-abilities.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
@@ -91,8 +92,15 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-settings.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-featured-image.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media-upload.php';
 
-// Phase 2 — IATO bridge tools (loaded only when IATO API key is configured)
-if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
+// Phase 2 — IATO bridge tools. Exposed on the MCP endpoint only when an IATO
+// API key is configured (unchanged). When the key is absent but WordPress
+// Abilities exposure is enabled, the same files are loaded in catalog-only
+// mode: IATO_MCP_Server records their definitions and handlers without adding
+// anything to tools/list, so the iato/* abilities can exist and return a clear
+// "not connected" error. See IATO_MCP_Abilities.
+$iato_mcp_connected = get_option( 'iato_mcp_api_key', '' ) !== '';
+if ( $iato_mcp_connected || IATO_MCP_Abilities::is_enabled() ) {
+	IATO_MCP_Server::set_catalog_only( ! $iato_mcp_connected );
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-sitemap.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-nav-audit.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-orphans.php';
@@ -105,7 +113,9 @@ if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-start-crawl.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-crawl-status.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-list-crawls.php';
+	IATO_MCP_Server::set_catalog_only( false );
 }
+unset( $iato_mcp_connected );
 
 /**
  * Boot the plugin after all plugins are loaded.
@@ -117,6 +127,7 @@ function iato_mcp_init() {
 	IATO_MCP_Rollback::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
+	IATO_MCP_Abilities::init();
 	iato_mcp_maybe_run_migrations();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
