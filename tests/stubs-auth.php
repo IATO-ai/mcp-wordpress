@@ -38,6 +38,9 @@ if ( ! class_exists( 'WP_User' ) ) {
 			}
 		}
 		public function exists(): bool {
+			if ( class_exists( 'IATO_Test_Roles' ) && isset( IATO_Test_Roles::$users[ $this->ID ] ) ) {
+				return true; // role-model user (rollback / require_cap tests)
+			}
 			return $this->ID > 0 && ( IATO_Test_Auth_State::$users[ $this->ID ]['exists'] ?? false );
 		}
 	}
@@ -68,6 +71,11 @@ if ( ! function_exists( 'get_user_by' ) ) {
 if ( ! function_exists( 'user_can' ) ) {
 	function user_can( mixed $user, string $cap, mixed ...$args ): bool {
 		$id = $user instanceof WP_User ? $user->ID : (int) $user;
+		// Users registered in the role/meta-cap model (tests/stubs-rollback.php)
+		// are resolved there, including object-level meta capabilities.
+		if ( class_exists( 'IATO_Test_Roles' ) && isset( IATO_Test_Roles::$users[ $id ] ) ) {
+			return IATO_Test_Roles::has( $id, $cap, $args );
+		}
 		return (bool) ( IATO_Test_Auth_State::$users[ $id ]['caps'][ $cap ] ?? false );
 	}
 }

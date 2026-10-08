@@ -78,7 +78,15 @@ if ( ! function_exists( 'user_can' ) ) {
 }
 if ( ! function_exists( 'get_post' ) ) {
 	function get_post( int $id ): ?object {
-		return isset( IATO_Test_Roles::$posts[ $id ] ) ? (object) ( [ 'ID' => $id ] + IATO_Test_Roles::$posts[ $id ] ) : null;
+		if ( isset( IATO_Test_Roles::$posts[ $id ] ) ) {
+			return (object) ( [ 'ID' => $id ] + IATO_Test_Roles::$posts[ $id ] );
+		}
+		// Posts from the generic test store (ElementorWritePipelineTest), when
+		// this stub happens to load first.
+		if ( class_exists( 'IATO_Test_WP' ) && isset( IATO_Test_WP::$posts[ $id ] ) ) {
+			return (object) ( [ 'ID' => $id ] + IATO_Test_WP::$posts[ $id ] );
+		}
+		return null;
 	}
 }
 if ( ! function_exists( 'get_term' ) ) {
