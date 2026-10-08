@@ -184,6 +184,13 @@ class IATO_MCP_OAuth {
 
 			$mcp_key = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
 
+			// Token binding: an explicit approval by an administrator binds an
+			// unbound key to that administrator (the consent screen said so).
+			// A key that already has an owner keeps it; the screen named them.
+			if ( 0 === IATO_MCP_Auth::key_owner_id() ) {
+				IATO_MCP_Auth::bind_key_owner( (int) get_current_user_id() );
+			}
+
 			$params = [ 'code' => $mcp_key ];
 			if ( '' !== $state ) {
 				$params['state'] = $state;
@@ -203,7 +210,29 @@ class IATO_MCP_OAuth {
 			? $clients[ $client_id ]['client_name']
 			: $client_id;
 
-		self::render_authorize_screen( $client_label );
+		self::render_authorize_screen( $client_label, self::actor_context() );
+	}
+
+	/**
+	 * Who will the connection act as? Drives the consent-screen wording.
+	 *
+	 * @return array{state:string,owner:?WP_User,approver:WP_User}
+	 */
+	private static function actor_context(): array {
+		$owner_id = IATO_MCP_Auth::key_owner_id();
+		$owner    = $owner_id > 0 ? get_user_by( 'id', $owner_id ) : null;
+		$approver = wp_get_current_user();
+
+		if ( 0 === $owner_id ) {
+			$state = 'unbound';
+		} elseif ( ! $owner || ! $owner->exists() ) {
+			$state = 'owner_missing';
+		} elseif ( (int) $owner->ID === (int) $approver->ID ) {
+			$state = 'self';
+		} else {
+			$state = 'other';
+		}
+		return [ 'state' => $state, 'owner' => $owner ?: null, 'approver' => $approver ];
 	}
 
 	/**
@@ -371,8 +400,12 @@ CSS;
 	/**
 	 * Minimal approval screen so the WP admin confirms the connection.
 	 */
-	private static function render_authorize_screen( string $client_name ): void {
+	private static function render_authorize_screen( string $client_name, array $actor = [] ): void {
 		$site_name = sanitize_text_field( get_bloginfo( 'name' ) );
+		$settings_url = admin_url( 'options-general.php?page=iato-mcp' );
+		$state        = $actor['state'] ?? 'unbound';
+		$approver     = $actor['approver'] ?? wp_get_current_user();
+		$owner        = $actor['owner'] ?? null;
 
 		// Enqueue inline styles via WP.
 		wp_register_style( 'iato-mcp-oauth', false, [], IATO_MCP_VERSION );
@@ -412,6 +445,63 @@ CSS;
 						<li><?php esc_html_e( 'Update SEO metadata', 'iato-mcp' ); ?></li>
 						<li><?php esc_html_e( 'Manage media and navigation', 'iato-mcp' ); ?></li>
 					</ul>
+				</div>
+				<div class="auth-permissions auth-actor">
+					<h3><?php esc_html_e( 'This connection will act as', 'iato-mcp' ); ?></h3>
+					<?php if ( 'other' === $state && $owner ) : ?>
+						<p>
+							<?php
+							printf(
+								/* translators: 1: owner display name, 2: owner login, 3: approver login */
+								esc_html__( '%1$s (%2$s), the owner of this site\'s IATO MCP key. It will NOT act as you (%3$s): everything the client does will run with, and be attributed to, the key owner\'s account.', 'iato-mcp' ),
+								'<strong>' . esc_html( $owner->display_name ) . '</strong>',
+								esc_html( $owner->user_login ),
+								esc_html( $approver->user_login )
+							);
+							?>
+						</p>
+						<p>
+							<?php
+							printf(
+								/* translators: %s: link to the IATO MCP settings page */
+								esc_html__( 'To change that, assign a different owner or regenerate the key under %s.', 'iato-mcp' ),
+								'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Settings > IATO MCP', 'iato-mcp' ) . '</a>'
+							);
+							?>
+						</p>
+					<?php elseif ( 'self' === $state ) : ?>
+						<p>
+							<?php
+							printf(
+								/* translators: 1: approver display name, 2: approver login */
+								esc_html__( '%1$s (%2$s), you. The key is already assigned to your account; everything the client does will be attributed to you.', 'iato-mcp' ),
+								'<strong>' . esc_html( $approver->display_name ) . '</strong>',
+								esc_html( $approver->user_login )
+							);
+							?>
+						</p>
+					<?php elseif ( 'owner_missing' === $state ) : ?>
+						<p>
+							<?php
+							printf(
+								/* translators: %s: link to the IATO MCP settings page */
+								esc_html__( 'Nobody: the WordPress user who owns this site\'s IATO MCP key no longer exists, so the key is currently rejected. Approving will not fix that. Assign a new owner or regenerate the key under %s first.', 'iato-mcp' ),
+								'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Settings > IATO MCP', 'iato-mcp' ) . '</a>'
+							);
+							?>
+						</p>
+					<?php else : ?>
+						<p>
+							<?php
+							printf(
+								/* translators: 1: approver display name, 2: approver login */
+								esc_html__( '%1$s (%2$s), you. Approving assigns this site\'s IATO MCP key to your account: from now on everything any client using this key does will run with, and be attributed to, your account.', 'iato-mcp' ),
+								'<strong>' . esc_html( $approver->display_name ) . '</strong>',
+								esc_html( $approver->user_login )
+							);
+							?>
+						</p>
+					<?php endif; ?>
 				</div>
 				<form method="post" class="auth-actions">
 					<?php wp_nonce_field( 'iato_mcp_oauth_authorize' ); ?>

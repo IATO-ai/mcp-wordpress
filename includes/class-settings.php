@@ -262,6 +262,9 @@ class IATO_MCP_Settings {
 		add_action( 'admin_notices', [ self::class, 'setup_wizard_notice' ] );
 		add_action( 'admin_post_iato_mcp_dismiss_wizard', [ self::class, 'dismiss_wizard' ] );
 		add_action( 'admin_post_iato_mcp_regenerate_key', [ self::class, 'handle_regenerate_key' ] );
+		add_action( 'admin_post_iato_mcp_assign_key_owner', [ self::class, 'handle_assign_key_owner' ] );
+		add_action( 'admin_post_iato_mcp_dismiss_owner_notice', [ self::class, 'dismiss_owner_notice' ] );
+		add_action( 'admin_notices', [ self::class, 'key_owner_notice' ] );
 		add_action( 'wp_ajax_iato_mcp_test_api_key', [ self::class, 'ajax_test_api_key' ] );
 		add_action( 'wp_ajax_iato_mcp_save_settings', [ self::class, 'ajax_save_settings' ] );
 	}
@@ -633,6 +636,10 @@ class IATO_MCP_Settings {
 		}
 
 		$mcp_key      = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
+		$key_owner_id = IATO_MCP_Auth::key_owner_id();
+		$key_owner    = $key_owner_id > 0 ? get_user_by( 'id', $key_owner_id ) : null;
+		$owner_admins = get_users( [ 'capability' => IATO_MCP_Auth::OWNER_CAP, 'orderby' => 'display_name', 'fields' => [ 'ID', 'display_name', 'user_login' ] ] );
+		$assign_url   = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_assign_key_owner' ), 'iato_mcp_assign_key_owner' );
 		$endpoint     = rest_url( 'iato-mcp/v1/message' );
 		$iato_api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		$api_valid    = (bool) get_option( 'iato_mcp_api_key_valid', false );
@@ -742,6 +749,48 @@ class IATO_MCP_Settings {
 								</a>
 							</div>
 							<p class="iato-hint"><?php esc_html_e( 'Used in the Authorization: Bearer header. Keep this secret.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato-key-owner-select"><?php esc_html_e( 'Token owner', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<p style="margin:0 0 8px;">
+								<?php if ( $key_owner && $key_owner->exists() ) : ?>
+									<?php if ( user_can( $key_owner, IATO_MCP_Auth::OWNER_CAP ) ) : ?>
+										<span class="iato-badge iato-badge--success"><?php esc_html_e( 'Bound', 'iato-mcp' ); ?></span>
+									<?php else : ?>
+										<span class="iato-badge iato-badge--warning"><?php esc_html_e( 'Owner demoted', 'iato-mcp' ); ?></span>
+									<?php endif; ?>
+									<strong><?php echo esc_html( $key_owner->display_name ); ?></strong> (<?php echo esc_html( $key_owner->user_login ); ?>, ID <?php echo (int) $key_owner->ID; ?>)
+								<?php elseif ( $key_owner_id > 0 ) : ?>
+									<span class="iato-badge iato-badge--warning"><?php esc_html_e( 'Owner missing', 'iato-mcp' ); ?></span>
+									<?php
+									/* translators: %d: user ID */
+									printf( esc_html__( 'User ID %d no longer exists; requests with this key are rejected until a new owner is assigned.', 'iato-mcp' ), (int) $key_owner_id );
+									?>
+								<?php else : ?>
+									<span class="iato-badge iato-badge--neutral"><?php esc_html_e( 'Unassigned (legacy mode)', 'iato-mcp' ); ?></span>
+									<?php esc_html_e( 'Requests with this key run with no WordPress user. Features that need one (Elementor edits through Elementor\'s own abilities, post authorship) are unavailable until an owner is assigned.', 'iato-mcp' ); ?>
+								<?php endif; ?>
+							</p>
+							<div class="iato-key-row">
+								<select id="iato-key-owner-select" class="iato-input" style="max-width:320px;">
+									<?php foreach ( $owner_admins as $admin_user ) : ?>
+										<option value="<?php echo (int) $admin_user->ID; ?>" <?php selected( (int) $admin_user->ID, (int) ( $key_owner_id ?: get_current_user_id() ) ); ?>>
+											<?php echo esc_html( $admin_user->display_name . ' (' . $admin_user->user_login . ')' ); ?>
+										</option>
+									<?php endforeach; ?>
+								</select>
+								<a href="<?php echo esc_url( add_query_arg( 'user_id', get_current_user_id(), $assign_url ) ); ?>" class="iato-btn" id="iato-assign-owner-btn" data-assign-url="<?php echo esc_attr( $assign_url ); ?>">
+									<span class="dashicons dashicons-admin-users"></span>
+									<?php esc_html_e( 'Assign owner', 'iato-mcp' ); ?>
+								</a>
+							</div>
+							<p class="iato-hint"><?php esc_html_e( 'Every request made with this key runs as the owner: WordPress capability checks, post and media authorship, and other plugins\' abilities (Elementor) all see that user. Only administrators can own the key; if the owner is deleted or demoted, the key is rejected until it is reassigned or regenerated. Regenerating the key assigns it to you.', 'iato-mcp' ); ?></p>
+							<script>
+							(function(){var b=document.getElementById('iato-assign-owner-btn'),s=document.getElementById('iato-key-owner-select');if(!b||!s){return;}b.addEventListener('click',function(e){e.preventDefault();var u=b.getAttribute('data-assign-url');window.location.href=u+(u.indexOf('?')>-1?'&':'?')+'user_id='+encodeURIComponent(s.value);});})();
+							</script>
 						</div>
 					</div>
 
@@ -2025,7 +2074,85 @@ JS;
 	}
 
 	/**
-	 * Handle MCP key regeneration.
+	 * Assign the site key to a WordPress user (admin-post, nonce, manage_options).
+	 * The target must hold manage_options; binding never rotates the key.
+	 */
+	public static function handle_assign_key_owner(): void {
+		check_admin_referer( 'iato_mcp_assign_key_owner' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+
+		$user_id = isset( $_GET['user_id'] ) ? absint( wp_unslash( $_GET['user_id'] ) ) : 0;
+		$user    = $user_id ? get_user_by( 'id', $user_id ) : false;
+
+		if ( ! $user || ! $user->exists() || ! user_can( $user, IATO_MCP_Auth::OWNER_CAP ) ) {
+			add_settings_error( 'iato_mcp_key', 'iato_mcp_key_owner_invalid', __( 'The selected user does not exist or is not an administrator. The MCP key owner was not changed.', 'iato-mcp' ), 'error' );
+		} else {
+			IATO_MCP_Auth::bind_key_owner( (int) $user->ID );
+			add_settings_error(
+				'iato_mcp_key',
+				'iato_mcp_key_owner_assigned',
+				sprintf(
+					/* translators: %s: user login */
+					__( 'MCP key assigned to %s. Requests made with the key now run as that user.', 'iato-mcp' ),
+					$user->user_login
+				),
+				'updated'
+			);
+		}
+		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	/**
+	 * Admin notice for an unbound (legacy) key: asks the site owner to assign an
+	 * owner or regenerate. Dismissible per user, except on the plugin's own
+	 * Settings page where it always shows while the key is unbound.
+	 */
+	public static function key_owner_notice(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		if ( '' === sanitize_text_field( get_option( 'iato_mcp_key', '' ) ) || IATO_MCP_Auth::key_owner_id() > 0 ) {
+			return;
+		}
+		$screen      = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		$on_own_page = $screen && false !== strpos( (string) $screen->id, self::PAGE_SLUG );
+		if ( ! $on_own_page && get_user_meta( get_current_user_id(), 'iato_mcp_owner_notice_dismissed', true ) ) {
+			return;
+		}
+		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
+		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_owner_notice' ), 'iato_mcp_dismiss_owner_notice' );
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<strong><?php esc_html_e( 'IATO MCP:', 'iato-mcp' ); ?></strong>
+				<?php esc_html_e( 'the site\'s MCP key is not assigned to a WordPress user. Requests using it run with no user, so features that need one (Elementor edits through Elementor\'s own abilities, post and media authorship) are unavailable.', 'iato-mcp' ); ?>
+				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Assign an owner or regenerate the key', 'iato-mcp' ); ?></a>
+				<?php if ( ! $on_own_page ) : ?>
+					&nbsp;|&nbsp;<a href="<?php echo esc_url( $dismiss_url ); ?>"><?php esc_html_e( 'Dismiss', 'iato-mcp' ); ?></a>
+				<?php endif; ?>
+			</p>
+		</div>
+		<?php
+	}
+
+	public static function dismiss_owner_notice(): void {
+		check_admin_referer( 'iato_mcp_dismiss_owner_notice' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		update_user_meta( get_current_user_id(), 'iato_mcp_owner_notice_dismissed', 1 );
+		wp_safe_redirect( wp_get_referer() ?: admin_url() );
+		exit;
+	}
+
+	/**
+	 * Handle MCP key regeneration. rotate_key() binds the new key to the
+	 * regenerating administrator.
 	 */
 	public static function handle_regenerate_key(): void {
 		check_admin_referer( 'iato_mcp_regenerate_key' );
@@ -2039,7 +2166,7 @@ JS;
 		add_settings_error(
 			'iato_mcp_key',
 			'iato_mcp_key_regenerated',
-			__( 'MCP API key regenerated. Update your AI client configuration with the new key.', 'iato-mcp' ),
+			__( 'MCP API key regenerated and assigned to you. Update your AI client configuration with the new key.', 'iato-mcp' ),
 			'updated'
 		);
 		set_transient( 'settings_errors', get_settings_errors(), 30 );

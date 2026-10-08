@@ -57,11 +57,18 @@ final class IATO_Test_WP {
 	public static array $permalinks = [
 		42 => 'http://localhost:8888/sample-page/',
 	];
+	/** @var array<int,array<string,mixed>> generic post meta store: [post_id][key] */
+	public static array $meta = [];
+	/** @var array<int,array<string,mixed>> fake posts: [post_id] => [ 'post_content' => ... ] */
+	public static array $posts = [];
 }
 if ( ! function_exists( 'get_post_meta' ) ) {
 	function get_post_meta( int $post_id, string $key = '', bool $single = false ): mixed {
 		if ( '_wp_attachment_image_alt' === $key ) {
 			return IATO_Test_WP::$attachments[ $post_id ]['alt'] ?? '';
+		}
+		if ( array_key_exists( $post_id, IATO_Test_WP::$meta ) && array_key_exists( $key, IATO_Test_WP::$meta[ $post_id ] ) ) {
+			return IATO_Test_WP::$meta[ $post_id ][ $key ];
 		}
 		return $single ? '' : [];
 	}
@@ -78,10 +85,12 @@ if ( ! function_exists( 'get_permalink' ) ) {
 }
 
 require_once __DIR__ . '/stubs-abilities.php';
+require_once __DIR__ . '/stubs-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-abilities.php';
+require_once IATO_MCP_DIR . 'includes/class-auth.php';
 
 /** Load a fixture file as the decoded element list (same shape decode_data() returns). */
 function iato_test_fixture( string $name ): array {

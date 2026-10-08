@@ -453,6 +453,10 @@ function iato_mcp_page_builder_notice( string $context = 'create' ): ?string {
  * Activation hook — show setup wizard on first run.
  */
 function iato_mcp_activate() {
+	// Generates the site key on first activation and binds it to the activating
+	// administrator (token binding). Keys that already exist are left as they
+	// are: an existing key without an owner stays in legacy mode and the Settings
+	// page / admin notice ask for an owner. Nothing binds automatically on upgrade.
 	IATO_MCP_Auth::maybe_generate_key();
 	IATO_MCP_Change_Receipt::create_table();
 	IATO_MCP_Call_Log::create_table();

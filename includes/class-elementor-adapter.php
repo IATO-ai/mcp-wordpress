@@ -852,12 +852,24 @@ class IATO_MCP_Elementor_Adapter {
 			}
 		}
 
-		// 3. Document::save() to render post_content.
-		$regenerated = false;
+		// 3. Document::save() to render post_content. Guarded: it is another
+		// plugin's code. Its return value is reported — it is false when the
+		// current user may not edit the post (always the case under an unbound
+		// legacy Bearer key, which runs as user 0), true when Elementor saved
+		// (re-serialising the elements through their classes and sanitising
+		// them with kses for users without unfiltered_html).
+		$regenerated    = false;
+		$elementor_save = null;
+		$save_error     = null;
 		if ( class_exists( '\Elementor\Plugin' ) ) {
 			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
 			if ( $document ) {
-				$document->save( [ 'elements' => self::force_arrays( $decoded_elements ) ] );
+				try {
+					$elementor_save = (bool) $document->save( [ 'elements' => self::force_arrays( $decoded_elements ) ] );
+				} catch ( \Throwable $e ) {
+					$elementor_save = 'error';
+					$save_error     = $e->getMessage();
+				}
 				$regenerated = true;
 			}
 		}
@@ -884,20 +896,55 @@ class IATO_MCP_Elementor_Adapter {
 			}
 		}
 
-		// 6. Verify meta persisted.
+		// 6. Verify meta persisted. Structural, not byte-length: when Elementor's
+		// own save ran it re-encodes the tree (defaults, key order, version
+		// fields), so the stored string legitimately differs from $encoded while
+		// holding the same elements.
 		wp_cache_delete( $post_id, 'post_meta' );
 		$persisted_meta   = (string) get_post_meta( $post_id, '_elementor_data', true );
-		$meta_persisted   = ( strlen( $persisted_meta ) === strlen( $encoded ) );
+		$meta_persisted   = self::same_element_tree( $persisted_meta, $decoded_elements );
 		$current_revision = self::compute_revision( $persisted_meta );
 
-		return [
+		$result = [
 			'previous_revision'   => $previous_revision,
 			'current_revision'    => $current_revision,
 			'content_updated'     => $content_updated,
 			'post_content_length' => strlen( $new_content ),
 			'meta_persisted'      => $meta_persisted,
 			'meta_length'         => strlen( $persisted_meta ),
+			'elementor_save'      => $elementor_save,
 		];
+		if ( null !== $save_error ) {
+			$result['elementor_save_error'] = $save_error;
+		}
+		return $result;
+	}
+
+	/**
+	 * Does the stored _elementor_data hold the same element tree (ids, in
+	 * order, with the same nesting) as the tree we wrote? Used instead of a
+	 * byte-length comparison because Elementor's Document::save() re-encodes
+	 * the JSON when it runs.
+	 */
+	public static function same_element_tree( string $stored_json, array $written ): bool {
+		$stored = json_decode( $stored_json, true );
+		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $stored ) ) {
+			return false;
+		}
+		return self::id_tree( self::force_arrays( $stored ) ) === self::id_tree( $written );
+	}
+
+	/** @return array<int,array{0:string,1:array}> nested [id, children] tuples */
+	private static function id_tree( array $elements ): array {
+		$out = [];
+		foreach ( $elements as $element ) {
+			if ( ! is_array( $element ) ) {
+				continue;
+			}
+			$children = isset( $element['elements'] ) && is_array( $element['elements'] ) ? self::id_tree( $element['elements'] ) : [];
+			$out[]    = [ (string) ( $element['id'] ?? '' ), $children ];
+		}
+		return $out;
 	}
 
 	/**

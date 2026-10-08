@@ -12,6 +12,7 @@ defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
 // Plugin options.
 delete_option( 'iato_mcp_key' );
+delete_option( 'iato_mcp_key_owner' );
 delete_option( 'iato_mcp_api_key' );
 delete_option( 'iato_mcp_crawl_id' );
 delete_option( 'iato_mcp_tools' );

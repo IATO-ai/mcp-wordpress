@@ -33,7 +33,7 @@ WordPress Plugin (iato-mcp)
                   IATO Platform (iato.ai/api)
 ```
 
-Authentication: WordPress Application Passwords (WP 5.6+) and OAuth 2.0 with PKCE.
+Authentication: WordPress Application Passwords (WP 5.6+), the plugin's own Bearer key (`iato_mcp_key`), and OAuth 2.0 with PKCE (whose access token is that same key). See "Token binding" below for which WordPress user each path runs as.
 IATO API key: optional, stored in `get_option('iato_mcp_api_key')`, set via Settings > IATO MCP or the Setup Wizard.
 
 **Autopilot / governance / Review Queue are intentionally not part of this release.** They were removed in the v1.0.0 scoping to get a clean MCP server into the WP.org directory. They will return in a future release, designed correctly (async sync, resilient to IATO outages, proper approve→apply→receipt wiring).
@@ -204,6 +204,24 @@ List endpoints return the list under an endpoint-specific key inside `data` — 
 
 ---
 
+## Token binding (who an MCP request runs as)
+
+`includes/class-auth.php` — `IATO_MCP_Auth::authenticate()` is the `permission_callback` for `/iato-mcp/v1/message` and `/iato-mcp/v1/rollback`, and the single place the current user is set for Bearer requests.
+
+| Credential | Runs as | `require_cap()` |
+|---|---|---|
+| Bearer key bound to an owner (`iato_mcp_key_owner` > 0) | the owner, via `wp_set_current_user()` after re-checking on every request that the user exists and holds `manage_options` (else 403 `iato_mcp_owner_missing` / `iato_mcp_owner_demoted`, logged once per request in the call log with `rpc_method: auth`) | `user_can( $owner, $cap )` — real |
+| Bearer key with no owner (issued before binding existed) | user 0, exactly as before binding | `true` for any cap; `require_bound_user()` returns `iato_mcp_token_unbound` for features that need a user |
+| OAuth access token | same as Bearer (the token is the site key) | same |
+| Application Password (Basic) | the real user, set by WP core | `user_can( $user, $cap )` |
+
+- **Owner record.** `iato_mcp_key_owner` is written only through `IATO_MCP_Auth::bind_key_owner()`: `maybe_generate_key()` (activation; WP-CLI activation has no user, so the key stays unbound), `rotate_key()` (Regenerate binds to the regenerating admin), the Settings "Token owner" control (`admin_post_iato_mcp_assign_key_owner`, admins only), and OAuth consent (approving an unbound key binds it to the approving admin; the consent screen states who the connection will act as in every state and never rebinds an already-owned key). The token format, storage and validation are unchanged.
+- **kses stays on for bound Bearer requests.** Before `wp_set_current_user()`, `authenticate()` attaches a `map_meta_cap` filter that returns `do_not_allow` for `unfiltered_html` and `edit_css` for the rest of the request, so `kses_init()` keeps WordPress' content filters active and Elementor's `Document::save()` applies `kses_post_deep`, exactly as for user 0. Application Password requests are not affected (an admin keeps `unfiltered_html` there). Create/update_post additionally run `wp_kses_post` themselves.
+- **What changes with a bound owner.** New posts, media, menu items and revisions get the owner as author (was 0). Elementor's `Document::save()` now runs for Bearer requests (it refused user 0), so `post_content` is Elementor's rendered HTML rather than the frontend fallback, and `_elementor_data` is re-encoded by Elementor; the write pipeline reports `elementor_save: true|false|'error'` (guarded with `Throwable`) and checks persistence structurally (`same_element_tree()`) instead of by byte length. The owner's own edit lock no longer blocks writes. `tax_input` on insert is honoured. Bound Bearer behaviour equals today's Application Password admin behaviour except for the kses lock.
+- **Legacy keys.** Nothing binds automatically on upgrade. An unbound key shows an admin notice (`key_owner_notice`, `manage_options`, dismissible per user except on the plugin's Settings page) and an "Unassigned (legacy mode)" badge in the Token owner row; Diagnostics shows the owner state.
+- **Multisite** is not declared. An owner who is not a member of the site has no capabilities there and is rejected as demoted.
+- Tests: `tests/AuthBindingTest.php` (stubs in `tests/stubs-auth.php`); live: `tests/wp-env/tools-snapshot.{sh,py}` (before/after behaviour snapshot over Bearer and App Password), `tests/wp-env/mu-manage-elements-probe.php` (test-only mu-plugin calling `elementor/manage-elements` inside a Bearer request), `tests/wp-env/oauth-consent-check.sh`.
+
 ## WordPress Abilities Bridge
 
 `includes/class-abilities.php` — `IATO_MCP_Abilities`. Registers the eleven read-only bridge tools as `iato/*` abilities through the core Abilities API (WordPress 6.9+) so any MCP server built on the WordPress MCP Adapter, and the `wp-abilities/v1` REST API, can discover and run them. `start_iato_crawl` and every write tool are deliberately not registered.
@@ -230,7 +248,7 @@ Tests: `tests/AbilitiesRegistrationTest.php` (loads the production bridge files 
 - **Normalised view** (`normalize()`): `schema: "atomic"`, rendered `tag`, and the same peek keys classic widgets emit (`title`, `header_size`, `editor`, `text`, `link`) plus `link_new_tab`, `link_post_id`, `image_url`, `image_id`, `image_alt`, `image_alt_source` (`attachment` for Media Library images, `element` for URL images).
 - **Wiring**: `IATO_MCP_Elementor_Adapter::peek_fields()` delegates to it; every node from `flatten_widgets` / `summary` / `find_by_filter` carries `schema: classic|atomic`; `matches_filter()` evaluates atomic nodes against `match_settings()` (plain values + derived `header_size`, `editor`, `link_url`, `image_*`). `get_elementor_widget` adds `settings_plain`, `defaulted_keys`, `tag`, `peek` for atomic nodes while keeping `settings` raw. `get_page_builder` adds `elementor_schema: classic|atomic|mixed|empty`. `initialize` advertises `capabilities.elementor.atomic_read`.
 - **WP calls** (attachment alt/URL, permalink) go through an injectable resolver (`set_resolver()`), which is how the unit tests run without WordPress.
-- **Writes to atomic elements are not supported yet** (planned: delegate to Elementor's `manage-elements` ability). Note that Bearer-authenticated MCP requests run as WP user 0 (see `includes/class-auth.php` KI-1), which Elementor's own save path rejects.
+- **Writes to atomic elements are not supported yet** (planned: delegate to Elementor's `manage-elements` ability, which requires a bound token — see "Token binding").
 
 ### Tests
 

@@ -351,7 +351,9 @@ IATO_MCP_Server::register_tool(
 		// 3. Call Document->save() for rendering post_content and rebuilding CSS.
 		//    Elementor's AI module filter (remove_temporary_containers) expects
 		//    array elements, not stdClass — force_arrays ensures this.
-		$regenerated = false;
+		$regenerated    = false;
+		$elementor_save = null;
+		$save_error     = null;
 		if ( class_exists( '\Elementor\Plugin' ) ) {
 			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
 			if ( $document ) {
@@ -367,7 +369,15 @@ IATO_MCP_Server::register_tool(
 
 				$decoded = $force_arrays( $decoded );
 
-				$document->save( [ 'elements' => $decoded ] );
+				// Guarded call into Elementor; result reported as elementor_save
+				// (false = Elementor refused, e.g. no current user; true = saved;
+				// 'error' = it threw). See IATO_MCP_Elementor_Adapter::write_pipeline().
+				try {
+					$elementor_save = (bool) $document->save( [ 'elements' => $decoded ] );
+				} catch ( \Throwable $e ) {
+					$elementor_save = 'error';
+					$save_error     = $e->getMessage();
+				}
 				$regenerated = true;
 			}
 		}
@@ -395,9 +405,10 @@ IATO_MCP_Server::register_tool(
 		}
 
 		// 6. Verify meta actually persisted — catch silent write failures.
+		// Structural comparison: Elementor's save re-encodes the JSON when it runs.
 		wp_cache_delete( $post_id, 'post_meta' );
-		$persisted_meta = get_post_meta( $post_id, '_elementor_data', true );
-		$meta_persisted = ( strlen( $persisted_meta ) === strlen( $elementor_data ) );
+		$persisted_meta = (string) get_post_meta( $post_id, '_elementor_data', true );
+		$meta_persisted = IATO_MCP_Elementor_Adapter::same_element_tree( $persisted_meta, is_array( $decoded ) ? $decoded : [] );
 
 		// Apply inherited meta writes (if any) after the main Elementor write succeeds.
 		$inherit_receipts = [];
@@ -429,9 +440,13 @@ IATO_MCP_Server::register_tool(
 			'content_updated'      => $content_updated,
 			'post_content_length'  => strlen( $new_content ),
 			'meta_persisted'       => $meta_persisted,
+			'elementor_save'       => $elementor_save,
 			'meta_length'          => strlen( $persisted_meta ),
 			'input_length'         => strlen( $elementor_data ),
 		];
+		if ( null !== $save_error ) {
+			$response['elementor_save_error'] = $save_error;
+		}
 		if ( ! empty( $inherit_receipts ) ) {
 			$response['change_receipts'] = $inherit_receipts;
 		}

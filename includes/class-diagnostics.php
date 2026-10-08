@@ -84,6 +84,24 @@ CSS;
 						<td><code><?php echo esc_html( IATO_MCP_VERSION ); ?></code></td>
 					</tr>
 					<tr>
+						<td><?php esc_html_e( 'MCP key owner', 'iato-mcp' ); ?></td>
+						<td>
+							<?php
+							$owner_id = IATO_MCP_Auth::key_owner_id();
+							$owner    = $owner_id > 0 ? get_user_by( 'id', $owner_id ) : null;
+							if ( 0 === $owner_id ) :
+								?>
+								<span class="badge"><?php esc_html_e( 'Unassigned (legacy mode: requests run as user 0)', 'iato-mcp' ); ?></span>
+							<?php elseif ( ! $owner || ! $owner->exists() ) : ?>
+								<span class="badge error"><?php printf( /* translators: %d: user ID */ esc_html__( 'User ID %d missing; key rejected', 'iato-mcp' ), (int) $owner_id ); ?></span>
+							<?php elseif ( ! user_can( $owner, IATO_MCP_Auth::OWNER_CAP ) ) : ?>
+								<span class="badge error"><?php echo esc_html( $owner->user_login ); ?> <?php esc_html_e( '(demoted; key rejected)', 'iato-mcp' ); ?></span>
+							<?php else : ?>
+								<span class="badge success"><?php echo esc_html( $owner->user_login ); ?> (ID <?php echo (int) $owner->ID; ?>)</span>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
 						<td><?php esc_html_e( 'IATO API key', 'iato-mcp' ); ?></td>
 						<td>
 							<?php if ( '' === $api_key ) : ?>
