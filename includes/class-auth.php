@@ -46,6 +46,16 @@ class IATO_MCP_Auth {
 	private static ?WP_User $authenticated_user = null;
 
 	/**
+	 * Set only by authenticate() when the request carried the valid site key
+	 * (Bearer / OAuth). That path has no WordPress user and is documented as
+	 * full administrative access, so require_cap() grants every capability
+	 * when this flag is set. The flag, not "current user is 0", is what tells
+	 * a site-key request apart from an unauthenticated visitor (who is also
+	 * user 0, and for whom $authenticated stays false).
+	 */
+	private static bool $site_key_full_access = false;
+
+	/**
 	 * Generate and store a new API key on first activation.
 	 * Called from the activation hook in iato-mcp.php.
 	 */
@@ -99,7 +109,8 @@ class IATO_MCP_Auth {
 				);
 			}
 
-			self::$authenticated = true;
+			self::$authenticated        = true;
+			self::$site_key_full_access = true;
 			return true;
 		}
 
@@ -158,7 +169,13 @@ class IATO_MCP_Auth {
 	 * @param string $cap WordPress capability string.
 	 * @return true|WP_Error
 	 */
-	public static function require_cap( string $cap ): bool|WP_Error {
+	/**
+	 * @param string $cap     Capability (primitive or meta capability such as edit_post).
+	 * @param mixed  ...$args Object arguments forwarded to user_can() for meta
+	 *                        capabilities (e.g. the post ID for edit_post). The
+	 *                        Bearer plugin-key path ignores them, as it does the cap.
+	 */
+	public static function require_cap( string $cap, mixed ...$args ): bool|WP_Error {
 		if ( ! self::$authenticated ) {
 			return new WP_Error(
 				'iato_mcp_forbidden',
@@ -168,8 +185,11 @@ class IATO_MCP_Auth {
 			);
 		}
 
-		// Bearer plugin-key path: no associated user, documented full admin access.
-		if ( null === self::$authenticated_user ) {
+		// Site-key path (Bearer / OAuth): documented full admin access. Decided by
+		// the explicit flag set in authenticate(), never by the absence of a user
+		// (an unauthenticated visitor is also user 0 but never gets here, because
+		// $authenticated is false for them).
+		if ( self::$site_key_full_access ) {
 			return true;
 		}
 
@@ -178,10 +198,11 @@ class IATO_MCP_Auth {
 		// against any callers that mutate the $current_user global later in the
 		// request lifecycle. (Equivalent under normal REST auth, but the explicit-user
 		// form removes one assumption about global state.)
-		if ( user_can( self::$authenticated_user, $cap ) ) {
+		if ( self::$authenticated_user instanceof WP_User && user_can( self::$authenticated_user, $cap, ...$args ) ) {
 			return true;
 		}
 
+		// Authenticated by neither path, or the user lacks the capability: refuse.
 		return new WP_Error(
 			'iato_mcp_forbidden',
 			/* translators: %s: WordPress capability string */
