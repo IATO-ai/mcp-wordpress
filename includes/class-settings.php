@@ -66,6 +66,16 @@ class IATO_MCP_Settings {
 		'set_heading_level',
 		'set_widget_setting',
 		'resolve_url',
+		// Elementor v2 — template discovery (Layer 2, v1.11.0).
+		'list_elementor_templates',
+		// Safety (v1.4.0).
+		'rollback',
+		// Post meta + media (v1.6.0).
+		'get_post_meta',
+		'update_post_meta',
+		'set_page_settings',
+		'set_featured_image',
+		'create_media',
 		// IATO bridge (require API key).
 		'get_iato_sitemap',
 		'get_iato_nav_audit',
@@ -80,6 +90,72 @@ class IATO_MCP_Settings {
 		'start_iato_crawl',
 		'get_iato_crawl_status',
 		'list_iato_crawls',
+	];
+
+	/**
+	 * Tool migration backfill map: db_version gate => tool names to ensure are
+	 * present in the saved `iato_mcp_tools` option.
+	 *
+	 * `is_tool_enabled()` returns false for any tool name not in the saved
+	 * array on an upgraded install whose option was populated before the tool
+	 * existed. This map drives the upgrade-time backfill in
+	 * `iato_mcp_maybe_run_migrations()`: for each gate, if the install's
+	 * `iato_mcp_db_version` is below the gate, the listed tools are appended
+	 * to `iato_mcp_tools` (idempotent — only missing names are added).
+	 *
+	 * Convention: when adding a new tool to `TOOL_NAMES`, also add it here
+	 * with the gate set to the release version it ships in. New installs are
+	 * unaffected because their saved option starts empty (all tools enabled
+	 * by default until the user first saves Settings > IATO MCP).
+	 *
+	 * Three of the four entries below cover migrations that historically
+	 * shipped as hand-written `version_compare` blocks. The `1.6.2` entry
+	 * catches the v1.2.0 crawl-management tools, which originally shipped
+	 * without any migration and have been invisible on any upgraded install
+	 * with a saved option for that whole interval; we backfill them now.
+	 *
+	 * @var array<string,list<string>>
+	 */
+	public const TOOL_MIGRATION_BACKFILL = [
+		// v1.2.0 crawl-management tools — shipped without a migration at
+		// the time, backfilled here in v1.6.2.
+		'1.6.2' => [
+			'start_iato_crawl',
+			'get_iato_crawl_status',
+			'list_iato_crawls',
+		],
+		// v1.3.0 widget-grained Elementor tools — migration originally
+		// shipped as a hand-written block gated at < 1.3.5.
+		'1.3.5' => [
+			'list_elementor_widgets',
+			'get_elementor_widget',
+			'update_elementor_widget',
+			'update_elementor_patch',
+			'update_elementor_widgets_bulk',
+			'find_elementor_widgets',
+			'set_heading_level',
+			'set_widget_setting',
+			'resolve_url',
+		],
+		// rollback tool added in v1.4.0; the 1.4.0 + 1.4.5 hand-written
+		// blocks are folded into a single 1.4.5 entry (the higher gate
+		// captures every install that needs it).
+		'1.4.5' => [
+			'rollback',
+		],
+		// v1.6.0 post-meta + media tools — migration originally shipped
+		// as a hand-written block gated at < 1.6.1.
+		'1.6.1' => [
+			'get_post_meta',
+			'update_post_meta',
+			'set_page_settings',
+			'set_featured_image',
+			'create_media',
+		],
+		// v1.11.0 Layer 2 — elementor_library discovery tool.
+		'1.11.0' => [
+			'list_elementor_templates',
+		],
 	];
 
 	/** Tools that require the IATO API key before they'll be registered. */
@@ -139,6 +215,11 @@ class IATO_MCP_Settings {
 		'set_heading_level'        => 'Set the header_size on a heading widget (h1-h6)',
 		'set_widget_setting'       => 'Set a single key on a widget\'s settings',
 		'resolve_url'              => 'Resolve a URL to its rendering post, with Theme Builder shadowing detection',
+		'get_post_meta'            => 'Read post meta (single key or all) with credential-shaped keys redacted',
+		'update_post_meta'         => 'Write a single post meta key (allowlist/denylist enforced; force=true to override)',
+		'set_page_settings'        => 'Set per-post theme + Elementor page settings (hide title, sidebar layout, etc.)',
+		'set_featured_image'       => 'Set or clear a post\'s featured image',
+		'create_media'             => 'Upload an image to the media library — base64 for tiny assets (~4 KB), URL ingestion for anything larger (own host implicitly trusted)',
 		'get_iato_sitemap'         => 'Full site hierarchy with WordPress post IDs attached',
 		'get_iato_nav_audit'       => 'Audit menus and identify orphan pages in one call',
 		'get_iato_orphan_pages'    => 'Pages not linked from any navigation menu',
@@ -151,20 +232,22 @@ class IATO_MCP_Settings {
 		'start_iato_crawl'         => 'Start a new IATO crawl of this site (admin only — consumes IATO quota)',
 		'get_iato_crawl_status'    => 'Check status of a specific crawl job',
 		'list_iato_crawls'         => 'List recent IATO crawl jobs with status and IDs',
+		'list_elementor_templates' => 'Enumerate Theme Builder templates with their Display Conditions parsed (admin only — manage_options)',
 	];
 
 	/** Tool groupings for UI categories. */
 	private const TOOL_CATEGORIES = [
-		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts' ],
+		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts', 'get_post_meta', 'update_post_meta', 'set_page_settings', 'set_featured_image' ],
 		'Site'          => [ 'get_site_info', 'get_site_settings' ],
 		'SEO'           => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
-		'Media'         => [ 'get_media', 'update_alt_text' ],
+		'Media'         => [ 'get_media', 'update_alt_text', 'create_media' ],
 		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details' ],
 		'Taxonomy'      => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
 		'Redirects'     => [ 'update_redirect' ],
 		'Comments'      => [ 'get_comments' ],
+		'Safety'        => [ 'rollback' ],
 		'Elementor'     => [ 'get_page_builder', 'get_elementor_data', 'update_elementor_data' ],
-		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url' ],
+		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates' ],
 		'IATO Platform' => [ 'get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report' ],
 		'Crawl Management' => [ 'start_iato_crawl', 'get_iato_crawl_status', 'list_iato_crawls' ],
 	];
@@ -216,12 +299,45 @@ class IATO_MCP_Settings {
 		$tools = self::sanitize_tools( $tools_raw );
 		update_option( 'iato_mcp_tools', $tools );
 
+		// Media uploads — URL source toggle. The render emits a hidden value=0
+		// sibling so the key is always present in $_POST regardless of checkbox
+		// state (unchecked => "0", checked => "1" wins because PHP keeps the
+		// last $_POST occurrence). rest_sanitize_boolean handles both.
+		$media_url_enabled = isset( $_POST['iato_mcp_media_url_source_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_media_url_source_enabled'] ) )
+			: false;
+		update_option( 'iato_mcp_media_url_source_enabled', $media_url_enabled );
+
+		// Host allowlist — newline-delimited textarea. sanitize_host_list()
+		// strips schemes/paths and rejects malformed hostnames.
+		$host_list_raw = isset( $_POST['iato_mcp_media_url_host_allowlist'] )
+			? wp_unslash( $_POST['iato_mcp_media_url_host_allowlist'] )
+			: '';
+		$host_list = self::sanitize_host_list( $host_list_raw );
+		update_option( 'iato_mcp_media_url_host_allowlist', $host_list );
+
+		// Max upload size (bytes).
+		$max_bytes = isset( $_POST['iato_mcp_media_max_upload_size'] )
+			? absint( wp_unslash( $_POST['iato_mcp_media_max_upload_size'] ) )
+			: 0;
+		update_option( 'iato_mcp_media_max_upload_size', $max_bytes );
+
+		// Per-user upload rate limit (per minute). 0 disables.
+		$rate_limit = isset( $_POST['iato_mcp_media_upload_rate_limit'] )
+			? absint( wp_unslash( $_POST['iato_mcp_media_upload_rate_limit'] ) )
+			: 0;
+		update_option( 'iato_mcp_media_upload_rate_limit', $rate_limit );
+
 		wp_send_json_success( [
 			'message' => __( 'Settings saved.', 'iato-mcp' ),
 			'values'  => [
-				'api_key_length' => strlen( $api_key ),
-				'crawl_id'       => $crawl_id,
-				'tools_enabled'  => count( $tools ),
+				'api_key_length'      => strlen( $api_key ),
+				'crawl_id'            => $crawl_id,
+				'tools_enabled'       => count( $tools ),
+				'media_url_enabled'   => $media_url_enabled,
+				'media_hosts_count'   => count( $host_list ),
+				'media_max_bytes'     => $max_bytes,
+				'media_rate_limit'    => $rate_limit,
 			],
 		] );
 	}
@@ -338,6 +454,62 @@ class IATO_MCP_Settings {
 			'default'           => [],
 		] );
 
+		// --- Media upload settings (v1.6.0) ---
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_source_enabled', [
+			'type'              => 'boolean',
+			'sanitize_callback' => 'rest_sanitize_boolean',
+			'default'           => false,
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_host_allowlist', [
+			'type'              => 'array',
+			'sanitize_callback' => [ self::class, 'sanitize_host_list' ],
+			'default'           => [],
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_max_upload_size', [
+			'type'              => 'integer',
+			'sanitize_callback' => 'absint',
+			'default'           => 10 * MB_IN_BYTES,
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_media_upload_rate_limit', [
+			'type'              => 'integer',
+			'sanitize_callback' => 'absint',
+			'default'           => 20,
+		] );
+	}
+
+	/**
+	 * Sanitize the URL host allowlist (one host per line on the form,
+	 * stored as an array). Strips schemes, paths, and anything that
+	 * isn't a plain hostname.
+	 *
+	 * @param mixed $value Raw value (array of strings, newline-separated string, or anything else).
+	 * @return array<int,string>
+	 */
+	public static function sanitize_host_list( $value ): array {
+		if ( is_string( $value ) ) {
+			$value = preg_split( '/\r\n|\r|\n/', $value );
+		}
+		if ( ! is_array( $value ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $value as $entry ) {
+			$entry = trim( (string) $entry );
+			if ( '' === $entry ) {
+				continue;
+			}
+			// Strip scheme + path if user pasted a full URL.
+			if ( false !== strpos( $entry, '://' ) ) {
+				$entry = (string) wp_parse_url( $entry, PHP_URL_HOST );
+			}
+			$entry = strtolower( $entry );
+			// Hostnames: a-z, 0-9, dot, hyphen. Reject wildcards.
+			if ( '' === $entry || ! preg_match( '/^[a-z0-9.\-]+$/', $entry ) ) {
+				continue;
+			}
+			$out[] = $entry;
+		}
+		return array_values( array_unique( $out ) );
 	}
 
 	// ── Sanitize Callbacks ───────────────────────────────────────────────────────
@@ -439,6 +611,13 @@ class IATO_MCP_Settings {
 		$enabled      = get_option( 'iato_mcp_tools', [] );
 		$all_on       = empty( $enabled );
 
+		$media_url_enabled = (bool) get_option( 'iato_mcp_media_url_source_enabled', false );
+		$media_host_list   = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
+		$media_max_bytes   = (int) get_option( 'iato_mcp_media_max_upload_size', 10 * MB_IN_BYTES );
+		$media_rate_limit  = (int) get_option( 'iato_mcp_media_upload_rate_limit', 20 );
+		$media_host_text   = implode( "\n", array_map( 'strval', $media_host_list ) );
+		$media_max_mb      = $media_max_bytes > 0 ? round( $media_max_bytes / MB_IN_BYTES, 2 ) : 0;
+
 		$regenerate_url = wp_nonce_url(
 			admin_url( 'admin-post.php?action=iato_mcp_regenerate_key' ),
 			'iato_mcp_regenerate_key'
@@ -451,7 +630,7 @@ class IATO_MCP_Settings {
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
-				'wordpress' => [
+				iato_mcp_connection_name() => [
 					'url'     => $endpoint,
 					'headers' => [
 						'Authorization' => 'Bearer ' . $mcp_key,
@@ -535,8 +714,16 @@ class IATO_MCP_Settings {
 					</div>
 
 					<div class="iato-config-section">
-						<h3 class="iato-config-title"><?php esc_html_e( 'Claude Desktop Configuration', 'iato-mcp' ); ?></h3>
-						<p class="iato-hint"><?php esc_html_e( 'Paste this into your Claude Desktop settings to connect:', 'iato-mcp' ); ?></p>
+						<h3 class="iato-config-title"><?php esc_html_e( 'HTTP MCP clients (MCP Inspector, IDEs, scripts)', 'iato-mcp' ); ?></h3>
+						<p class="iato-hint">
+							<?php
+							printf(
+								/* translators: %s: link to setup wizard */
+								esc_html__( 'For clients that speak HTTP MCP directly. Claude Desktop, Cursor, Cline, Zed and other stdio-only clients need a different config — see the %s.', 'iato-mcp' ),
+								'<a href="' . esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ) . '">' . esc_html__( 'setup wizard', 'iato-mcp' ) . '</a>'
+							);
+							?>
+						</p>
 						<div class="iato-config-block">
 							<pre id="iato-config-json"><?php echo esc_html( $config_json ); ?></pre>
 							<button type="button" class="iato-copy-btn iato-copy-btn--config" data-target="iato-config-json" title="<?php esc_attr_e( 'Copy config', 'iato-mcp' ); ?>">
@@ -629,8 +816,17 @@ class IATO_MCP_Settings {
 					<?php foreach ( self::TOOL_CATEGORIES as $category => $tools ) :
 						$is_iato_category = in_array( $category, [ 'IATO Platform', 'Crawl Management' ], true );
 						$api_key_present  = ! empty( $iato_api_key );
+						// Gate the bridge categories visually when no API key is set — the
+						// per-tool toggles for these are placebo without a key (the bridge
+						// tool files don't even load — see iato-mcp.php:85). Disable inputs
+						// + show a hint so the UI matches the actual registration logic.
+						$category_gated = $is_iato_category && ! $api_key_present;
+						$category_class = 'iato-tool-category';
+						if ( $category_gated ) {
+							$category_class .= ' iato-tool-category--gated';
+						}
 						?>
-						<div class="iato-tool-category">
+						<div class="<?php echo esc_attr( $category_class ); ?>">
 							<div class="iato-tool-category-header">
 								<h3>
 									<?php echo esc_html( $category ); ?>
@@ -645,19 +841,24 @@ class IATO_MCP_Settings {
 									<?php endif; ?>
 								</h3>
 								<div class="iato-tool-category-actions">
-									<button type="button" class="iato-link-btn iato-select-all"><?php esc_html_e( 'All', 'iato-mcp' ); ?></button>
+									<button type="button" class="iato-link-btn iato-select-all" <?php echo $category_gated ? 'disabled' : ''; ?>><?php esc_html_e( 'All', 'iato-mcp' ); ?></button>
 									<span class="iato-separator">|</span>
-									<button type="button" class="iato-link-btn iato-select-none"><?php esc_html_e( 'None', 'iato-mcp' ); ?></button>
+									<button type="button" class="iato-link-btn iato-select-none" <?php echo $category_gated ? 'disabled' : ''; ?>><?php esc_html_e( 'None', 'iato-mcp' ); ?></button>
 								</div>
 							</div>
+							<?php if ( $category_gated ) : ?>
+								<p class="iato-category-banner">
+									<?php esc_html_e( 'These tools require an IATO API key. Add it under "IATO Platform" above to enable them — until then, these toggles have no effect.', 'iato-mcp' ); ?>
+								</p>
+							<?php endif; ?>
 							<div class="iato-tool-grid">
 								<?php foreach ( $tools as $tool ) :
 									$checked = $all_on || in_array( $tool, $enabled, true );
 									$desc    = self::TOOL_DESCRIPTIONS[ $tool ] ?? '';
 								?>
-									<label class="iato-tool-item">
+									<label class="iato-tool-item<?php echo $category_gated ? ' iato-tool-item--gated' : ''; ?>">
 										<div class="iato-toggle">
-											<input type="checkbox" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" <?php checked( $checked ); ?> />
+											<input type="checkbox" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" <?php checked( $checked ); ?> <?php echo $category_gated ? 'disabled' : ''; ?> />
 											<span class="iato-toggle-slider" role="switch" aria-checked="<?php echo $checked ? 'true' : 'false'; ?>"></span>
 										</div>
 										<div class="iato-tool-info">
@@ -671,6 +872,66 @@ class IATO_MCP_Settings {
 							</div>
 						</div>
 					<?php endforeach; ?>
+				</div>
+
+				<!-- Card 4: Media Uploads -->
+				<div class="iato-card">
+					<div class="iato-card-header">
+						<div class="iato-card-title">
+							<span class="dashicons dashicons-format-image"></span>
+							<h2><?php esc_html_e( 'Media Uploads', 'iato-mcp' ); ?></h2>
+						</div>
+						<?php if ( $media_url_enabled ) : ?>
+							<span class="iato-badge iato-badge--success"><?php esc_html_e( 'URL ingestion on', 'iato-mcp' ); ?></span>
+						<?php else : ?>
+							<span class="iato-badge iato-badge--neutral"><?php esc_html_e( 'Base64 only', 'iato-mcp' ); ?></span>
+						<?php endif; ?>
+					</div>
+					<p class="iato-card-desc"><?php esc_html_e( 'Controls for the create_media tool: URL ingestion gating, host allowlist, size and rate caps. Base64 uploads are always allowed; URL ingestion is opt-in and restricted to the allowlist below.', 'iato-mcp' ); ?></p>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_url_source_enabled"><?php esc_html_e( 'URL source', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_media_url_source_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_media_url_source_enabled" id="iato_mcp_media_url_source_enabled" value="1" <?php checked( $media_url_enabled ); ?> />
+								<span><?php esc_html_e( 'Allow create_media to fetch images from an https URL', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint"><?php esc_html_e( 'SSRF guards (private / loopback / link-local / cloud-metadata IP rejection) still apply when enabled. Base64 remains the default safe path; turn this on only when an agent needs to ingest images by URL.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_url_host_allowlist"><?php esc_html_e( 'Host allowlist', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<textarea name="iato_mcp_media_url_host_allowlist" id="iato_mcp_media_url_host_allowlist" class="iato-input" rows="4" placeholder="cdn.example.com&#10;images.example.org" style="font-family:JetBrains Mono,monospace;font-size:12px;width:100%;"><?php echo esc_textarea( $media_host_text ); ?></textarea>
+							<p class="iato-hint"><?php esc_html_e( 'One hostname per line. Only these hosts are accepted for URL-source uploads. Schemes and paths are stripped on save. Wildcards are not supported.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_max_upload_size"><?php esc_html_e( 'Max upload size', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="number" name="iato_mcp_media_max_upload_size" id="iato_mcp_media_max_upload_size" value="<?php echo esc_attr( (string) $media_max_bytes ); ?>" min="0" step="1024" class="iato-input" style="max-width:240px;" />
+							<p class="iato-hint">
+								<?php
+								printf(
+									/* translators: %s: size in megabytes */
+									esc_html__( 'Bytes. Currently ≈ %s MB. Decoded base64 or fetched URL payloads exceeding this are rejected with file_too_large. Default 10485760 (10 MB).', 'iato-mcp' ),
+									esc_html( (string) $media_max_mb )
+								);
+								?>
+							</p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_media_upload_rate_limit"><?php esc_html_e( 'Rate limit', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="number" name="iato_mcp_media_upload_rate_limit" id="iato_mcp_media_upload_rate_limit" value="<?php echo esc_attr( (string) $media_rate_limit ); ?>" min="0" step="1" class="iato-input" style="max-width:240px;" />
+							<p class="iato-hint"><?php esc_html_e( 'Uploads per minute per authenticated user. Set to 0 to disable rate limiting. Default 20.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
 				</div>
 
 				<div class="iato-submit">
@@ -1179,6 +1440,25 @@ class IATO_MCP_Settings {
 				letter-spacing: normal;
 				margin-left: 6px;
 			}
+			.iato-tool-category--gated .iato-tool-grid {
+				opacity: 0.55;
+			}
+			.iato-tool-category--gated .iato-tool-item {
+				cursor: not-allowed;
+			}
+			.iato-tool-category--gated input[type=checkbox]:disabled + .iato-toggle-slider {
+				cursor: not-allowed;
+			}
+			.iato-category-banner {
+				margin: 0 0 12px;
+				padding: 8px 12px;
+				background: rgba(245, 158, 11, 0.08);
+				border-left: 3px solid #f59e0b;
+				border-radius: 4px;
+				font-size: 12px;
+				color: var(--iato-text-secondary);
+				line-height: 1.5;
+			}
 			.iato-tool-category-actions {
 				display: flex;
 				align-items: center;
@@ -1590,15 +1870,24 @@ JS;
 		}
 
 		$key          = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
+		$endpoint     = rest_url( 'iato-mcp/v1/message' );
 		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
+		$wizard_url   = admin_url( 'admin.php?page=iato-mcp-setup' );
 		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_wizard' ), 'iato_mcp_dismiss_wizard' );
 
 		$config_json = wp_json_encode( [
 			'mcpServers' => [
-				'wordpress' => [
-					'url'     => rest_url( 'iato-mcp/v1/message' ),
-					'headers' => [
-						'Authorization' => 'Bearer ' . $key,
+				iato_mcp_connection_name() => [
+					'command' => 'npx',
+					'args'    => [
+						'-y',
+						'mcp-remote',
+						$endpoint,
+						'--header',
+						'Authorization: Bearer ${IATO_KEY}',
+					],
+					'env'     => [
+						'IATO_KEY' => $key,
 					],
 				],
 			],
@@ -1606,47 +1895,63 @@ JS;
 		?>
 		<div class="notice" style="border-left-color: #5a89f4; padding: 0; overflow: hidden;">
 			<div style="padding: 20px 24px;">
-				<h3 style="margin: 0 0 12px; font-size: 16px; color: #5a89f4;"><?php echo iato_mcp_logo_svg( 28 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Returns self-escaped <img> markup (attributes wrapped in esc_attr inside the helper); fallback is a static <span>. ?><span style="vertical-align: middle; margin-left: 8px;">MCP — Ready to Connect</span></h3>
-				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
-					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">1</span>
+				<h3 style="margin: 0 0 16px; font-size: 16px; color: #5a89f4;"><?php echo iato_mcp_logo_svg( 28 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Returns self-escaped <img> markup (attributes wrapped in esc_attr inside the helper); fallback is a static <span>. ?><span style="vertical-align: middle; margin-left: 8px;"><?php esc_html_e( 'MCP — Ready to Connect', 'iato-mcp' ); ?></span></h3>
+
+				<p style="margin: 0 0 6px; font-size: 13px; color: #475569;"><strong><?php esc_html_e( 'Your MCP server URL', 'iato-mcp' ); ?></strong></p>
+				<div style="background: #f1f5f9; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px;">
+					<code id="iato-notice-endpoint" style="flex: 1; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 13px; color: #0f172a; background: transparent; padding: 0;"><?php echo esc_html( $endpoint ); ?></code>
+					<button type="button" style="background: rgba(90,137,244,0.12); border: none; color: #5a89f4; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('iato-notice-endpoint').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.innerHTML='<span class=\'dashicons dashicons-clipboard\' style=\'font-size:13px;width:13px;height:13px;\'></span> Copy';},2000);});">
+						<span class="dashicons dashicons-clipboard" style="font-size:13px;width:13px;height:13px;"></span> <?php esc_html_e( 'Copy', 'iato-mcp' ); ?>
+					</button>
+				</div>
+
+				<p style="margin: 0 0 8px; font-size: 13px; color: #64748b;"><?php esc_html_e( 'Choose ONE connection method:', 'iato-mcp' ); ?></p>
+
+				<div style="border: 1px solid #c7d2fe; border-left: 4px solid #5a89f4; border-radius: 6px; padding: 14px 16px; margin-bottom: 6px; background: rgba(90,137,244,0.03);">
+					<div style="margin-bottom: 6px;">
+						<strong style="font-size: 14px;"><?php esc_html_e( 'Option A — Claude.ai or Claude Desktop (Connectors UI)', 'iato-mcp' ); ?></strong>
+						<span style="display: inline-block; background: #5a89f4; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-left: 6px; vertical-align: middle;"><?php esc_html_e( 'Recommended', 'iato-mcp' ); ?></span>
 					</div>
-					<div>
-						<strong><?php esc_html_e( 'Copy this configuration', 'iato-mcp' ); ?></strong>
-						<div style="background: #0f172a; border-radius: 8px; margin-top: 8px; position: relative; overflow: hidden;">
-							<pre id="iato-wizard-config" style="margin: 0; padding: 16px; padding-right: 70px; color: #e2e8f0; font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;"><?php echo esc_html( $config_json ); ?></pre>
-							<button type="button" style="position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.1); border: none; color: rgba(255,255,255,0.7); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('iato-wizard-config').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.innerHTML='<span class=\'dashicons dashicons-clipboard\' style=\'font-size:14px;width:14px;height:14px;\'></span> Copy';},2000);});">
-								<span class="dashicons dashicons-clipboard" style="font-size:14px;width:14px;height:14px;"></span> <?php esc_html_e( 'Copy', 'iato-mcp' ); ?>
-							</button>
-						</div>
+					<p style="margin: 0; color: #475569; font-size: 13px; line-height: 1.5;"><?php esc_html_e( 'In Claude, click Add Custom Connector, paste the URL above, and click Connect. OAuth handles authentication — no credentials needed.', 'iato-mcp' ); ?></p>
+				</div>
+
+				<div style="text-align: center; color: #94a3b8; font-size: 11px; margin: 4px 0; letter-spacing: 2px; text-transform: uppercase;"><?php esc_html_e( '— or —', 'iato-mcp' ); ?></div>
+
+				<div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;">
+					<div style="margin-bottom: 6px;">
+						<strong style="font-size: 14px;"><?php esc_html_e( 'Option B — Claude Desktop config file', 'iato-mcp' ); ?></strong>
+					</div>
+					<p style="margin: 0 0 8px; color: #475569; font-size: 13px; line-height: 1.5;"><?php esc_html_e( "For Claude Desktop's local config file. Paste this snippet under mcpServers:", 'iato-mcp' ); ?></p>
+					<div style="background: #0f172a; border-radius: 8px; position: relative; overflow: hidden;">
+						<pre id="iato-wizard-config" style="margin: 0; padding: 16px; padding-right: 70px; color: #e2e8f0; font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;"><?php echo esc_html( $config_json ); ?></pre>
+						<button type="button" style="position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.1); border: none; color: rgba(255,255,255,0.7); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" onclick="navigator.clipboard.writeText(document.getElementById('iato-wizard-config').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.innerHTML='<span class=\'dashicons dashicons-clipboard\' style=\'font-size:14px;width:14px;height:14px;\'></span> Copy';},2000);});">
+							<span class="dashicons dashicons-clipboard" style="font-size:14px;width:14px;height:14px;"></span> <?php esc_html_e( 'Copy', 'iato-mcp' ); ?>
+						</button>
 					</div>
 				</div>
-				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
-					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">2</span>
-					</div>
-					<div>
-						<strong><?php esc_html_e( 'Open Claude Desktop settings and paste under MCP Servers', 'iato-mcp' ); ?></strong>
-						<p style="margin: 4px 0 0; color: #64748b; font-size: 13px;"><?php esc_html_e( 'Or use "Add Custom Connector" and enter your endpoint URL.', 'iato-mcp' ); ?></p>
-					</div>
-				</div>
-				<div style="display: flex; gap: 24px; margin-bottom: 16px;">
-					<div style="flex: 0 0 24px; text-align: center;">
-						<span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: rgba(90,137,244,0.12); color: #5a89f4; border-radius: 50%; font-size: 12px; font-weight: 700;">3</span>
-					</div>
-					<div>
-						<?php
-						printf(
-							/* translators: %s: link to settings page */
-							esc_html__( '(Optional) Enter your IATO API key in %s to enable bridge tools.', 'iato-mcp' ),
-							'<a href="' . esc_url( $settings_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'Settings', 'iato-mcp' ) . '</a>'
-						);
-						?>
-					</div>
-				</div>
+
+				<p style="margin: 0 0 6px; color: #64748b; font-size: 13px; line-height: 1.5;">
+					<?php
+					printf(
+						/* translators: %s: link to setup wizard */
+						esc_html__( 'Other clients (Cursor, Cline, Zed, MCP Inspector, scripts): see the %s for OAuth, Application Password, and stdio bridge configs.', 'iato-mcp' ),
+						'<a href="' . esc_url( $wizard_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'setup wizard', 'iato-mcp' ) . '</a>'
+					);
+					?>
+				</p>
+				<p style="margin: 0 0 14px; color: #64748b; font-size: 13px; line-height: 1.5;">
+					<?php
+					printf(
+						/* translators: %s: link to settings page */
+						esc_html__( 'Optional: enter your IATO API key in %s to enable bridge tools (sitemap, SEO audits, performance reports).', 'iato-mcp' ),
+						'<a href="' . esc_url( $settings_url ) . '" style="color: #5a89f4; font-weight: 500;">' . esc_html__( 'Settings', 'iato-mcp' ) . '</a>'
+					);
+					?>
+				</p>
+
 				<div style="margin-top: 8px; display: flex; gap: 16px; align-items: center;">
 					<?php if ( ! get_option( 'iato_mcp_setup_complete' ) ) : ?>
-						<a href="<?php echo esc_url( admin_url( 'admin.php?page=iato-mcp-setup' ) ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
+						<a href="<?php echo esc_url( $wizard_url ); ?>" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; background: #4b72cc; color: #fff; text-decoration: none; border-radius: 8px; box-shadow: 0 0 24px rgba(90,137,244,0.18); font-size: 13px; font-weight: 600;"><?php esc_html_e( 'Run Setup Wizard', 'iato-mcp' ); ?> &rarr;</a>
 					<?php endif; ?>
 					<a href="<?php echo esc_url( $dismiss_url ); ?>" style="color: #94a3b8; font-size: 13px; text-decoration: none;"><?php esc_html_e( 'Dismiss this notice', 'iato-mcp' ); ?></a>
 				</div>

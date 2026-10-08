@@ -95,6 +95,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Attachment not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $attachment_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		// Capture before value for change receipt.
 		$before_alt = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
 		$before_alt = '' !== $before_alt ? $before_alt : null;

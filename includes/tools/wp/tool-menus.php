@@ -4,7 +4,9 @@
  *           delete_menu_item, update_menu_item_details
  *
  * get_menus / get_menu_items — read only
- * update_menu_item           — requires manage_options + supports dry_run
+ * update_menu_item / create_menu_item / delete_menu_item / update_menu_item_details
+ *                             — require edit_theme_options (WP-canonical cap for
+ *                               nav-menu structure; was manage_options pre-v1.10.0).
  *
  * Requires WordPress 6.3+ for the /wp/v2/menus REST endpoint.
  * Falls back to wp_get_nav_menus() for older versions.
@@ -104,7 +106,12 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
+		// AUDIT v1.10.0: edit_theme_options is the WP-canonical cap for nav-menu
+		// structure (matches wp-admin/nav-menus.php). Was manage_options pre-v1.10.0;
+		// functionally identical on default WP (both admin-only by default), but
+		// edit_theme_options is observably different for sites that grant the cap
+		// to non-admin via a role-management plugin.
+		$cap_check = IATO_MCP_Auth::require_cap( 'edit_theme_options' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
 		$dry_run = (bool) ( $args['dry_run'] ?? false );
@@ -193,7 +200,12 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
+		// AUDIT v1.10.0: edit_theme_options is the WP-canonical cap for nav-menu
+		// structure (matches wp-admin/nav-menus.php). Was manage_options pre-v1.10.0;
+		// functionally identical on default WP (both admin-only by default), but
+		// edit_theme_options is observably different for sites that grant the cap
+		// to non-admin via a role-management plugin.
+		$cap_check = IATO_MCP_Auth::require_cap( 'edit_theme_options' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
 		$menu_id   = absint( $args['menu_id'] ?? 0 );
@@ -300,7 +312,12 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
+		// AUDIT v1.10.0: edit_theme_options is the WP-canonical cap for nav-menu
+		// structure (matches wp-admin/nav-menus.php). Was manage_options pre-v1.10.0;
+		// functionally identical on default WP (both admin-only by default), but
+		// edit_theme_options is observably different for sites that grant the cap
+		// to non-admin via a role-management plugin.
+		$cap_check = IATO_MCP_Auth::require_cap( 'edit_theme_options' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
 		$menu_item_id = absint( $args['menu_item_id'] ?? 0 );
@@ -377,7 +394,12 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
-		$cap_check = IATO_MCP_Auth::require_cap( 'manage_options' );
+		// AUDIT v1.10.0: edit_theme_options is the WP-canonical cap for nav-menu
+		// structure (matches wp-admin/nav-menus.php). Was manage_options pre-v1.10.0;
+		// functionally identical on default WP (both admin-only by default), but
+		// edit_theme_options is observably different for sites that grant the cap
+		// to non-admin via a role-management plugin.
+		$cap_check = IATO_MCP_Auth::require_cap( 'edit_theme_options' );
 		if ( is_wp_error( $cap_check ) ) return $cap_check;
 
 		$menu_item_id = absint( $args['menu_item_id'] ?? 0 );

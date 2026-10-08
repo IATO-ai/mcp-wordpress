@@ -49,10 +49,32 @@ class IATO_MCP_Rollback {
 			return new WP_Error( 'missing_change_id', 'change_id is required.', [ 'status' => 400 ] );
 		}
 
+		// Auth baseline: the route's permission_callback only proves the caller
+		// holds a valid credential. Enforce the same capabilities the `rollback`
+		// MCP tool enforces (includes/tools/wp/tool-rollback.php): edit_posts to
+		// look up a receipt at all, then the receipt type's own capability
+		// (menu_item → edit_theme_options, redirect → manage_options, term CRUD →
+		// manage_categories, unknown types → manage_options). Without this, any
+		// edit_posts Application Password user who knows a change_id and its
+		// before_value could roll back admin-level changes through this route.
+		$auth_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
+		if ( is_wp_error( $auth_check ) ) {
+			return $auth_check;
+		}
+
+		if ( ! preg_match( '/^wr_[a-f0-9]{16}$/', $change_id ) ) {
+			return new WP_Error( 'invalid_change_id', 'change_id must match ^wr_[a-f0-9]{16}$', [ 'status' => 400 ] );
+		}
+
 		// Look up receipt.
 		$receipt = IATO_MCP_Change_Receipt::get( $change_id );
 		if ( ! $receipt ) {
 			return self::error_response( 'change_id not found', $change_id, 404 );
+		}
+
+		$perm = self::check_permission( $receipt );
+		if ( is_wp_error( $perm ) ) {
+			return $perm;
 		}
 
 		// Already rolled back?
@@ -104,6 +126,30 @@ class IATO_MCP_Rollback {
 			'restored_value' => $stored_before,
 			'rolled_back_at' => $rolled_back_at,
 		], 200 );
+	}
+
+	/**
+	 * May the authenticated caller roll back this receipt? Object-level where
+	 * the object still exists (edit_post / delete_post / edit_term / delete_term
+	 * on the specific ID), the type-level capability otherwise. Shared by the
+	 * REST route and the `rollback` MCP tool so they cannot drift. Goes through
+	 * IATO_MCP_Auth::require_cap(), so the site Bearer key (no user) passes as
+	 * it does for every other capability.
+	 *
+	 * @return true|WP_Error
+	 */
+	public static function check_permission( array $receipt ): bool|WP_Error {
+		$req    = IATO_MCP_Change_Receipt::object_cap_for( $receipt );
+		$checks = array_merge( [ [ 'cap' => $req['cap'], 'object_id' => $req['object_id'] ] ], $req['also'] ?? [] );
+		foreach ( $checks as $check ) {
+			$result = null !== $check['object_id']
+				? IATO_MCP_Auth::require_cap( $check['cap'], $check['object_id'] )
+				: IATO_MCP_Auth::require_cap( $check['cap'] );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -178,9 +224,88 @@ class IATO_MCP_Rollback {
 				return self::rollback_taxonomy( $field, $post_id, $before_value );
 			case 'redirect':
 				return self::rollback_redirect( $field, $before_value );
+			case 'post_meta':
+				return self::rollback_post_meta( $field, $post_id, $before_value );
+			case 'attachment':
+				return self::rollback_attachment( $field, $post_id, $before_value );
 			default:
 				return new WP_Error( 'unsupported_target_type', "Rollback not supported for target_type: {$target_type}" );
 		}
+	}
+
+	/**
+	 * Rollback an arbitrary post_meta write.
+	 *
+	 * Used by update_post_meta, set_page_settings, and set_featured_image —
+	 * they all record their changes under target_type=post_meta with the
+	 * meta key in `field`. If the before_value was null the key was unset
+	 * before the write, so rollback deletes it; otherwise the previous value
+	 * is restored.
+	 */
+	private static function rollback_post_meta( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( ! $post_id ) {
+			return new WP_Error( 'post_not_found', 'post_id is required for post_meta rollback.' );
+		}
+		if ( '' === $field ) {
+			return new WP_Error( 'unsupported_field', 'post_meta rollback requires a non-empty field (meta key).' );
+		}
+		if ( ! get_post( $post_id ) ) {
+			return new WP_Error( 'post_not_found', 'Post not found.', [ 'status' => 404 ] );
+		}
+
+		if ( null === $before_value ) {
+			delete_post_meta( $post_id, $field );
+		} else {
+			// JSON-encoded arrays/objects were stored as strings; try to decode for round-trip parity.
+			$restore = $before_value;
+			if ( is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) ) {
+				$decoded = json_decode( $restore, true );
+				if ( null !== $decoded ) {
+					$restore = $decoded;
+				}
+			}
+			update_post_meta( $post_id, $field, $restore );
+		}
+
+		clean_post_cache( $post_id );
+		if ( 0 === stripos( $field, '_elementor_' ) ) {
+			delete_post_meta( $post_id, '_elementor_css' );
+			wp_cache_delete( $post_id, 'post_meta' );
+			wp_cache_delete( $post_id, 'posts' );
+			if ( class_exists( '\Elementor\Plugin' ) ) {
+				$plugin = \Elementor\Plugin::$instance;
+				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
+					$plugin->files_manager->clear_cache();
+				}
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Rollback an attachment created via create_media.
+	 *
+	 * field='create' is the only currently-supported attachment receipt; the
+	 * rollback action is to fully delete the attachment (file and post record).
+	 */
+	private static function rollback_attachment( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( 'create' !== $field ) {
+			return new WP_Error( 'unsupported_field', "Rollback not supported for attachment field: {$field}" );
+		}
+		if ( ! $post_id ) {
+			return new WP_Error( 'post_not_found', 'Attachment ID is required for attachment rollback.' );
+		}
+		$attachment = get_post( $post_id );
+		if ( ! $attachment || 'attachment' !== $attachment->post_type ) {
+			// Already removed — treat as success so the receipt can be marked rolled-back.
+			return true;
+		}
+		$deleted = wp_delete_attachment( $post_id, true );
+		if ( ! $deleted ) {
+			return new WP_Error( 'delete_failed', 'Failed to delete attachment.' );
+		}
+		return true;
 	}
 
 	/**
@@ -213,6 +338,7 @@ class IATO_MCP_Rollback {
 			'content' => 'post_content',
 			'excerpt' => 'post_excerpt',
 			'status'  => 'post_status',
+			'slug'    => 'post_name',
 			default   => null,
 		};
 
@@ -266,7 +392,7 @@ class IATO_MCP_Rollback {
 					delete_post_meta( $post_id, '_iato_mcp_structured_data' );
 					return true;
 				}
-				update_post_meta( $post_id, '_iato_mcp_structured_data', $before_value );
+				update_post_meta( $post_id, '_iato_mcp_structured_data', wp_slash( (string) $before_value ) );
 				return true;
 
 			default:

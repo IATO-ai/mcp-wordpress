@@ -94,6 +94,13 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+		$assign_check = IATO_MCP_Auth::require_cap( IATO_MCP_Auth::taxonomy_cap( $taxonomy, 'assign_terms' ) );
+		if ( is_wp_error( $assign_check ) ) return $assign_check;
+
 		$term = get_term( $term_id, $taxonomy );
 		if ( is_wp_error( $term ) || ! $term ) {
 			return new WP_Error( 'not_found', 'Term not found.' );
@@ -162,6 +169,9 @@ IATO_MCP_Server::register_tool(
 		if ( empty( $name ) ) {
 			return new WP_Error( 'missing_name', 'name is required.' );
 		}
+
+		$manage_check = IATO_MCP_Auth::require_cap( IATO_MCP_Auth::taxonomy_cap( $taxonomy, 'manage_terms' ) );
+		if ( is_wp_error( $manage_check ) ) return $manage_check;
 
 		$term_args = [];
 		if ( isset( $args['slug'] ) ) {
@@ -237,6 +247,11 @@ IATO_MCP_Server::register_tool(
 		$term = get_term( $term_id, $taxonomy );
 		if ( is_wp_error( $term ) || ! $term ) {
 			return new WP_Error( 'not_found', 'Term not found.' );
+		}
+
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_term', $term_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
 		}
 
 		$term_args = [];
@@ -320,6 +335,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Term not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'delete_term', $term_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		// Snapshot before deletion for rollback.
 		$before_snapshot = wp_json_encode( [ 'term_id' => $term->term_id, 'name' => $term->name, 'slug' => $term->slug, 'description' => $term->description, 'parent' => (int) $term->parent, 'taxonomy' => $taxonomy ] );
 
@@ -386,6 +406,13 @@ IATO_MCP_Server::register_tool(
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
+
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+		$assign_check = IATO_MCP_Auth::require_cap( IATO_MCP_Auth::taxonomy_cap( $taxonomy, 'assign_terms' ) );
+		if ( is_wp_error( $assign_check ) ) return $assign_check;
 
 		$before_ids = wp_get_post_terms( $post_id, $taxonomy, [ 'fields' => 'ids' ] );
 		if ( is_wp_error( $before_ids ) ) {

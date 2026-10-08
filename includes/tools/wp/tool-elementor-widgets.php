@@ -18,7 +18,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'list_elementor_widgets',
 	[
-		'description' => 'List every Elementor widget in a post with id, type, and a few peek fields. Use format=tree for a nested view, format=flat (default) for a depth-first list.',
+		'description' => 'List every Elementor widget in a post with id, type, and a few peek fields. Use format=tree for a nested view, format=flat (default) for a depth-first list. Every node carries schema: "classic" (Elementor V3 widgets) or "atomic" (Elementor V4 Atomic Editor elements such as e-heading, e-paragraph, e-image, e-button, e-flexbox). Atomic nodes are normalised to the same peek keys as classic widgets (title, header_size, editor, text, link) plus tag, link_new_tab, image_url, image_id, image_alt, image_alt_source. Mixed pages return both kinds in document order.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -36,6 +36,14 @@ IATO_MCP_Server::register_tool(
 		$format = isset( $args['format'] ) ? (string) $args['format'] : 'flat';
 		if ( ! in_array( $format, [ 'flat', 'tree' ], true ) ) {
 			$format = 'flat';
+		}
+
+		// Missing posts keep decode_data()'s own error; existing ones must be readable.
+		if ( get_post( $post_id ) ) {
+			$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+			if ( is_wp_error( $read_check ) ) {
+				return $read_check;
+			}
 		}
 
 		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
@@ -61,7 +69,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_elementor_widget',
 	[
-		'description' => 'Return full settings + revision for a single Elementor widget. Use list_elementor_widgets first to find the widget_id.',
+		'description' => 'Return full settings + revision for a single Elementor widget. Use list_elementor_widgets first to find the widget_id. Response includes schema ("classic" | "atomic"). For atomic (Elementor V4) elements, settings is the raw stored form with typed {"$$type","value"} envelopes; settings_plain is the unwrapped view with unsaved schema defaults filled in (listed in defaulted_keys), and tag is the rendered HTML tag. Unknown atomic types are returned the same way, never as an error.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -81,6 +89,14 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'missing_widget_id', 'widget_id is required.' );
 		}
 
+		// Missing posts keep decode_data()'s own error; existing ones must be readable.
+		if ( get_post( $post_id ) ) {
+			$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+			if ( is_wp_error( $read_check ) ) {
+				return $read_check;
+			}
+		}
+
 		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
 		if ( is_wp_error( $decoded ) ) {
 			return $decoded;
@@ -95,16 +111,33 @@ IATO_MCP_Server::register_tool(
 		$element = $found['element'];
 		$type    = (string) ( $element['elType'] ?? 'unknown' );
 
-		return IATO_MCP_Server::ok( [
+		$response = [
 			'post_id'   => $post_id,
 			'revision'  => IATO_MCP_Elementor_Adapter::compute_revision( $raw ),
 			'widget_id' => $widget_id,
 			'type'      => 'widget' === $type ? (string) ( $element['widgetType'] ?? 'widget' ) : $type,
+			'schema'    => IATO_MCP_Elementor_Atomic::schema_of( $element ),
 			'parent_id' => $found['parent_id'],
 			'depth'     => $found['depth'],
 			'path'      => $found['path'],
 			'settings'  => $element['settings'] ?? [],
-		] );
+		];
+
+		// Atomic (Elementor V4) nodes: keep the raw envelope in `settings` (writes
+		// and unknown types need it) and add the unwrapped view alongside.
+		if ( IATO_MCP_Elementor_Atomic::SCHEMA_ATOMIC === $response['schema'] ) {
+			$plain                      = IATO_MCP_Elementor_Atomic::plain_settings( $element );
+			$normalized                 = IATO_MCP_Elementor_Atomic::normalize( $element );
+			$response['tag']            = $normalized['tag'] ?? null;
+			$response['settings_plain'] = $plain['settings'];
+			$response['defaulted_keys'] = $plain['defaulted_keys'];
+			unset( $normalized['schema'], $normalized['tag'] );
+			if ( ! empty( $normalized ) ) {
+				$response['peek'] = $normalized;
+			}
+		}
+
+		return IATO_MCP_Server::ok( $response );
 	}
 );
 
@@ -131,6 +164,17 @@ IATO_MCP_Server::register_tool(
 		$cap_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
 		if ( is_wp_error( $cap_check ) ) {
 			return $cap_check;
+		}
+
+		$post_id = absint( $args['id'] ?? 0 );
+		if ( $post_id > 0 ) {
+			if ( ! get_post( $post_id ) ) {
+				return new WP_Error( 'not_found', 'Post not found.' );
+			}
+			$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+			if ( is_wp_error( $object_check ) ) {
+				return $object_check;
+			}
 		}
 
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;
@@ -187,6 +231,14 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( null === $ops ) {
 			return new WP_Error( 'missing_ops', 'ops must be an array of RFC 6902 operations.' );
+		}
+
+		if ( ! get_post( $post_id ) ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
 		}
 
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;

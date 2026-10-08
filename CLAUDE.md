@@ -70,11 +70,38 @@ On error, return `isError: true` with a message — never throw exceptions out o
 - Nonces not used on MCP endpoint (it uses Application Password / OAuth auth)
 - Capability check on every write tool: `current_user_can('edit_posts')` minimum
 - Admin-only tools (menus, settings, taxonomy write): `current_user_can('manage_options')`
+- Object-level check on every write that takes an ID, after the existence check: `IATO_MCP_Auth::require_cap( 'edit_post', $post_id )` (or `delete_post`, `edit_term`, `delete_term`); publishing needs `IATO_MCP_Auth::require_publish_cap( $post_type )`. The site key passes all of these; Application Password users are checked against the object. The per-tool inventory is in the 1.12.1 release notes, kept outside the repository.
 - Never write to wp_options without `sanitize_*` on the value
 - Dry-run mode for destructive write tools: accept `dry_run: true`, return what *would* change
 - All files namespaced under `IATO_MCP_` prefix for constants, `IATO_MCP` for classes
 - Plugin slug: `iato-mcp`, text domain: `iato-mcp`
 - Every IATO API call sends `X-IATO-Plugin-Version` and `X-IATO-Plugin-Capabilities: mcp-read` headers (set in `class-iato-client.php::default_headers()`)
+
+---
+
+## Release Checklist (adding or removing tools)
+
+When adding a new MCP tool, three edits must land together — missing any of them produces a tool that exists in code but is invisible on upgraded installs (the bug class that produced the v1.3.0 → v1.3.1, v1.4.0 → v1.4.5, and v1.6.0 → v1.6.1 follow-up patches):
+
+1. Register the handler with `IATO_MCP_Server::register_tool()` in the appropriate `includes/tools/wp/tool-*.php` or `includes/tools/bridge/tool-*.php` file.
+2. Append the tool name to the `TOOL_NAMES` constant in `includes/class-settings.php`, plus a matching entry in `TOOL_DESCRIPTIONS` and a category placement in `TOOL_CATEGORIES`.
+3. Append the tool name to `IATO_MCP_Settings::TOOL_MIGRATION_BACKFILL` under a gate equal to the release version it ships in. `iato_mcp_maybe_run_migrations()` walks this map once on upgrade and appends any missing names to the saved `iato_mcp_tools` option, so upgraded installs see the new tool the next time they make any request.
+
+Step 3 is the one that historically gets missed. The backfill map lives next to `TOOL_NAMES` in the same file specifically so a reviewer can eyeball the two lists side-by-side and confirm parity. Adding a new tool without a matching backfill entry is the failure mode; the loop walker in `iato-mcp.php` handles every other detail.
+
+Removing a tool is the reverse: take it out of `TOOL_NAMES` and from any category placement; leave `TOOL_MIGRATION_BACKFILL` alone (historical entries are still correct).
+
+---
+
+## Release Checklist (adding a new admin setting)
+
+When adding a new option to the Settings page, three edits must land together — missing any of them produces a setting that renders in the UI but silently discards on save (the bug class that produced the v1.7.0 → v1.7.1 follow-up patch):
+
+1. Register it with `register_setting()` in `IATO_MCP_Settings::register_settings()` using the shared `OPTION_GROUP` constant. The sanitize_callback runs through both `options.php` and admin-ajax persistence paths.
+2. Render the input in `IATO_MCP_Settings::render_page()` with a `name="..."` attribute that exactly matches the option key passed to `register_setting()`. The field must live inside the `<form method="post" action="options.php">` opened at the top of the General tab. For checkboxes, emit a hidden `<input type="hidden" value="0">` sibling with the same name so unchecked state still POSTs the key.
+3. Wire the corresponding `$_POST` → sanitize → `update_option()` line into `IATO_MCP_Settings::ajax_save_settings()`. This is the step that historically gets missed: the form is hijacked through admin-ajax (some hosts 503 on options.php POSTs due to upstream WAF / timeout rules), so the `register_setting()` allowlist never gets a chance to apply. The AJAX handler hardcodes the keys it persists — anything not explicitly handled there is silently dropped.
+
+Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` in `class-settings.php`; co-locate any new field's persistence line there alongside its peer registrations so a reviewer can eyeball the two lists side-by-side.
 
 ---
 
@@ -112,14 +139,25 @@ On error, return `isError: true` with a message — never throw exceptions out o
 | `set_heading_level` / `set_widget_setting` | tools/wp/tool-elementor-helpers.php | edit_posts |
 | `resolve_url` | tools/wp/tool-resolve-url.php | read |
 | `rollback` | tools/wp/tool-rollback.php | edit_posts (manage_options for menu_item / redirect receipts) |
+| `get_post_meta` | tools/wp/tool-post-meta.php | edit_posts |
+| `update_post_meta` | tools/wp/tool-post-meta.php | edit_posts |
+| `set_page_settings` | tools/wp/tool-page-settings.php | edit_posts |
+| `set_featured_image` | tools/wp/tool-featured-image.php | edit_posts |
+| `create_media` | tools/wp/tool-media-upload.php | upload_files |
 
 `get_post` accepts an opt-in `include_shadowing: true` parameter that attaches `is_shadowed_by` when an Elementor Theme Builder template overrides the slug-based render. Default is off so the hot path stays fast.
 
 `get_elementor_data` accepts a `format` parameter (`raw` | `compact` | `summary`). All v2 reads include a `revision` hash for use with `if_revision` guards on writes.
 
-`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`. `update_post` records one receipt per changed field (`title`, `content`, `excerpt`, `status`); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`.
+`update_post` accepts a `slug` parameter alongside title/content/excerpt/status. Slug input is strictly validated (lowercase a-z/0-9/hyphens, no leading/trailing/double hyphens, max 200 chars, must round-trip through `sanitize_title()` unchanged) and conflicts return `slug_conflict` rather than auto-suffixing. Changing the slug of a non-draft post additionally requires `confirm_url_break: true` since it breaks inbound links. `create_post` and `update_post` responses include a `notice` field on builder-driven sites (Elementor / Divi / WPBakery / Beaver Builder) — on Elementor it tells the agent to fetch a reference post and use the Elementor widget tools; on the others it tells the agent the layout must be finished in WP admin. The `notice` field is absent on Gutenberg-only sites.
+
+`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`, `post_meta`, `attachment`. `update_post` records one receipt per changed field (`title`, `content`, `slug`, `excerpt`, `status`); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`. `update_post_meta`, `set_page_settings`, and `set_featured_image` all record under `target_type=post_meta` with the meta key in `field` — rollback restores the previous value or deletes the key if `before_value` was null. `create_media` records `target_type=attachment, field=create` and rolls back via `wp_delete_attachment(force=true)` (the underlying file is removed).
 
 The `initialize` response advertises `capabilities.elementor.v2: true` when Elementor is active, plus `capabilities.rollback: true` always — clients can feature-detect without a `tools/list` round-trip.
+
+`create_media` accepts `defer_subsizes: true` (default false) which schedules `wp_generate_attachment_metadata` via WP-Cron instead of running it inline. The response returns immediately with the attachment ID and canonical URL; intermediate sizes appear on the next cron tick. Recommended whenever the call goes through a managed MCP gateway with a request timeout (Anthropic's gateway times out around 30s) — sites with image-optimisation plugins routinely push synchronous metadata generation past that limit. Per-phase timing logs are emitted to PHP's error log under the prefix `[iato-mcp create_media:<req_id>]` for live diagnosis when a call hangs or fails.
+
+`update_elementor_data` accepts `inherit_settings_from: <post_id>` (and optional `inherit_keys: string[]`) to clone a curated set of theme/builder per-post overrides from a source post in the same call. The default key list spans Astra (`site-post-title`, `site-sidebar-layout`, `site-content-layout`, `site-content-style`, `site-sidebar-style`, `ast-main-header-display`, `ast-global-header-display`, `ast-banner-title-visibility`, `ast-breadcrumbs-content`, `ast-featured-img`, `footer-sml-layout`), WordPress (`_wp_page_template`), and Elementor (`_elementor_page_settings`, `_elementor_template_type`). Empty source values are copied through (Astra stores meaningful state as empty strings). Keys that already match between source and target are reported in `inherited_skipped[]` with `reason: 'noop'`.
 
 ### IATO Bridge Tools (require IATO API key)
 
@@ -164,6 +202,23 @@ List endpoints return the list under an endpoint-specific key inside `data` — 
 | `/sitemaps` | `data.sitemaps` |
 | `/sitemaps/{id}/nodes` | `data.nodes` |
 | `/workspaces` | `data.workspaces` (dual-key fallback to bare `workspaces` for one release; drop in v1.1) |
+
+---
+
+## Elementor Atomic (Editor V4) Reader
+
+`includes/class-elementor-atomic.php` — `IATO_MCP_Elementor_Atomic`. Pure-PHP normalisation layer for Elementor 4.x atomic elements stored in `_elementor_data` (`e-heading`, `e-paragraph`, `e-image`, `e-button`, `e-flexbox`, `e-div-block`, …). It never calls Elementor code, so reads work on Elementor 3.x, 4.0–4.2, with the Elementor MCP module off, and with Elementor deactivated.
+
+- **Detection**: a node is atomic iff `elType` or `widgetType` starts with `e-`, or any top-level setting is a typed envelope. The stored `version` key is not a signal (Elementor writes `"0.0"`, never `4`).
+- **Envelopes**: settings are `{"$$type": key, "value": payload, "disabled"?: true}`. `unwrap()` flattens them (text family `string|html|escaped-html|html-v2|html-v3` → string, `url` → string, `query` → `{post_id,label}`, `attributes` → map, `dynamic` → `{"$dynamic": …}`, unknown types recurse). `plain_settings()` also fills unsaved schema defaults from `includes/data/elementor-atomic-defaults.php` and reports them in `defaulted_keys`.
+- **Normalised view** (`normalize()`): `schema: "atomic"`, rendered `tag`, and the same peek keys classic widgets emit (`title`, `header_size`, `editor`, `text`, `link`) plus `link_new_tab`, `link_post_id`, `image_url`, `image_id`, `image_alt`, `image_alt_source` (`attachment` for Media Library images, `element` for URL images).
+- **Wiring**: `IATO_MCP_Elementor_Adapter::peek_fields()` delegates to it; every node from `flatten_widgets` / `summary` / `find_by_filter` carries `schema: classic|atomic`; `matches_filter()` evaluates atomic nodes against `match_settings()` (plain values + derived `header_size`, `editor`, `link_url`, `image_*`). `get_elementor_widget` adds `settings_plain`, `defaulted_keys`, `tag`, `peek` for atomic nodes while keeping `settings` raw. `get_page_builder` adds `elementor_schema: classic|atomic|mixed|empty`. `initialize` advertises `capabilities.elementor.atomic_read`.
+- **WP calls** (attachment alt/URL, permalink) go through an injectable resolver (`set_resolver()`), which is how the unit tests run without WordPress.
+- **Writes to atomic elements are not supported yet** (planned: delegate to Elementor's `manage-elements` ability). Note that Bearer-authenticated MCP requests run as WP user 0 (see `includes/class-auth.php` KI-1), which Elementor's own save path rejects.
+
+### Tests
+
+`composer install && vendor/bin/phpunit`. Standalone PHPUnit with WP stubs in `tests/bootstrap.php`; fixtures in `tests/fixtures/elementor/` (`classic-only`, `atomic-only`, `mixed` captured from a wp-env site running Elementor 4.3.4 through `tests/wp-env/create-fixture-pages.php`; `legacy-and-edge-cases` hand-written; `*.expected.json` snapshots regenerated with `tests/tools/dump-read-output.php`). `classic-only.pre-sprint-a.expected.json` is the pre-atomic golden output and must keep matching, minus the `schema` key. `.wp-env.json` + `tests/wp-env/read-tools-smoke.sh` drive the live site. None of this ships (see `.distignore`).
 
 ---
 
@@ -215,8 +270,37 @@ POST /wp/v2/menu-items               create/update menu item
 - IATO API Key (password input, validated on save)
 - Default crawl ID (text, used as fallback when bridge tools aren't passed a `crawl_id`)
 - Per-tool enable/disable checkboxes
+- Media uploads (v1.6.0): `iato_mcp_media_url_source_enabled` (bool, default false), `iato_mcp_media_url_host_allowlist` (hostnames, one per line), `iato_mcp_media_max_upload_size` (bytes, default 10MB), `iato_mcp_media_upload_rate_limit` (per-user per-minute, default 20)
 
 No governance policy UI, no autopilot toggle, no resync.
+
+---
+
+## Post Meta Policy
+
+`includes/class-meta-policy.php` — shared by `get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`, and `update_elementor_data` (when `inherit_settings_from` is used).
+
+Two layers:
+1. **Denylist** (hard-reject even with `force=true`): keys matching credential / auth / capability patterns — `*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, `wp_capabilities`, `wp_user_level`, `wp_user_roles`, `session_tokens`, `wp_2fa_*`. Case-insensitive substring match.
+2. **Allowlist** (writable without `force=true`): public custom meta (any key not starting with `_`) plus known-safe prefixes — `site-`, `ast-`, `footer-sml-`, `_elementor_`, `_wp_page_template`, `_thumbnail_id`, `_yoast_`, `_genesis_`, `_kadence_`, `_generate_`, `rank_math_`, `_seopress_`.
+
+Anything not in the denylist and not in the allowlist requires `force=true` on writes and returns `meta_requires_force`. `get_post_meta` redacts denylist hits unconditionally and filters out underscore-prefixed keys outside the allowlist unless `include_protected=true`.
+
+---
+
+## Theme Adapter
+
+`includes/class-theme-adapter.php` — detects Astra, Kadence, GeneratePress (mirrors the SEO adapter's static-cache pattern). `set_page_settings` uses `map_page_settings()` to expand abstract setting names (`hide_title`, `sidebar_layout`, `content_layout`, `disable_header`, `disable_footer`, `page_template`, `elementor_hide_title`, `elementor_page_settings`) into the concrete `(meta_key, value)` writes each theme + Elementor combination needs. Keys whose target theme isn't active are reported in `skipped[]` rather than silently dropped.
+
+---
+
+## Media Uploader
+
+`includes/class-media-uploader.php` — implements `create_media`. Sources:
+- `base64` (default, recommended): bytes decoded in-process; no outbound HTTP.
+- `url` (opt-in via setting + host allowlist): SSRF guards resolve the host, reject private/loopback/link-local/cloud-metadata IPs, use `wp_safe_remote_get` with hard timeout + redirect cap, re-validate every redirect destination IP.
+
+Always: MIME verified via `wp_check_filetype_and_ext()` against actual bytes (not the claimed `mime_type`); image-only allowlist (`jpeg`, `png`, `gif`, `webp`, `avif`); SVG hard-rejected this release; size + dimension caps; per-user rate limit transient. Uses `wp_handle_sideload()` + `wp_generate_attachment_metadata()` for the actual filesystem write and intermediate-size generation.
 
 ---
 

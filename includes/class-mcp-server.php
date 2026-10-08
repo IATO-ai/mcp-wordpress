@@ -250,23 +250,50 @@ class IATO_MCP_Server {
 	 * @return array
 	 */
 	private static function handle_initialize( array $params ): array {
+		// Negotiate protocol version. Echo the client's requested version when it's
+		// one we know about; fall back to our newest known version otherwise. The
+		// MCP envelope and tools/list / tools/call response shapes are stable across
+		// these revs — newer features (structured content, _meta, etc.) are additive
+		// and our flat content responses degrade past them.
+		$supported_versions = [ '2025-06-18', '2025-03-26', '2024-11-05' ];
+		$requested          = isset( $params['protocolVersion'] ) && is_string( $params['protocolVersion'] )
+			? sanitize_text_field( $params['protocolVersion'] )
+			: '';
+		$negotiated         = in_array( $requested, $supported_versions, true ) ? $requested : '2025-06-18';
+
 		$capabilities = [
-			'tools'    => new stdClass(), // signals tool support
-			'rollback' => true,           // change-receipt-based undo for tracked write tools
+			'tools' => new stdClass(), // signals tool support
 		];
+		// Advertise rollback capability only when the tool is actually registered —
+		// the per-tool toggle at Settings > IATO MCP can disable it, and clients
+		// feature-detecting via this response shouldn't be told the tool exists
+		// when it would return tool_not_found on call.
+		if ( class_exists( 'IATO_MCP_Settings' ) && IATO_MCP_Settings::is_tool_enabled( 'rollback' ) ) {
+			$capabilities['rollback'] = true;
+		}
 		// Advertise widget-grained Elementor v2 surface only when Elementor is
 		// actually active — tells clients they can hand off to v2 tools without
 		// a tools/list round-trip.
 		if ( class_exists( '\Elementor\Plugin' ) ) {
-			$capabilities['elementor'] = [ 'v2' => true ];
+			// atomic_read: read tools normalise Elementor V4 (atomic) elements —
+			// e-heading / e-paragraph / e-image / e-button / e-flexbox etc. — and
+			// mark every node with schema: classic | atomic. Pure _elementor_data
+			// parsing, so it does not depend on the Elementor version or the
+			// Elementor MCP module.
+			$capabilities['elementor'] = [ 'v2' => true, 'atomic_read' => true ];
 		}
 		return [
-			'protocolVersion' => '2024-11-05',
+			'protocolVersion' => $negotiated,
 			'serverInfo'      => [
 				'name'    => 'iato-mcp',
 				'version' => IATO_MCP_VERSION,
 			],
 			'capabilities'    => $capabilities,
+			// Dynamic page-builder-aware instructions — tells the AI client which
+			// write tools are correct for which builder, with a mandatory
+			// get_page_builder check-first rule before any content edit.
+			// Field added in MCP spec 2025-03-26; older clients ignore unknown fields.
+			'instructions'    => iato_mcp_build_server_instructions(),
 		];
 	}
 

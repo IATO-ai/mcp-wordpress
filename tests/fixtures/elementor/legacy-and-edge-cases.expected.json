@@ -1,0 +1,433 @@
+{
+    "flat": [
+        {
+            "widget_id": "l3g0000",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "parent_id": null,
+            "depth": 0,
+            "tag": "div"
+        },
+        {
+            "widget_id": "l3g0001",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "h2",
+            "title": "Plain string title (pre-html era)",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "l3g0002",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "h3",
+            "title": "Html title <em>v1</em>",
+            "header_size": "h3"
+        },
+        {
+            "widget_id": "l3g0003",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "h2",
+            "title": "Html v2 title",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "l3g0004",
+            "type": "e-paragraph",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "p",
+            "editor": "Html v3 paragraph"
+        },
+        {
+            "widget_id": "l3g0005",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "h4",
+            "title": "This is a title",
+            "header_size": "h4"
+        },
+        {
+            "widget_id": "l3g0006",
+            "type": "e-heading",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "h2",
+            "title_dynamic": "post-title",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "l3g0007",
+            "type": "e-button",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "button",
+            "text": "Button linking to a post",
+            "link": "http://localhost:8888/sample-page/",
+            "link_new_tab": false,
+            "link_post_id": 42
+        },
+        {
+            "widget_id": "l3g0008",
+            "type": "e-mystery",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1
+        },
+        {
+            "widget_id": "l3g0009",
+            "type": "oddly-named-atomic",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "title": "Prefix-less but enveloped"
+        },
+        {
+            "widget_id": "l3g0010",
+            "type": "e-image",
+            "schema": "atomic",
+            "parent_id": "l3g0000",
+            "depth": 1,
+            "tag": "img",
+            "image_url": null,
+            "image_id": 999,
+            "image_alt": "",
+            "image_alt_source": "attachment"
+        }
+    ],
+    "tree": [
+        {
+            "widget_id": "l3g0000",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "div",
+            "children": [
+                {
+                    "widget_id": "l3g0001",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h2",
+                    "title": "Plain string title (pre-html era)",
+                    "header_size": "h2"
+                },
+                {
+                    "widget_id": "l3g0002",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h3",
+                    "title": "Html title <em>v1</em>",
+                    "header_size": "h3"
+                },
+                {
+                    "widget_id": "l3g0003",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h2",
+                    "title": "Html v2 title",
+                    "header_size": "h2"
+                },
+                {
+                    "widget_id": "l3g0004",
+                    "type": "e-paragraph",
+                    "schema": "atomic",
+                    "tag": "p",
+                    "editor": "Html v3 paragraph"
+                },
+                {
+                    "widget_id": "l3g0005",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h4",
+                    "title": "This is a title",
+                    "header_size": "h4"
+                },
+                {
+                    "widget_id": "l3g0006",
+                    "type": "e-heading",
+                    "schema": "atomic",
+                    "tag": "h2",
+                    "title_dynamic": "post-title",
+                    "header_size": "h2"
+                },
+                {
+                    "widget_id": "l3g0007",
+                    "type": "e-button",
+                    "schema": "atomic",
+                    "tag": "button",
+                    "text": "Button linking to a post",
+                    "link": "http://localhost:8888/sample-page/",
+                    "link_new_tab": false,
+                    "link_post_id": 42
+                },
+                {
+                    "widget_id": "l3g0008",
+                    "type": "e-mystery",
+                    "schema": "atomic"
+                },
+                {
+                    "widget_id": "l3g0009",
+                    "type": "oddly-named-atomic",
+                    "schema": "atomic",
+                    "title": "Prefix-less but enveloped"
+                },
+                {
+                    "widget_id": "l3g0010",
+                    "type": "e-image",
+                    "schema": "atomic",
+                    "tag": "img",
+                    "image_url": null,
+                    "image_id": 999,
+                    "image_alt": "",
+                    "image_alt_source": "attachment"
+                }
+            ]
+        }
+    ],
+    "summary": [
+        {
+            "widget_id": "l3g0000",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "div"
+        },
+        {
+            "widget_id": "l3g0001",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Plain string title (pre-html era)",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "l3g0002",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h3",
+            "title": "Html title <em>v1</em>",
+            "header_size": "h3"
+        },
+        {
+            "widget_id": "l3g0003",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Html v2 title",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "l3g0004",
+            "type": "e-paragraph",
+            "schema": "atomic",
+            "tag": "p",
+            "editor": "Html v3 paragraph"
+        },
+        {
+            "widget_id": "l3g0005",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h4",
+            "title": "This is a title",
+            "header_size": "h4"
+        },
+        {
+            "widget_id": "l3g0006",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title_dynamic": "post-title",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "l3g0007",
+            "type": "e-button",
+            "schema": "atomic",
+            "tag": "button",
+            "text": "Button linking to a post",
+            "link": "http://localhost:8888/sample-page/",
+            "link_new_tab": false,
+            "link_post_id": 42
+        },
+        {
+            "widget_id": "l3g0008",
+            "type": "e-mystery",
+            "schema": "atomic"
+        },
+        {
+            "widget_id": "l3g0009",
+            "type": "oddly-named-atomic",
+            "schema": "atomic",
+            "title": "Prefix-less but enveloped"
+        },
+        {
+            "widget_id": "l3g0010",
+            "type": "e-image",
+            "schema": "atomic",
+            "tag": "img",
+            "image_url": null,
+            "image_id": 999,
+            "image_alt": "",
+            "image_alt_source": "attachment"
+        }
+    ],
+    "find_untyped": [
+        {
+            "post_id": 1,
+            "widget_id": "l3g0001",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Plain string title (pre-html era)",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0002",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h3",
+            "title": "Html title <em>v1</em>",
+            "header_size": "h3"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0003",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Html v2 title",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0004",
+            "type": "e-paragraph",
+            "schema": "atomic",
+            "tag": "p",
+            "editor": "Html v3 paragraph"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0005",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h4",
+            "title": "This is a title",
+            "header_size": "h4"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0006",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title_dynamic": "post-title",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0007",
+            "type": "e-button",
+            "schema": "atomic",
+            "tag": "button",
+            "text": "Button linking to a post",
+            "link": "http://localhost:8888/sample-page/",
+            "link_new_tab": false,
+            "link_post_id": 42
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0008",
+            "type": "e-mystery",
+            "schema": "atomic"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0009",
+            "type": "oddly-named-atomic",
+            "schema": "atomic",
+            "title": "Prefix-less but enveloped"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0010",
+            "type": "e-image",
+            "schema": "atomic",
+            "tag": "img",
+            "image_url": null,
+            "image_id": 999,
+            "image_alt": "",
+            "image_alt_source": "attachment"
+        }
+    ],
+    "find_e_heading": [
+        {
+            "post_id": 1,
+            "widget_id": "l3g0001",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Plain string title (pre-html era)",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0002",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h3",
+            "title": "Html title <em>v1</em>",
+            "header_size": "h3"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0003",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title": "Html v2 title",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0005",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h4",
+            "title": "This is a title",
+            "header_size": "h4"
+        },
+        {
+            "post_id": 1,
+            "widget_id": "l3g0006",
+            "type": "e-heading",
+            "schema": "atomic",
+            "tag": "h2",
+            "title_dynamic": "post-title",
+            "header_size": "h2"
+        }
+    ],
+    "find_h1": [],
+    "find_title_atomic": [],
+    "find_e_flexbox": [
+        {
+            "post_id": 1,
+            "widget_id": "l3g0000",
+            "type": "e-flexbox",
+            "schema": "atomic",
+            "tag": "div"
+        }
+    ],
+    "document_schema": "atomic"
+}

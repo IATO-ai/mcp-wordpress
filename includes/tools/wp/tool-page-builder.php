@@ -16,7 +16,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_page_builder',
 	[
-		'description' => 'Detects which page builder a post or page uses: elementor, wpbakery, divi, gutenberg, or classic.',
+		'description' => 'Detects which page builder a post or page uses: elementor, wpbakery, divi, beaver-builder, gutenberg, or classic. For Elementor posts also returns elementor_schema: "classic" (V3 widgets only), "atomic" (V4 Atomic Editor elements only), "mixed", or "empty".',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -36,15 +36,34 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+		if ( is_wp_error( $read_check ) ) {
+			return $read_check;
+		}
+
 		$content = $post->post_content;
 
 		// Elementor.
 		if ( get_post_meta( $post_id, '_elementor_edit_mode', true ) === 'builder' ) {
-			return IATO_MCP_Server::ok( [
+			$elementor_data = get_post_meta( $post_id, '_elementor_data', true );
+			$response       = [
 				'post_id'  => $post_id,
 				'builder'  => 'elementor',
-				'has_data' => ! empty( get_post_meta( $post_id, '_elementor_data', true ) ),
-			] );
+				'has_data' => ! empty( $elementor_data ),
+			];
+			// classic | atomic | mixed | empty — lets clients know whether the
+			// document contains Elementor V4 (Atomic Editor) elements before they
+			// pick a write path. Decode failures leave the key out rather than
+			// failing the builder detection.
+			if ( ! empty( $elementor_data ) ) {
+				$decoded = json_decode( (string) $elementor_data, true );
+				if ( is_array( $decoded ) ) {
+					$response['elementor_schema'] = IATO_MCP_Elementor_Atomic::document_schema(
+						IATO_MCP_Elementor_Adapter::force_arrays( $decoded )
+					);
+				}
+			}
+			return IATO_MCP_Server::ok( $response );
 		}
 
 		// WPBakery — shortcodes in post_content.
@@ -60,6 +79,14 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( [
 				'post_id' => $post_id,
 				'builder' => 'divi',
+			] );
+		}
+
+		// Beaver Builder.
+		if ( get_post_meta( $post_id, '_fl_builder_enabled', true ) ) {
+			return IATO_MCP_Server::ok( [
+				'post_id' => $post_id,
+				'builder' => 'beaver-builder',
 			] );
 		}
 
@@ -84,7 +111,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_elementor_data',
 	[
-		'description' => 'Returns Elementor data for a post. format=raw (default) returns the original stored JSON; format=compact decodes and strips default-valued settings; format=summary returns a tree of {widget_id, type, peek_fields}. Always includes the revision hash for use with v2 if_revision guards.',
+		'description' => 'Returns Elementor data for a post. format=raw (default) returns the original stored JSON; format=compact decodes and strips default-valued settings (classic widgets only; atomic nodes pass through unchanged); format=summary returns a tree of {widget_id, type, schema, peek_fields} where schema is "classic" or "atomic" (Elementor V4) and atomic nodes are normalised to the classic peek keys plus tag / image / link fields. Always includes the revision hash for use with v2 if_revision guards.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -103,6 +130,11 @@ IATO_MCP_Server::register_tool(
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+		if ( is_wp_error( $read_check ) ) {
+			return $read_check;
 		}
 
 		$data      = get_post_meta( $post_id, '_elementor_data', true );
@@ -184,13 +216,15 @@ function iato_mcp_apply_compact_recursive( array $elements ): array {
 IATO_MCP_Server::register_tool(
 	'update_elementor_data',
 	[
-		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Requires edit_posts capability.',
+		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Optional inherit_settings_from copies a curated set of theme + Elementor page-level meta keys from a source post in the same call (one change_receipt per inherited key). Requires edit_posts capability.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
-				'id'             => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
-				'elementor_data' => [ 'type' => 'string',  'description' => 'Full Elementor JSON data string (required).' ],
-				'dry_run'        => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+				'id'                    => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
+				'elementor_data'        => [ 'type' => 'string',  'description' => 'Full Elementor JSON data string (required).' ],
+				'dry_run'               => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+				'inherit_settings_from' => [ 'type' => 'integer', 'description' => 'Optional source post ID. When set, copies a curated set of theme + Elementor page-level meta keys onto the target.' ],
+				'inherit_keys'          => [ 'type' => 'array',   'description' => 'Optional override of the inherited key list. Defaults to a built-in curated list when omitted.', 'items' => [ 'type' => 'string' ] ],
 			],
 			'required' => [ 'id', 'elementor_data' ],
 		],
@@ -214,6 +248,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		if ( empty( $elementor_data ) ) {
 			return new WP_Error( 'missing_data', 'elementor_data is required.' );
 		}
@@ -224,12 +263,88 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_json', 'Invalid JSON: ' . json_last_error_msg() );
 		}
 
+		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
+		// surfaces them, and apply them after the main Elementor write succeeds.
+		//
+		// Empty-string values are now copied through (they used to be skipped). On
+		// Astra and similar themes, empty strings are stored as meaningful values
+		// (e.g. ast-main-header-display="" is a real per-post override, not "no
+		// override"). WordPress get_post_meta returns '' for both stored-empty and
+		// absent meta, so we can't distinguish; the safer default is to mirror
+		// whatever the source has, since the contract of inherit_settings_from is
+		// "make this target match the source."
+		//
+		// Keys whose source value matches the target's existing value are recorded
+		// in $inherit_skipped (reason: noop) so the caller can see what was planned
+		// but produced no actual change.
+		$inherit_source  = isset( $args['inherit_settings_from'] ) ? absint( $args['inherit_settings_from'] ) : 0;
+		$inherit_plan    = [];
+		$inherit_skipped = [];
+		if ( $inherit_source > 0 ) {
+			if ( ! get_post( $inherit_source ) ) {
+				return new WP_Error( 'inherit_source_not_found', 'inherit_settings_from references a post that does not exist.' );
+			}
+			// The source is only read, but its meta may belong to a post the
+			// caller cannot see (another user's draft, a private or password-
+			// protected page, a template): same gate as the read tools.
+			$source_check = IATO_MCP_Auth::require_read_post( $inherit_source );
+			if ( is_wp_error( $source_check ) ) {
+				return $source_check;
+			}
+			// Default curated list spans Astra per-post overrides + Elementor page
+			// settings + WP page template. Wider than the original 8 because real
+			// cloning workflows also need ast-banner-title-visibility, ast-featured-img,
+			// site-content-style, etc. Callers who want the narrower set can pass
+			// explicit inherit_keys.
+			$default_keys = [
+				// Astra layout overrides (per-post).
+				'site-post-title',
+				'site-sidebar-layout',
+				'site-content-layout',
+				'site-content-style',
+				'site-sidebar-style',
+				'ast-main-header-display',
+				'ast-global-header-display',
+				'ast-banner-title-visibility',
+				'ast-breadcrumbs-content',
+				'ast-featured-img',
+				'footer-sml-layout',
+				// WordPress / Elementor.
+				'_wp_page_template',
+				'_elementor_page_settings',
+				'_elementor_template_type',
+			];
+			$keys = isset( $args['inherit_keys'] ) && is_array( $args['inherit_keys'] )
+				? array_values( array_filter( array_map( 'strval', $args['inherit_keys'] ) ) )
+				: $default_keys;
+			foreach ( $keys as $key ) {
+				$policy = IATO_MCP_Meta_Policy::check_write( $key, true );
+				if ( is_wp_error( $policy ) ) {
+					return $policy;
+				}
+				$source_value = get_post_meta( $inherit_source, $key, true );
+				$target_value = get_post_meta( $post_id, $key, true );
+
+				// No-op short-circuit: same value already present on target.
+				// Distinguish by string-compare (covers serialized arrays too).
+				if ( (string) $source_value === (string) $target_value ) {
+					$inherit_skipped[] = [ 'key' => $key, 'reason' => 'noop' ];
+					continue;
+				}
+
+				$before = ( '' === $target_value ) ? null : $target_value;
+				$inherit_plan[] = [ 'key' => $key, 'before' => $before, 'after' => $source_value ];
+			}
+		}
+
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
-				'dry_run'  => true,
-				'post_id'  => $post_id,
-				'action'   => 'would_update',
-				'json_valid' => true,
+				'dry_run'           => true,
+				'post_id'           => $post_id,
+				'action'            => 'would_update',
+				'json_valid'        => true,
+				'inherit_planned'   => $inherit_plan,
+				'inherited_skipped' => $inherit_skipped,
 			] );
 		}
 
@@ -306,7 +421,30 @@ IATO_MCP_Server::register_tool(
 		$persisted_meta = get_post_meta( $post_id, '_elementor_data', true );
 		$meta_persisted = ( strlen( $persisted_meta ) === strlen( $elementor_data ) );
 
-		return IATO_MCP_Server::ok( [
+		// Apply inherited meta writes (if any) after the main Elementor write succeeds.
+		$inherit_receipts = [];
+		if ( ! empty( $inherit_plan ) ) {
+			$touched_elementor_meta = false;
+			foreach ( $inherit_plan as $step ) {
+				$key    = $step['key'];
+				$before = $step['before'];
+				$after  = $step['after'];
+				update_post_meta( $post_id, $key, $after );
+				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
+				if ( 0 === stripos( $key, '_elementor_' ) ) {
+					$touched_elementor_meta = true;
+				}
+			}
+			clean_post_cache( $post_id );
+			if ( $touched_elementor_meta && class_exists( '\Elementor\Plugin' ) ) {
+				$plugin = \Elementor\Plugin::$instance;
+				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
+					$plugin->files_manager->clear_cache();
+				}
+			}
+		}
+
+		$response = [
 			'post_id'              => $post_id,
 			'success'              => $meta_persisted,
 			'regenerated'          => $regenerated,
@@ -315,6 +453,13 @@ IATO_MCP_Server::register_tool(
 			'meta_persisted'       => $meta_persisted,
 			'meta_length'          => strlen( $persisted_meta ),
 			'input_length'         => strlen( $elementor_data ),
-		] );
+		];
+		if ( ! empty( $inherit_receipts ) ) {
+			$response['change_receipts'] = $inherit_receipts;
+		}
+		if ( ! empty( $inherit_skipped ) ) {
+			$response['inherited_skipped'] = $inherit_skipped;
+		}
+		return IATO_MCP_Server::ok( $response );
 	}
 );

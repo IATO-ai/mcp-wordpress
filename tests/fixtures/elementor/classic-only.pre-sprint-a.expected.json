@@ -1,0 +1,150 @@
+{
+    "flat": [
+        {
+            "widget_id": "c1a5500",
+            "type": "container",
+            "parent_id": null,
+            "depth": 0
+        },
+        {
+            "widget_id": "c1a5501",
+            "type": "heading",
+            "parent_id": "c1a5500",
+            "depth": 1,
+            "title": "Classic H2 heading",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "c1a5502",
+            "type": "text-editor",
+            "parent_id": "c1a5500",
+            "depth": 1,
+            "editor": "<p>Classic text editor <em>content</em>.</p>"
+        },
+        {
+            "widget_id": "c1a5503",
+            "type": "image",
+            "parent_id": "c1a5500",
+            "depth": 1
+        },
+        {
+            "widget_id": "c1a5504",
+            "type": "button",
+            "parent_id": "c1a5500",
+            "depth": 1,
+            "text": "Classic button"
+        }
+    ],
+    "tree": [
+        {
+            "widget_id": "c1a5500",
+            "type": "container",
+            "children": [
+                {
+                    "widget_id": "c1a5501",
+                    "type": "heading",
+                    "title": "Classic H2 heading",
+                    "header_size": "h2"
+                },
+                {
+                    "widget_id": "c1a5502",
+                    "type": "text-editor",
+                    "editor": "<p>Classic text editor <em>content</em>.</p>"
+                },
+                {
+                    "widget_id": "c1a5503",
+                    "type": "image"
+                },
+                {
+                    "widget_id": "c1a5504",
+                    "type": "button",
+                    "text": "Classic button"
+                }
+            ]
+        }
+    ],
+    "summary": [
+        {
+            "widget_id": "c1a5501",
+            "type": "heading",
+            "title": "Classic H2 heading",
+            "header_size": "h2"
+        },
+        {
+            "widget_id": "c1a5502",
+            "type": "text-editor",
+            "editor": "<p>Classic text editor <em>content</em>.</p>"
+        },
+        {
+            "widget_id": "c1a5503",
+            "type": "image"
+        },
+        {
+            "widget_id": "c1a5504",
+            "type": "button",
+            "text": "Classic button"
+        }
+    ],
+    "find_all_widgets": [
+        {
+            "post_id": 6,
+            "widget_id": "c1a5501",
+            "type": "heading",
+            "title": "Classic H2 heading",
+            "header_size": "h2"
+        },
+        {
+            "post_id": 6,
+            "widget_id": "c1a5502",
+            "type": "text-editor",
+            "editor": "<p>Classic text editor <em>content</em>.</p>"
+        },
+        {
+            "post_id": 6,
+            "widget_id": "c1a5503",
+            "type": "image"
+        },
+        {
+            "post_id": 6,
+            "widget_id": "c1a5504",
+            "type": "button",
+            "text": "Classic button"
+        }
+    ],
+    "find_heading_h2": [
+        {
+            "post_id": 6,
+            "widget_id": "c1a5501",
+            "type": "heading",
+            "title": "Classic H2 heading",
+            "header_size": "h2"
+        }
+    ],
+    "find_contains_class": [
+        {
+            "post_id": 6,
+            "widget_id": "c1a5501",
+            "type": "heading",
+            "title": "Classic H2 heading",
+            "header_size": "h2"
+        }
+    ],
+    "find_widget_c1a5504": {
+        "path": "/0/elements/3",
+        "element": {
+            "id": "c1a5504",
+            "elType": "widget",
+            "settings": {
+                "text": "Classic button",
+                "link": {
+                    "url": "https://example.com/classic",
+                    "is_external": "on"
+                }
+            },
+            "elements": [],
+            "widgetType": "button"
+        },
+        "parent_id": "c1a5500",
+        "depth": 1
+    }
+}

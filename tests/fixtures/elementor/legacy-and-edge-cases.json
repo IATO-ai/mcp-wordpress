@@ -1,0 +1,122 @@
+[
+  {
+    "id": "l3g0000",
+    "elType": "e-flexbox",
+    "elements": [
+      {
+        "id": "l3g0001",
+        "elType": "widget",
+        "widgetType": "e-heading",
+        "settings": {
+          "title": { "$$type": "string", "value": "Plain string title (pre-html era)" }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0002",
+        "elType": "widget",
+        "widgetType": "e-heading",
+        "settings": {
+          "title": { "$$type": "html", "value": "Html title <em>v1</em>" },
+          "tag": { "$$type": "string", "value": "h3" }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0003",
+        "elType": "widget",
+        "widgetType": "e-heading",
+        "settings": {
+          "title": { "$$type": "html-v2", "value": { "content": "Html v2 title", "children": [] } }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0004",
+        "elType": "widget",
+        "widgetType": "e-paragraph",
+        "settings": {
+          "paragraph": { "$$type": "html-v3", "value": { "content": { "$$type": "string", "value": "Html v3 paragraph" }, "children": [] } }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0005",
+        "elType": "widget",
+        "widgetType": "e-heading",
+        "settings": {
+          "title": { "$$type": "escaped-html", "value": "Disabled title", "disabled": true },
+          "tag": { "$$type": "string", "value": "h4" }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0006",
+        "elType": "widget",
+        "widgetType": "e-heading",
+        "settings": {
+          "title": { "$$type": "dynamic", "value": { "name": "post-title", "group": "post", "settings": { "before": { "$$type": "string", "value": "Pre: " } } } }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0007",
+        "elType": "widget",
+        "widgetType": "e-button",
+        "settings": {
+          "text": { "$$type": "escaped-html", "value": "Button linking to a post" },
+          "link": {
+            "$$type": "link",
+            "value": {
+              "destination": { "$$type": "query", "value": { "id": { "$$type": "number", "value": 42 }, "label": { "$$type": "string", "value": "Sample Page" } } },
+              "isTargetBlank": { "$$type": "boolean", "value": false },
+              "tag": { "$$type": "string", "value": "button" }
+            }
+          }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0008",
+        "elType": "widget",
+        "widgetType": "e-mystery",
+        "settings": {
+          "thing": { "$$type": "mystery-object", "value": { "a": { "$$type": "string", "value": "x" }, "b": [ { "$$type": "number", "value": 1 }, { "$$type": "number", "value": null, "disabled": true } ] } },
+          "attributes": { "$$type": "attributes", "value": [ { "$$type": "key-value", "value": { "key": { "$$type": "string", "value": "data-x" }, "value": { "$$type": "string", "value": "1" } } } ] },
+          "_cssid": { "$$type": "string", "value": "custom-id" },
+          "classes": { "$$type": "classes", "value": [ "e-abc123-def456", "g-xyz" ] }
+        },
+        "elements": [],
+        "version": "0.0"
+      },
+      {
+        "id": "l3g0009",
+        "elType": "widget",
+        "widgetType": "oddly-named-atomic",
+        "settings": {
+          "title": { "$$type": "escaped-html", "value": "Prefix-less but enveloped" }
+        },
+        "elements": []
+      },
+      {
+        "id": "l3g0010",
+        "elType": "widget",
+        "widgetType": "e-image",
+        "settings": {
+          "image": { "$$type": "image", "value": { "src": { "$$type": "image-src", "value": { "id": { "$$type": "image-attachment-id", "value": 999 }, "url": null } }, "size": { "$$type": "string", "value": "medium" } } }
+        },
+        "elements": [],
+        "version": "0.0"
+      }
+    ],
+    "isInner": false,
+    "version": "0.0"
+  }
+]

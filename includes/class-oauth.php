@@ -129,7 +129,11 @@ class IATO_MCP_OAuth {
 
 		// Require WordPress admin login.
 		if ( ! is_user_logged_in() || ! current_user_can( 'manage_options' ) ) {
-			$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+			// wp_unslash only — sanitize_text_field strips %XX percent-encoded sequences
+			// (HTML-entity defense), which would corrupt the inner redirect_uri parameter.
+			// REQUEST_URI is server-set and consumed only as a redirect target via
+			// wp_login_url() + wp_safe_redirect() (which validates the host).
+			$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
 			wp_safe_redirect( wp_login_url( home_url( $request_uri ) ) );
 			exit;
 		}
@@ -148,13 +152,26 @@ class IATO_MCP_OAuth {
 		if ( '' === $client_id || '' === $redirect_uri ) {
 			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'client_id and redirect_uri required' ], 400 );
 		}
+		// S256 only: `plain` sends the verifier in the clear at authorization
+		// time, which defeats the point of PKCE (RFC 7636 §4.2 allows servers to
+		// require S256).
+		if ( '' !== $code_challenge && 'S256' !== $code_challenge_method ) {
+			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'code_challenge_method must be S256' ], 400 );
+		}
 
-		// If client was dynamically registered, verify redirect_uri.
+		// Require dynamic client registration. Spec-compliant clients (Claude, Cursor, etc.)
+		// register at /oauth/register before hitting /oauth/authorize, so this is a no-op
+		// for them. Refusing unregistered client_ids closes the open-redirect surface that
+		// existed when redirect_uri validation was opt-in.
 		$clients = get_option( 'iato_mcp_oauth_clients', [] );
-		if ( isset( $clients[ $client_id ] ) ) {
-			if ( ! in_array( $redirect_uri, $clients[ $client_id ]['redirect_uris'], true ) ) {
-				self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'redirect_uri not registered' ], 400 );
-			}
+		if ( ! isset( $clients[ $client_id ] ) ) {
+			self::json_response( [
+				'error'             => 'invalid_client',
+				'error_description' => 'client_id is not registered. Use the dynamic client registration endpoint at /oauth/register first.',
+			], 400 );
+		}
+		if ( ! in_array( $redirect_uri, $clients[ $client_id ]['redirect_uris'], true ) ) {
+			self::json_response( [ 'error' => 'invalid_request', 'error_description' => 'redirect_uri not registered' ], 400 );
 		}
 
 		// POST = user approved the form.
@@ -178,7 +195,12 @@ class IATO_MCP_OAuth {
 				$params['state'] = $state;
 			}
 
-			wp_safe_redirect( add_query_arg( $params, $redirect_uri ) );
+			// wp_redirect (not wp_safe_redirect) — the redirect_uri is the OAuth client's
+			// external callback by protocol design. wp_safe_redirect rewrites unknown hosts
+			// to admin_url(), which would silently break every off-site OAuth flow. The
+			// redirect_uri is already validated against the client's dynamic-registration
+			// allowlist above, so this isn't an open redirect.
+			wp_redirect( add_query_arg( $params, $redirect_uri ) );
 			exit;
 		}
 
@@ -358,6 +380,25 @@ CSS;
 	private static function render_authorize_screen( string $client_name ): void {
 		$site_name = sanitize_text_field( get_bloginfo( 'name' ) );
 
+		// Never render the consent form inside a frame. Client registration is
+		// open, so an attacker could otherwise register a client, frame this
+		// screen and clickjack a logged-in administrator into Approve, which
+		// sends the site key to the client's redirect_uri. The nonce on the form
+		// stops CSRF but not clickjacking. Both headers: X-Frame-Options for
+		// browsers without CSP, frame-ancestors for the rest.
+		//
+		// headers_sent() guard: this runs on `init` at priority 1, before any
+		// theme or template output, so headers can normally still be sent. If
+		// another plugin has already emitted output (a stray echo, a PHP notice
+		// with display_errors on), header() would only raise a warning and the
+		// page would still render; the guard keeps that warning out of the
+		// response. It does not weaken the protection in the normal path.
+		if ( ! headers_sent() ) {
+			header( 'X-Frame-Options: DENY' );
+			header( "Content-Security-Policy: frame-ancestors 'none'" );
+			nocache_headers();
+		}
+
 		// Enqueue inline styles via WP.
 		wp_register_style( 'iato-mcp-oauth', false, [], IATO_MCP_VERSION );
 		wp_enqueue_style( 'iato-mcp-oauth' );
@@ -446,24 +487,17 @@ CSS;
 			self::json_response( [ 'error' => 'invalid_grant' ], 400 );
 		}
 
-		// Verify PKCE if a challenge was stored during authorization.
+		// Verify PKCE if a challenge was stored during authorization. The stored
+		// challenge is consumed only by a successful exchange: a failed attempt
+		// (wrong client, wrong verifier, no verifier) leaves it in place, so a
+		// bogus request cannot clear it and let a later exchange skip PKCE.
 		$pkce = get_transient( 'iato_mcp_oauth_pkce' );
-		if ( $pkce ) {
+		if ( is_array( $pkce ) ) {
+			$failure = self::verify_pkce( $pkce, $client_id, $redirect_uri, $code_verifier );
+			if ( null !== $failure ) {
+				self::json_response( [ 'error' => 'invalid_grant', 'error_description' => $failure ], 400 );
+			}
 			delete_transient( 'iato_mcp_oauth_pkce' );
-
-			if ( $pkce['client_id'] !== $client_id ) {
-				self::json_response( [ 'error' => 'invalid_grant' ], 400 );
-			}
-			if ( $pkce['redirect_uri'] !== $redirect_uri ) {
-				self::json_response( [ 'error' => 'invalid_grant' ], 400 );
-			}
-
-			if ( '' !== $code_verifier && 'S256' === $pkce['code_challenge_method'] ) {
-				$expected = rtrim( strtr( base64_encode( hash( 'sha256', $code_verifier, true ) ), '+/', '-_' ), '=' );
-				if ( ! hash_equals( $pkce['code_challenge'], $expected ) ) {
-					self::json_response( [ 'error' => 'invalid_grant', 'error_description' => 'PKCE verification failed' ], 400 );
-				}
-			}
 		}
 
 		// Return the MCP key as the access token.
@@ -471,6 +505,37 @@ CSS;
 			'access_token' => $mcp_key,
 			'token_type'   => 'Bearer',
 		] );
+	}
+
+	/**
+	 * PKCE check for the token endpoint (RFC 7636 §4.6), given the challenge
+	 * stored at authorization time. Returns null when the exchange may proceed,
+	 * otherwise the error_description to return with invalid_grant. Pure, so it
+	 * is unit-tested directly. S256 is the only accepted method.
+	 *
+	 * @param array{code_challenge:string,code_challenge_method:string,client_id:string,redirect_uri:string} $pkce
+	 */
+	public static function verify_pkce( array $pkce, string $client_id, string $redirect_uri, string $code_verifier ): ?string {
+		if ( ( $pkce['client_id'] ?? '' ) !== $client_id ) {
+			return 'client_id does not match the authorization request';
+		}
+		if ( ( $pkce['redirect_uri'] ?? '' ) !== $redirect_uri ) {
+			return 'redirect_uri does not match the authorization request';
+		}
+		if ( '' === $code_verifier ) {
+			return 'code_verifier is required: a code_challenge was issued for this authorization';
+		}
+		// S256 only, mirroring the authorize endpoint; a stored `plain`
+		// challenge (from a pre-patch authorization) fails rather than being
+		// compared in the clear.
+		if ( 'S256' !== (string) ( $pkce['code_challenge_method'] ?? 'S256' ) ) {
+			return 'unsupported code_challenge_method';
+		}
+		$expected = rtrim( strtr( base64_encode( hash( 'sha256', $code_verifier, true ) ), '+/', '-_' ), '=' );
+		if ( ! hash_equals( (string) ( $pkce['code_challenge'] ?? '' ), $expected ) ) {
+			return 'PKCE verification failed';
+		}
+		return null;
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────────
