@@ -57,10 +57,14 @@ IATO_MCP_Server::register_tool(
 		// any future receipt type without an explicit cap entry rolls back
 		// only for admins until the entry is added, instead of silently
 		// inheriting edit_posts.
-		$required_cap = IATO_MCP_Change_Receipt::cap_required_for( $receipt );
-		$type_check   = IATO_MCP_Auth::require_cap( $required_cap );
-		if ( is_wp_error( $type_check ) ) {
-			return $type_check;
+		//
+		// Object-level since the rollback-route fix: edit_post / delete_post /
+		// edit_term / delete_term on the specific object where it still exists,
+		// the type-level cap otherwise. Shared with the REST route via
+		// IATO_MCP_Rollback::check_permission().
+		$perm = IATO_MCP_Rollback::check_permission( $receipt );
+		if ( is_wp_error( $perm ) ) {
+			return $perm;
 		}
 
 		$result = IATO_MCP_Rollback::rollback_by_id( $change_id );

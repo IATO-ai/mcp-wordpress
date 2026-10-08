@@ -191,6 +191,7 @@ class IATO_MCP_Auth {
 		] );
 	}
 
+
 	/**
 	 * Generate and store a new API key on first activation.
 	 * Called from the activation hook in iato-mcp.php.
@@ -347,7 +348,13 @@ class IATO_MCP_Auth {
 	 * @param string $cap WordPress capability string.
 	 * @return true|WP_Error
 	 */
-	public static function require_cap( string $cap ): bool|WP_Error {
+	/**
+	 * @param string $cap     Capability (primitive or meta capability such as edit_post).
+	 * @param mixed  ...$args Object arguments forwarded to user_can() for meta
+	 *                        capabilities (e.g. the post ID for edit_post). The
+	 *                        Bearer plugin-key path ignores them, as it does the cap.
+	 */
+	public static function require_cap( string $cap, mixed ...$args ): bool|WP_Error {
 		if ( ! self::$authenticated ) {
 			return new WP_Error(
 				'iato_mcp_forbidden',
@@ -370,7 +377,7 @@ class IATO_MCP_Auth {
 		// the authenticated user. user_can() with an explicit WP_User is more
 		// robust than current_user_can() against any callers that mutate the
 		// $current_user global later in the request lifecycle.
-		if ( self::$authenticated_user instanceof WP_User && user_can( self::$authenticated_user, $cap ) ) {
+		if ( self::$authenticated_user instanceof WP_User && user_can( self::$authenticated_user, $cap, ...$args ) ) {
 			return true;
 		}
 
