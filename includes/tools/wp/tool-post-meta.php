@@ -41,6 +41,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		$include_protected = ! empty( $args['include_protected'] );
 		$key               = isset( $args['key'] ) ? (string) $args['key'] : '';
 
@@ -133,6 +138,11 @@ IATO_MCP_Server::register_tool(
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
 		}
 
 		// Lock check — refuse to stomp another editor mid-session.

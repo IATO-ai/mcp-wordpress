@@ -12,8 +12,8 @@ final class IATO_Test_Roles {
 		'subscriber'    => [ 'read' ],
 		'contributor'   => [ 'read', 'edit_posts', 'delete_posts' ],
 		'author'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files' ],
-		'editor'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'manage_categories', 'unfiltered_html' ],
-		'administrator' => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'manage_categories', 'unfiltered_html', 'manage_options', 'edit_theme_options' ],
+		'editor'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'unfiltered_html' ],
+		'administrator' => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'unfiltered_html', 'manage_options', 'edit_theme_options' ],
 	];
 	/** @var array<int,string> user id => role */
 	public static array $users = [];
@@ -29,6 +29,21 @@ final class IATO_Test_Roles {
 		}
 		$prims = self::CAPS[ $role ];
 		switch ( $cap ) {
+			case 'read_post':
+				// Core: public status needs `read`, private needs read_private_*,
+				// anything else (draft, pending, future) resolves to edit_post.
+				$post = self::$posts[ (int) ( $args[0] ?? 0 ) ] ?? null;
+				if ( ! $post ) {
+					return false;
+				}
+				$kind = 'page' === $post['post_type'] ? 'pages' : 'posts';
+				if ( 'publish' === $post['post_status'] ) {
+					return in_array( 'read', $prims, true );
+				}
+				if ( 'private' === $post['post_status'] ) {
+					return in_array( "read_private_{$kind}", $prims, true );
+				}
+				return self::has( $user_id, 'edit_post', $args );
 			case 'edit_post':
 			case 'delete_post':
 				$post = self::$posts[ (int) ( $args[0] ?? 0 ) ] ?? null;

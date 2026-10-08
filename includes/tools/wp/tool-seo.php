@@ -33,6 +33,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+		if ( is_wp_error( $read_check ) ) {
+			return $read_check;
+		}
+
 		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );
 
 		return IATO_MCP_Server::ok( [
@@ -71,6 +76,11 @@ IATO_MCP_Server::register_tool(
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
 		}
 
 		if ( ! isset( $args['title'] ) && ! isset( $args['seo_title'] ) && ! isset( $args['description'] ) && ! isset( $args['meta_description'] ) ) {
