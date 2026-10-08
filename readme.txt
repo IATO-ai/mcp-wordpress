@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.12.0
+Stable tag: 1.12.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,15 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.12.1 =
+* Security: write tools now check permission on the specific post, page, term, or attachment being changed, and publishing requires publish rights.
+* Security: read tools now follow WordPress permissions for drafts, private posts, password-protected content (including revisions), and Theme Builder templates. get_post_meta requires edit access to the post.
+* Security: hardened structured data. update_structured_data now accepts only JSON objects or arrays, rejects script and comment markup, and stores values with HTML-sensitive characters escaped (for example \u003C). Code that reads the stored meta directly will see the escaped form.
+* Security: the OAuth consent screen can no longer be embedded in other sites. Token exchange is stricter: only the S256 PKCE method is accepted, and a client that sent a code challenge must send the matching code verifier.
+* Security: rollback requires the same permissions as the original change.
+* Fix: base64 media uploads no longer fail on some sites.
+* Note for integrations using an Application Password: requests now get exactly the access that user's WordPress role allows. Contributors and Authors can no longer read or change other users' unpublished content, and Contributors can no longer create pages. get_posts may report a hidden count. find_elementor_widgets lists explicitly requested posts it could not read in skipped_unreadable, reports only a count for posts found by its automatic scan, and requires administrator rights for include_templates. Connections using the site key or OAuth are unaffected.
 
 = 1.12.0 =
 * Elementor Atomic Editor (V4) read support. list_elementor_widgets, get_elementor_data (summary), get_elementor_widget and find_elementor_widgets now return correct content for atomic elements (e-heading, e-paragraph, e-image, e-button, e-flexbox, e-div-block, ...) and for pages mixing classic and atomic elements, in document order. Every node carries schema: "classic" | "atomic"; atomic nodes are normalised to the classic peek keys (title, header_size, editor, text, link) plus tag, link_new_tab, image_url, image_id, image_alt, image_alt_source.

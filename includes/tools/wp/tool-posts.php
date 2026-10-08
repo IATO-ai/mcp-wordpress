@@ -42,10 +42,17 @@ IATO_MCP_Server::register_tool(
 			'order'          => 'DESC',
 		];
 
-		$query = new WP_Query( $query_args );
-		$posts = [];
+		$query  = new WP_Query( $query_args );
+		$posts  = [];
+		$hidden = 0;
 
 		foreach ( $query->posts as $post ) {
+			// Other users' drafts, private posts and so on are listed only for
+			// callers who could read them (the site key reads everything).
+			if ( is_wp_error( IATO_MCP_Auth::require_read_post( $post->ID ) ) ) {
+				$hidden++;
+				continue;
+			}
 			$posts[] = [
 				'id'       => $post->ID,
 				'title'    => get_the_title( $post ),
@@ -56,12 +63,17 @@ IATO_MCP_Server::register_tool(
 			];
 		}
 
-		return IATO_MCP_Server::ok( [
+		$result = [
 			'posts'       => $posts,
 			'total'       => (int) $query->found_posts,
 			'total_pages' => (int) $query->max_num_pages,
 			'page'        => $page,
-		] );
+		];
+		if ( $hidden > 0 ) {
+			$result['hidden'] = $hidden; // matched the query but not readable by this caller
+		}
+
+		return IATO_MCP_Server::ok( $result );
 	}
 );
 
@@ -99,6 +111,13 @@ IATO_MCP_Server::register_tool(
 
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		// Any post type is accepted here; read_post (plus the password and
+		// template rules) decides whether this caller may see it.
+		$read_check = IATO_MCP_Auth::require_read_post( $post->ID );
+		if ( is_wp_error( $read_check ) ) {
+			return $read_check;
 		}
 
 		$categories = wp_get_post_categories( $post->ID, [ 'fields' => 'names' ] );
@@ -156,12 +175,25 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_post_type', 'post_type must be post or page.' );
 		}
 
+		$status = $args['status'] ?? 'draft';
+		if ( ! in_array( $status, [ 'draft', 'publish' ], true ) ) {
+			$status = 'draft';
+		}
+
+		// Object-level: the type's create capability (edit_posts for posts,
+		// edit_pages for pages), plus its publish capability when the post goes
+		// live, exactly as core's REST posts controller checks them.
+		$create_check = IATO_MCP_Auth::require_cap( IATO_MCP_Auth::post_type_cap( $post_type, 'create_posts' ) );
+		if ( is_wp_error( $create_check ) ) return $create_check;
+		if ( 'publish' === $status ) {
+			$publish_check = IATO_MCP_Auth::require_publish_cap( $post_type );
+			if ( is_wp_error( $publish_check ) ) return $publish_check;
+		}
+
 		$postarr = [
 			'post_title'   => sanitize_text_field( $args['title'] ),
 			'post_content' => wp_kses_post( $args['content'] ?? '' ),
-			'post_status'  => in_array( $args['status'] ?? 'draft', [ 'draft', 'publish' ], true )
-				? $args['status']
-				: 'draft',
+			'post_status'  => $status,
 			'post_type'    => $post_type,
 		];
 
@@ -227,6 +259,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		$postarr = [ 'ID' => $post_id ];
 		$before  = [];
 
@@ -243,6 +280,13 @@ IATO_MCP_Server::register_tool(
 			$before['excerpt']       = $post->post_excerpt;
 		}
 		if ( isset( $args['status'] ) && in_array( $args['status'], [ 'draft', 'publish' ], true ) ) {
+			// Going live needs the post type's publish capability (publish_posts /
+			// publish_pages) on top of edit_post: a Contributor may edit their own
+			// draft but not publish it.
+			if ( 'publish' === $args['status'] ) {
+				$publish_check = IATO_MCP_Auth::require_publish_cap( $post->post_type );
+				if ( is_wp_error( $publish_check ) ) return $publish_check;
+			}
 			$postarr['post_status'] = $args['status'];
 			$before['status']       = $post->post_status;
 		}

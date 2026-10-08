@@ -36,6 +36,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+		if ( is_wp_error( $read_check ) ) {
+			return $read_check;
+		}
+
 		$content = $post->post_content;
 
 		// Elementor.
@@ -125,6 +130,11 @@ IATO_MCP_Server::register_tool(
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+
+		$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+		if ( is_wp_error( $read_check ) ) {
+			return $read_check;
 		}
 
 		$data      = get_post_meta( $post_id, '_elementor_data', true );
@@ -238,6 +248,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		if ( empty( $elementor_data ) ) {
 			return new WP_Error( 'missing_data', 'elementor_data is required.' );
 		}
@@ -268,6 +283,13 @@ IATO_MCP_Server::register_tool(
 		if ( $inherit_source > 0 ) {
 			if ( ! get_post( $inherit_source ) ) {
 				return new WP_Error( 'inherit_source_not_found', 'inherit_settings_from references a post that does not exist.' );
+			}
+			// The source is only read, but its meta may belong to a post the
+			// caller cannot see (another user's draft, a private or password-
+			// protected page, a template): same gate as the read tools.
+			$source_check = IATO_MCP_Auth::require_read_post( $inherit_source );
+			if ( is_wp_error( $source_check ) ) {
+				return $source_check;
 			}
 			// Default curated list spans Astra per-post overrides + Elementor page
 			// settings + WP page template. Wider than the original 8 because real

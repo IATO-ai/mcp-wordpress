@@ -49,10 +49,32 @@ class IATO_MCP_Rollback {
 			return new WP_Error( 'missing_change_id', 'change_id is required.', [ 'status' => 400 ] );
 		}
 
+		// Auth baseline: the route's permission_callback only proves the caller
+		// holds a valid credential. Enforce the same capabilities the `rollback`
+		// MCP tool enforces (includes/tools/wp/tool-rollback.php): edit_posts to
+		// look up a receipt at all, then the receipt type's own capability
+		// (menu_item → edit_theme_options, redirect → manage_options, term CRUD →
+		// manage_categories, unknown types → manage_options). Without this, any
+		// edit_posts Application Password user who knows a change_id and its
+		// before_value could roll back admin-level changes through this route.
+		$auth_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
+		if ( is_wp_error( $auth_check ) ) {
+			return $auth_check;
+		}
+
+		if ( ! preg_match( '/^wr_[a-f0-9]{16}$/', $change_id ) ) {
+			return new WP_Error( 'invalid_change_id', 'change_id must match ^wr_[a-f0-9]{16}$', [ 'status' => 400 ] );
+		}
+
 		// Look up receipt.
 		$receipt = IATO_MCP_Change_Receipt::get( $change_id );
 		if ( ! $receipt ) {
 			return self::error_response( 'change_id not found', $change_id, 404 );
+		}
+
+		$perm = self::check_permission( $receipt );
+		if ( is_wp_error( $perm ) ) {
+			return $perm;
 		}
 
 		// Already rolled back?
@@ -104,6 +126,30 @@ class IATO_MCP_Rollback {
 			'restored_value' => $stored_before,
 			'rolled_back_at' => $rolled_back_at,
 		], 200 );
+	}
+
+	/**
+	 * May the authenticated caller roll back this receipt? Object-level where
+	 * the object still exists (edit_post / delete_post / edit_term / delete_term
+	 * on the specific ID), the type-level capability otherwise. Shared by the
+	 * REST route and the `rollback` MCP tool so they cannot drift. Goes through
+	 * IATO_MCP_Auth::require_cap(), so the site Bearer key (no user) passes as
+	 * it does for every other capability.
+	 *
+	 * @return true|WP_Error
+	 */
+	public static function check_permission( array $receipt ): bool|WP_Error {
+		$req    = IATO_MCP_Change_Receipt::object_cap_for( $receipt );
+		$checks = array_merge( [ [ 'cap' => $req['cap'], 'object_id' => $req['object_id'] ] ], $req['also'] ?? [] );
+		foreach ( $checks as $check ) {
+			$result = null !== $check['object_id']
+				? IATO_MCP_Auth::require_cap( $check['cap'], $check['object_id'] )
+				: IATO_MCP_Auth::require_cap( $check['cap'] );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -346,7 +392,7 @@ class IATO_MCP_Rollback {
 					delete_post_meta( $post_id, '_iato_mcp_structured_data' );
 					return true;
 				}
-				update_post_meta( $post_id, '_iato_mcp_structured_data', $before_value );
+				update_post_meta( $post_id, '_iato_mcp_structured_data', wp_slash( (string) $before_value ) );
 				return true;
 
 			default:

@@ -38,6 +38,14 @@ IATO_MCP_Server::register_tool(
 			$format = 'flat';
 		}
 
+		// Missing posts keep decode_data()'s own error; existing ones must be readable.
+		if ( get_post( $post_id ) ) {
+			$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+			if ( is_wp_error( $read_check ) ) {
+				return $read_check;
+			}
+		}
+
 		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
 		if ( is_wp_error( $decoded ) ) {
 			return $decoded;
@@ -79,6 +87,14 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( '' === $widget_id ) {
 			return new WP_Error( 'missing_widget_id', 'widget_id is required.' );
+		}
+
+		// Missing posts keep decode_data()'s own error; existing ones must be readable.
+		if ( get_post( $post_id ) ) {
+			$read_check = IATO_MCP_Auth::require_read_post( $post_id );
+			if ( is_wp_error( $read_check ) ) {
+				return $read_check;
+			}
 		}
 
 		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
@@ -150,6 +166,17 @@ IATO_MCP_Server::register_tool(
 			return $cap_check;
 		}
 
+		$post_id = absint( $args['id'] ?? 0 );
+		if ( $post_id > 0 ) {
+			if ( ! get_post( $post_id ) ) {
+				return new WP_Error( 'not_found', 'Post not found.' );
+			}
+			$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+			if ( is_wp_error( $object_check ) ) {
+				return $object_check;
+			}
+		}
+
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;
 		$key     = isset( $args['idempotency_key'] ) ? (string) $args['idempotency_key'] : null;
 
@@ -204,6 +231,14 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( null === $ops ) {
 			return new WP_Error( 'missing_ops', 'ops must be an array of RFC 6902 operations.' );
+		}
+
+		if ( ! get_post( $post_id ) ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
 		}
 
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;

@@ -46,6 +46,11 @@ IATO_MCP_Server::register_tool(
 		if ( ! get_post( $post_id ) ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		if ( function_exists( 'wp_check_post_lock' ) ) {
 			$lock_user = wp_check_post_lock( $post_id );
 			if ( $lock_user ) {

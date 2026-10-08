@@ -442,6 +442,9 @@ class IATO_MCP_Media_Uploader {
 				)
 			);
 		}
+		// wp_tempnam() lives in wp-admin/includes/file.php, which is not loaded on
+		// REST requests; without this the base64 path fatals.
+		require_once ABSPATH . 'wp-admin/includes/file.php';
 		$tmp = wp_tempnam( $filename );
 		if ( ! $tmp ) {
 			return new WP_Error( 'tempfile_failed', 'Could not create temporary file.' );

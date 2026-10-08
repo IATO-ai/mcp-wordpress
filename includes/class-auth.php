@@ -46,6 +46,16 @@ class IATO_MCP_Auth {
 	private static ?WP_User $authenticated_user = null;
 
 	/**
+	 * Set only by authenticate() when the request carried the valid site key
+	 * (Bearer / OAuth). That path has no WordPress user and is documented as
+	 * full administrative access, so require_cap() grants every capability
+	 * when this flag is set. The flag, not "current user is 0", is what tells
+	 * a site-key request apart from an unauthenticated visitor (who is also
+	 * user 0, and for whom $authenticated stays false).
+	 */
+	private static bool $site_key_full_access = false;
+
+	/**
 	 * Generate and store a new API key on first activation.
 	 * Called from the activation hook in iato-mcp.php.
 	 */
@@ -99,7 +109,8 @@ class IATO_MCP_Auth {
 				);
 			}
 
-			self::$authenticated = true;
+			self::$authenticated        = true;
+			self::$site_key_full_access = true;
 			return true;
 		}
 
@@ -158,7 +169,13 @@ class IATO_MCP_Auth {
 	 * @param string $cap WordPress capability string.
 	 * @return true|WP_Error
 	 */
-	public static function require_cap( string $cap ): bool|WP_Error {
+	/**
+	 * @param string $cap     Capability (primitive or meta capability such as edit_post).
+	 * @param mixed  ...$args Object arguments forwarded to user_can() for meta
+	 *                        capabilities (e.g. the post ID for edit_post). The
+	 *                        Bearer plugin-key path ignores them, as it does the cap.
+	 */
+	public static function require_cap( string $cap, mixed ...$args ): bool|WP_Error {
 		if ( ! self::$authenticated ) {
 			return new WP_Error(
 				'iato_mcp_forbidden',
@@ -168,8 +185,11 @@ class IATO_MCP_Auth {
 			);
 		}
 
-		// Bearer plugin-key path: no associated user, documented full admin access.
-		if ( null === self::$authenticated_user ) {
+		// Site-key path (Bearer / OAuth): documented full admin access. Decided by
+		// the explicit flag set in authenticate(), never by the absence of a user
+		// (an unauthenticated visitor is also user 0 but never gets here, because
+		// $authenticated is false for them).
+		if ( self::$site_key_full_access ) {
 			return true;
 		}
 
@@ -178,15 +198,112 @@ class IATO_MCP_Auth {
 		// against any callers that mutate the $current_user global later in the
 		// request lifecycle. (Equivalent under normal REST auth, but the explicit-user
 		// form removes one assumption about global state.)
-		if ( user_can( self::$authenticated_user, $cap ) ) {
+		if ( self::$authenticated_user instanceof WP_User && user_can( self::$authenticated_user, $cap, ...$args ) ) {
 			return true;
 		}
 
+		// Authenticated by neither path, or the user lacks the capability: refuse.
 		return new WP_Error(
 			'iato_mcp_forbidden',
 			/* translators: %s: WordPress capability string */
 			sprintf( __( 'You do not have the required capability: %s', 'iato-mcp' ), $cap ),
 			[ 'status' => 403 ]
 		);
+	}
+
+	// ── Object-level helpers ──────────────────────────────────────────────
+
+	/**
+	 * Statuses that need the post type's publish capability to set. Same rule
+	 * as core's REST posts controller (handle_status_param).
+	 */
+	public const PUBLISH_STATUSES = [ 'publish', 'future', 'private' ];
+
+	/**
+	 * Capability name for an action on a post type, read from the type's
+	 * registered capability map so `page` and custom post types resolve to
+	 * their own names (edit_pages, publish_pages, …). Falls back to the core
+	 * post / page names when the type is not registered.
+	 *
+	 * @param string $post_type Post type slug.
+	 * @param string $key       Key in WP_Post_Type::$cap: create_posts, publish_posts, edit_posts, …
+	 */
+	public static function post_type_cap( string $post_type, string $key ): string {
+		if ( function_exists( 'get_post_type_object' ) ) {
+			$pto = get_post_type_object( $post_type );
+			if ( $pto && isset( $pto->cap->$key ) && is_string( $pto->cap->$key ) ) {
+				return $pto->cap->$key;
+			}
+		}
+		$key = 'create_posts' === $key ? 'edit_posts' : $key;
+		return 'page' === $post_type ? str_replace( '_posts', '_pages', $key ) : $key;
+	}
+
+	/**
+	 * Capability name for an action on a taxonomy (manage_terms, edit_terms,
+	 * delete_terms, assign_terms), read from the taxonomy's capability map.
+	 */
+	public static function taxonomy_cap( string $taxonomy, string $key ): string {
+		if ( function_exists( 'get_taxonomy' ) ) {
+			$tax = get_taxonomy( $taxonomy );
+			if ( $tax && isset( $tax->cap->$key ) && is_string( $tax->cap->$key ) ) {
+				return $tax->cap->$key;
+			}
+		}
+		return 'assign_terms' === $key ? 'edit_posts' : 'manage_categories';
+	}
+
+	/**
+	 * Require the capability to publish (or schedule / make private) a post of
+	 * the given type: publish_posts, publish_pages, or the custom type's own.
+	 */
+	public static function require_publish_cap( string $post_type ): bool|WP_Error {
+		return self::require_cap( self::post_type_cap( $post_type, 'publish_posts' ) );
+	}
+
+	/**
+	 * May the current request read this post through a read tool?
+	 *
+	 *  - read_post on the post: published public posts need `read`, private
+	 *    ones read_private_posts / read_private_pages, drafts and pending posts
+	 *    resolve to edit_post (so a Contributor reads their own drafts and
+	 *    nobody else's);
+	 *  - edit_post as well when the post is password-protected, because the
+	 *    tools return the content without asking for the password;
+	 *  - manage_options for Elementor Theme Builder templates
+	 *    (elementor_library), the same bar as list_elementor_templates.
+	 *
+	 * A revision is resolved to its parent first and all three rules run
+	 * against the parent: a revision row has post_type `revision` and no
+	 * post_password of its own, so checking it directly would let the body
+	 * of a password-protected page or of a template through.
+	 *
+	 * The site key passes all of these (require_cap() short-circuits before
+	 * any user_can() call), so its behaviour is unchanged.
+	 */
+	public static function require_read_post( int $post_id ): bool|WP_Error {
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'not_found', 'Post not found.', [ 'status' => 404 ] );
+		}
+		if ( 'revision' === (string) ( $post->post_type ?? '' ) ) {
+			$parent = (int) ( $post->post_parent ?? 0 ) > 0 ? get_post( (int) $post->post_parent ) : null;
+			if ( ! $parent ) {
+				return new WP_Error( 'not_found', 'Post not found.', [ 'status' => 404 ] );
+			}
+			$post    = $parent;
+			$post_id = (int) $parent->ID;
+		}
+		if ( 'elementor_library' === (string) ( $post->post_type ?? '' ) ) {
+			return self::require_cap( 'manage_options' );
+		}
+		$read = self::require_cap( 'read_post', $post_id );
+		if ( is_wp_error( $read ) ) {
+			return $read;
+		}
+		if ( '' !== (string) ( $post->post_password ?? '' ) ) {
+			return self::require_cap( 'edit_post', $post_id );
+		}
+		return true;
 	}
 }

@@ -132,6 +132,130 @@ class IATO_MCP_Change_Receipt {
 	}
 
 	/**
+	 * Object-level capability a rollback of this receipt requires.
+	 *
+	 * cap_required_for() answers "which kind of user may roll this type back";
+	 * this answers "may they roll back THIS one", by naming the WordPress meta
+	 * capability and the object it applies to, so that for example a
+	 * Contributor cannot revert another user's published page with a bare
+	 * edit_posts. Rules, per target_type (field):
+	 *
+	 *   post / page / post_meta / elementor_widget   edit_post   <post_id>
+	 *   post create (rollback trashes the post)      delete_post <post_id>
+	 *   post status restoring publish/future/private edit_post   <post_id> + the type's publish cap (also[])
+	 *   image (alt text; post_id is the attachment) edit_post   <attachment_id>
+	 *   attachment (create; rollback deletes it)     delete_post <attachment_id>
+	 *   taxonomy assign / terms (post-level)         edit_post   <post_id>
+	 *   taxonomy create_term (rollback deletes it)   delete_term <after_value.term_id>
+	 *   taxonomy update_term                         edit_term   <before_value.term_id>
+	 *   taxonomy delete_term (rollback re-creates)   manage_categories (type-level by design: the
+	 *                                                 object does not exist until the rollback runs)
+	 *   menu_item                                    edit_theme_options (type-level: menus are site-wide)
+	 *   redirect                                     manage_options (type-level: site-wide)
+	 *   anything else                                manage_options (fail closed)
+	 *
+	 * When the object no longer exists (deleted post, attachment or term) there
+	 * is nothing object-specific left to check, and the rollback will mostly be
+	 * a no-op or fail on its own; the check falls back to the type-level
+	 * capability from cap_required_for() (edit_posts for post-like receipts,
+	 * manage_categories for term receipts). The Bearer plugin-key path passes
+	 * every capability regardless, exactly as it does for the type-level check.
+	 *
+	 * @return array{cap:string, object_id:?int, basis:string, also:list<array{cap:string, object_id:?int}>}
+	 *         basis = 'object' | 'type' (object missing) | 'type-by-design'; also = further
+	 *         capabilities that must all pass as well (currently only the publish cap).
+	 */
+	public static function object_cap_for( array $receipt ): array {
+		$target_type = isset( $receipt['target_type'] ) ? (string) $receipt['target_type'] : '';
+		$field       = isset( $receipt['field'] )       ? (string) $receipt['field']       : '';
+		$post_id     = isset( $receipt['post_id'] ) ? (int) $receipt['post_id'] : 0;
+		$type_cap    = self::cap_required_for( $receipt );
+
+		$object = static fn( string $cap, int $id ): array => [ 'cap' => $cap, 'object_id' => $id, 'basis' => 'object', 'also' => [] ];
+		$typed  = static fn( string $cap, string $basis = 'type' ): array => [ 'cap' => $cap, 'object_id' => null, 'basis' => $basis, 'also' => [] ];
+
+		switch ( $target_type ) {
+			case 'post':
+				if ( 'create' === $field ) {
+					// Rolling back a create trashes the post: that is a delete.
+					return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'delete_post', $post_id ) : $typed( $type_cap );
+				}
+				if ( 'status' === $field ) {
+					if ( $post_id <= 0 || ! self::post_exists( $post_id ) ) {
+						return $typed( $type_cap );
+					}
+					$req = $object( 'edit_post', $post_id );
+					// Restoring a live status re-publishes the post, which needs
+					// the post type's publish capability on top of edit_post —
+					// otherwise a Contributor could publish their own draft by
+					// rolling back an Editor's unpublish.
+					$restoring_to = is_string( $receipt['before_value'] ?? null ) ? $receipt['before_value'] : '';
+					if ( in_array( $restoring_to, IATO_MCP_Auth::PUBLISH_STATUSES, true ) ) {
+						$post_type     = (string) ( get_post( $post_id )->post_type ?? 'post' );
+						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'publish_posts' ), 'object_id' => null ];
+					}
+					return $req;
+				}
+				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
+
+			case 'page':
+			case 'post_meta':
+			case 'elementor_widget':
+			case 'image':
+				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
+
+			case 'attachment':
+				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'delete_post', $post_id ) : $typed( $type_cap );
+
+			case 'taxonomy':
+				switch ( $field ) {
+					case 'create_term':
+						$after   = self::decode_json_field( $receipt['after_value'] ?? null );
+						$term_id = (int) ( $after['term_id'] ?? 0 );
+						return ( $term_id > 0 && self::term_exists( $term_id ) ) ? $object( 'delete_term', $term_id ) : $typed( $type_cap );
+					case 'update_term':
+						$before  = self::decode_json_field( $receipt['before_value'] ?? null );
+						$term_id = (int) ( $before['term_id'] ?? 0 );
+						return ( $term_id > 0 && self::term_exists( $term_id ) ) ? $object( 'edit_term', $term_id ) : $typed( $type_cap );
+					case 'delete_term':
+						return $typed( $type_cap, 'type-by-design' );
+					default: // assign, terms
+						return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
+				}
+
+			case 'menu_item':
+			case 'redirect':
+				return $typed( $type_cap, 'type-by-design' );
+
+			default:
+				return $typed( $type_cap, 'type-by-design' ); // cap_required_for() fails closed at manage_options
+		}
+	}
+
+	private static function post_exists( int $post_id ): bool {
+		return function_exists( 'get_post' ) && null !== get_post( $post_id );
+	}
+
+	private static function term_exists( int $term_id ): bool {
+		if ( ! function_exists( 'get_term' ) ) {
+			return false;
+		}
+		$term = get_term( $term_id );
+		return $term && ! ( function_exists( 'is_wp_error' ) && is_wp_error( $term ) );
+	}
+
+	private static function decode_json_field( mixed $value ): array {
+		if ( is_array( $value ) ) {
+			return $value;
+		}
+		if ( ! is_string( $value ) || '' === $value ) {
+			return [];
+		}
+		$decoded = json_decode( $value, true );
+		return is_array( $decoded ) ? $decoded : [];
+	}
+
+	/**
 	 * Record a change receipt after a successful write.
 	 *
 	 * @param int|null $post_id     WordPress post/attachment/menu-item ID, or null for non-post targets.

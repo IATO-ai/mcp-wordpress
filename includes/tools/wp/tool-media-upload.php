@@ -57,7 +57,10 @@ IATO_MCP_Server::register_tool(
 
 		$attach_to_post = isset( $args['attach_to_post'] ) ? absint( $args['attach_to_post'] ) : 0;
 		if ( $attach_to_post > 0 ) {
-			$edit_check = IATO_MCP_Auth::require_cap( 'edit_posts' );
+			if ( ! get_post( $attach_to_post ) ) {
+				return new WP_Error( 'not_found', 'attach_to_post references a post that does not exist.' );
+			}
+			$edit_check = IATO_MCP_Auth::require_cap( 'edit_post', $attach_to_post );
 			if ( is_wp_error( $edit_check ) ) {
 				return $edit_check;
 			}

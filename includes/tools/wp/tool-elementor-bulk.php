@@ -95,11 +95,25 @@ IATO_MCP_Server::register_tool(
 				continue;
 			}
 
-			// Per-post capability is gated by the global require_cap('edit_posts')
-			// at handler entry. Bearer auth in this plugin grants full admin
-			// access (see class-auth.php docblock); current_user_can() against a
-			// post would always return false because wp_get_current_user() is 0
-			// for bearer-authenticated requests, so it would reject every write.
+			// Object-level: edit_post on each target (the site key passes, an
+			// Application Password user is checked against the specific post).
+			$object_check = get_post( $post_id )
+				? IATO_MCP_Auth::require_cap( 'edit_post', $post_id )
+				: new WP_Error( 'not_found', 'Post not found.' );
+			if ( is_wp_error( $object_check ) ) {
+				$results[] = [
+					'index'      => $i,
+					'post_id'    => $post_id,
+					'widget_id'  => $widget_id,
+					'success'    => false,
+					'error'      => $object_check->get_error_code(),
+					'error_data' => null,
+					'message'    => $object_check->get_error_message(),
+				];
+				$failed++;
+				continue;
+			}
+
 			$single_args = [
 				'id'             => $post_id,
 				'widget_id'      => $widget_id,
@@ -175,10 +189,21 @@ IATO_MCP_Server::register_tool(
 		if ( null === $filter ) {
 			return new WP_Error( 'missing_filter', 'filter is required.' );
 		}
+		// Theme Builder templates are admin-only to read (same bar as
+		// list_elementor_templates); explicit elementor_library IDs are caught
+		// per post below.
+		if ( $include_templates ) {
+			$template_check = IATO_MCP_Auth::require_cap( 'manage_options' );
+			if ( is_wp_error( $template_check ) ) {
+				return $template_check;
+			}
+		}
 
 		// Resolve scan set.
 		$truncated            = false;
 		$revision_to_parent   = []; // parent_id => first revision_id that resolved to it
+		$explicit             = ! empty( $post_ids );
+		$inputs_by_resolved   = []; // resolved id => every input id (revision or not) that mapped to it
 		if ( empty( $post_ids ) ) {
 			// include_templates is the only knob that widens the post_type list
 			// past [post, page]. Default false preserves v1.8.x BC — silently
@@ -226,17 +251,41 @@ IATO_MCP_Server::register_tool(
 					if ( ! isset( $revision_to_parent[ $parent_id ] ) ) {
 						$revision_to_parent[ $parent_id ] = $pid;
 					}
+					$inputs_by_resolved[ $parent_id ][] = $pid;
 				} else {
 					$resolved[] = $pid;
+					$inputs_by_resolved[ $pid ][] = $pid;
 				}
 			}
 			$post_ids = array_values( array_unique( $resolved ) );
 		}
 
-		// Bearer auth grants full admin access (see class-auth.php), so per-post
-		// read_post checks would always fail against wp_get_current_user() = 0
-		// and reject every match. Trust the global authentication instead.
-		$post_ids_allowed = array_values( array_filter( $post_ids, fn( $pid ) => $pid > 0 ) );
+		// Scan only what this caller may read: read_post per post (other users'
+		// drafts and private posts drop out for an Application Password user),
+		// edit_post for password-protected posts, manage_options for templates.
+		// The site key passes every check. IDs the caller passed are reported
+		// back as given (the input ID, not a resolved revision parent) so they
+		// can see why those produced no matches; posts the automatic scan found
+		// are only counted, so an unreadable post is not enumerated by ID.
+		$post_ids_allowed = [];
+		$skipped_ids      = [];
+		$skipped_count    = 0;
+		foreach ( $post_ids as $pid ) {
+			if ( $pid <= 0 ) {
+				continue;
+			}
+			if ( is_wp_error( IATO_MCP_Auth::require_read_post( $pid ) ) ) {
+				if ( $explicit ) {
+					foreach ( $inputs_by_resolved[ $pid ] ?? [ $pid ] as $input_id ) {
+						$skipped_ids[] = $input_id;
+					}
+				} else {
+					$skipped_count++;
+				}
+				continue;
+			}
+			$post_ids_allowed[] = $pid;
+		}
 
 		// Walk each post.
 		$matches = [];
@@ -269,6 +318,12 @@ IATO_MCP_Server::register_tool(
 		];
 		if ( $truncated ) {
 			$response['truncated'] = true;
+		}
+		if ( ! empty( $skipped_ids ) ) {
+			$response['skipped_unreadable'] = $skipped_ids; // explicit post_ids, as passed
+		}
+		if ( $skipped_count > 0 ) {
+			$response['skipped_unreadable_count'] = $skipped_count; // automatic scan
 		}
 
 		return IATO_MCP_Server::ok( $response );

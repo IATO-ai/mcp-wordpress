@@ -16,7 +16,7 @@ if ( ! class_exists( 'WP_Error' ) ) {
 	class WP_Error {
 		public array $errors     = [];
 		public array $error_data = [];
-		public function __construct( string $code = '', string $message = '', mixed $data = null ) {
+		public function __construct( string $code = '', mixed $message = '', mixed $data = null ) {
 			if ( '' !== $code ) {
 				$this->errors[ $code ][] = $message;
 				if ( null !== $data ) {
@@ -27,9 +27,13 @@ if ( ! class_exists( 'WP_Error' ) ) {
 		public function get_error_code(): string {
 			return (string) ( array_key_first( $this->errors ) ?? '' );
 		}
-		public function get_error_message( string $code = '' ): string {
+		public function get_error_message( string $code = '' ): mixed {
 			$code = '' === $code ? $this->get_error_code() : $code;
-			return (string) ( $this->errors[ $code ][0] ?? '' );
+			return $this->errors[ $code ][0] ?? '';
+		}
+		public function get_error_data( string $code = '' ): mixed {
+			$code = '' === $code ? $this->get_error_code() : $code;
+			return $this->error_data[ $code ] ?? null;
 		}
 	}
 }
