@@ -139,11 +139,17 @@ class IATO_MCP_Rollback {
 	 * @return true|WP_Error
 	 */
 	public static function check_permission( array $receipt ): bool|WP_Error {
-		$req = IATO_MCP_Change_Receipt::object_cap_for( $receipt );
-		if ( null !== $req['object_id'] ) {
-			return IATO_MCP_Auth::require_cap( $req['cap'], $req['object_id'] );
+		$req    = IATO_MCP_Change_Receipt::object_cap_for( $receipt );
+		$checks = array_merge( [ [ 'cap' => $req['cap'], 'object_id' => $req['object_id'] ] ], $req['also'] ?? [] );
+		foreach ( $checks as $check ) {
+			$result = null !== $check['object_id']
+				? IATO_MCP_Auth::require_cap( $check['cap'], $check['object_id'] )
+				: IATO_MCP_Auth::require_cap( $check['cap'] );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
 		}
-		return IATO_MCP_Auth::require_cap( $req['cap'] );
+		return true;
 	}
 
 	/**
@@ -386,7 +392,7 @@ class IATO_MCP_Rollback {
 					delete_post_meta( $post_id, '_iato_mcp_structured_data' );
 					return true;
 				}
-				update_post_meta( $post_id, '_iato_mcp_structured_data', $before_value );
+				update_post_meta( $post_id, '_iato_mcp_structured_data', wp_slash( (string) $before_value ) );
 				return true;
 
 			default:

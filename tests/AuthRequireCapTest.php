@@ -59,4 +59,28 @@ final class AuthRequireCapTest extends TestCase {
 		$this->set( true, 1, false ); // administrator
 		$this->assertTrue( IATO_MCP_Auth::require_cap( 'edit_post', 10 ) );
 	}
+
+	public function test_post_type_and_taxonomy_caps_fall_back_to_core_names_without_wordpress(): void {
+		// No get_post_type_object() / get_taxonomy() in the stubs: the fallback
+		// must still name the right core capability.
+		$this->assertSame( 'edit_posts', IATO_MCP_Auth::post_type_cap( 'post', 'create_posts' ) );
+		$this->assertSame( 'edit_pages', IATO_MCP_Auth::post_type_cap( 'page', 'create_posts' ) );
+		$this->assertSame( 'publish_posts', IATO_MCP_Auth::post_type_cap( 'post', 'publish_posts' ) );
+		$this->assertSame( 'publish_pages', IATO_MCP_Auth::post_type_cap( 'page', 'publish_posts' ) );
+		$this->assertSame( 'publish_posts', IATO_MCP_Auth::post_type_cap( 'some_cpt', 'publish_posts' ) );
+		$this->assertSame( 'manage_categories', IATO_MCP_Auth::taxonomy_cap( 'category', 'manage_terms' ) );
+		$this->assertSame( 'edit_posts', IATO_MCP_Auth::taxonomy_cap( 'post_tag', 'assign_terms' ) );
+		$this->assertSame( [ 'publish', 'future', 'private' ], IATO_MCP_Auth::PUBLISH_STATUSES );
+	}
+
+	public function test_require_publish_cap_is_enforced_per_user_and_waived_for_the_site_key(): void {
+		$this->set( true, 8, false ); // contributor
+		$err = IATO_MCP_Auth::require_publish_cap( 'post' );
+		$this->assertInstanceOf( WP_Error::class, $err );
+		$this->assertStringContainsString( 'publish_posts', $err->get_error_message() );
+		$this->set( true, 1, false ); // administrator
+		$this->assertTrue( IATO_MCP_Auth::require_publish_cap( 'post' ) );
+		$this->set( true, null, true ); // site key
+		$this->assertTrue( IATO_MCP_Auth::require_publish_cap( 'page' ) );
+	}
 }

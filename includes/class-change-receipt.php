@@ -141,6 +141,8 @@ class IATO_MCP_Change_Receipt {
 	 * edit_posts. Rules, per target_type (field):
 	 *
 	 *   post / page / post_meta / elementor_widget   edit_post   <post_id>
+	 *   post create (rollback trashes the post)      delete_post <post_id>
+	 *   post status restoring publish/future/private edit_post   <post_id> + the type's publish cap (also[])
 	 *   image (alt text; post_id is the attachment) edit_post   <attachment_id>
 	 *   attachment (create; rollback deletes it)     delete_post <attachment_id>
 	 *   taxonomy assign / terms (post-level)         edit_post   <post_id>
@@ -159,7 +161,9 @@ class IATO_MCP_Change_Receipt {
 	 * manage_categories for term receipts). The Bearer plugin-key path passes
 	 * every capability regardless, exactly as it does for the type-level check.
 	 *
-	 * @return array{cap:string, object_id:?int, basis:string} basis = 'object' | 'type' (object missing) | 'type-by-design'
+	 * @return array{cap:string, object_id:?int, basis:string, also:list<array{cap:string, object_id:?int}>}
+	 *         basis = 'object' | 'type' (object missing) | 'type-by-design'; also = further
+	 *         capabilities that must all pass as well (currently only the publish cap).
 	 */
 	public static function object_cap_for( array $receipt ): array {
 		$target_type = isset( $receipt['target_type'] ) ? (string) $receipt['target_type'] : '';
@@ -167,11 +171,33 @@ class IATO_MCP_Change_Receipt {
 		$post_id     = isset( $receipt['post_id'] ) ? (int) $receipt['post_id'] : 0;
 		$type_cap    = self::cap_required_for( $receipt );
 
-		$object = static fn( string $cap, int $id ): array => [ 'cap' => $cap, 'object_id' => $id, 'basis' => 'object' ];
-		$typed  = static fn( string $cap, string $basis = 'type' ): array => [ 'cap' => $cap, 'object_id' => null, 'basis' => $basis ];
+		$object = static fn( string $cap, int $id ): array => [ 'cap' => $cap, 'object_id' => $id, 'basis' => 'object', 'also' => [] ];
+		$typed  = static fn( string $cap, string $basis = 'type' ): array => [ 'cap' => $cap, 'object_id' => null, 'basis' => $basis, 'also' => [] ];
 
 		switch ( $target_type ) {
 			case 'post':
+				if ( 'create' === $field ) {
+					// Rolling back a create trashes the post: that is a delete.
+					return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'delete_post', $post_id ) : $typed( $type_cap );
+				}
+				if ( 'status' === $field ) {
+					if ( $post_id <= 0 || ! self::post_exists( $post_id ) ) {
+						return $typed( $type_cap );
+					}
+					$req = $object( 'edit_post', $post_id );
+					// Restoring a live status re-publishes the post, which needs
+					// the post type's publish capability on top of edit_post —
+					// otherwise a Contributor could publish their own draft by
+					// rolling back an Editor's unpublish.
+					$restoring_to = is_string( $receipt['before_value'] ?? null ) ? $receipt['before_value'] : '';
+					if ( in_array( $restoring_to, IATO_MCP_Auth::PUBLISH_STATUSES, true ) ) {
+						$post_type     = (string) ( get_post( $post_id )->post_type ?? 'post' );
+						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'publish_posts' ), 'object_id' => null ];
+					}
+					return $req;
+				}
+				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
+
 			case 'page':
 			case 'post_meta':
 			case 'elementor_widget':

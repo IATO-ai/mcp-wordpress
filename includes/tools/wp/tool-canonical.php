@@ -40,6 +40,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		$before = IATO_MCP_SEO_Adapter::get_canonical( $post_id );
 		$before = '' !== $before ? $before : null;
 

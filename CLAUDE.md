@@ -70,6 +70,7 @@ On error, return `isError: true` with a message — never throw exceptions out o
 - Nonces not used on MCP endpoint (it uses Application Password / OAuth auth)
 - Capability check on every write tool: `current_user_can('edit_posts')` minimum
 - Admin-only tools (menus, settings, taxonomy write): `current_user_can('manage_options')`
+- Object-level check on every write that takes an ID, after the existence check: `IATO_MCP_Auth::require_cap( 'edit_post', $post_id )` (or `delete_post`, `edit_term`, `delete_term`); publishing needs `IATO_MCP_Auth::require_publish_cap( $post_type )`. The site key passes all of these; Application Password users are checked against the object. The per-tool inventory is in the 1.12.1 release notes, kept outside the repository.
 - Never write to wp_options without `sanitize_*` on the value
 - Dry-run mode for destructive write tools: accept `dry_run: true`, return what *would* change
 - All files namespaced under `IATO_MCP_` prefix for constants, `IATO_MCP` for classes

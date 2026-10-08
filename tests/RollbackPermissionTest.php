@@ -25,6 +25,7 @@ final class RollbackPermissionTest extends TestCase {
 			10 => [ 'post_type' => 'page',       'post_author' => self::ADMIN,   'post_status' => 'publish' ], // someone else's published page
 			20 => [ 'post_type' => 'post',       'post_author' => self::AUTHOR,  'post_status' => 'publish' ], // the author's own published post
 			21 => [ 'post_type' => 'post',       'post_author' => self::CONTRIB, 'post_status' => 'draft' ],   // the contributor's own draft
+			22 => [ 'post_type' => 'post',       'post_author' => self::AUTHOR,  'post_status' => 'draft' ],   // the author's own draft
 			5  => [ 'post_type' => 'attachment', 'post_author' => self::ADMIN,   'post_status' => 'inherit' ],
 		];
 		IATO_Test_Roles::$terms = [ 3 => 'category' ];
@@ -63,6 +64,11 @@ final class RollbackPermissionTest extends TestCase {
 			'post on deleted post 999'     => self::r( 'post', 'title', 999, 'a', 'b' ),
 			'attachment create on deleted' => self::r( 'attachment', 'create', 998, null, '{}' ),
 			'create_term on deleted term'  => self::r( 'taxonomy', 'create_term', null, null, '{"term_id":404,"taxonomy":"category"}' ),
+			'post create on draft 21'      => self::r( 'post', 'create', 21, null, '{"post_type":"post"}' ),
+			'post create on deleted'       => self::r( 'post', 'create', 997, null, '{"post_type":"post"}' ),
+			'status restore publish on 21' => self::r( 'post', 'status', 21, 'publish', 'draft' ),
+			'status restore private on 21' => self::r( 'post', 'status', 21, 'private', 'draft' ),
+			'status restore draft on 20'   => self::r( 'post', 'status', 20, 'draft', 'publish' ),
 		];
 	}
 
@@ -86,11 +92,59 @@ final class RollbackPermissionTest extends TestCase {
 			'post on deleted post 999'     => [ 'edit_posts', null, 'type' ],
 			'attachment create on deleted' => [ 'edit_posts', null, 'type' ],
 			'create_term on deleted term'  => [ 'manage_categories', null, 'type' ],
+			'post create on draft 21'      => [ 'delete_post', 21, 'object' ],
+			'post create on deleted'       => [ 'edit_posts', null, 'type' ],
+			'status restore publish on 21' => [ 'edit_post', 21, 'object' ],
+			'status restore private on 21' => [ 'edit_post', 21, 'object' ],
+			'status restore draft on 20'   => [ 'edit_post', 20, 'object' ],
 		];
 		foreach ( self::all_receipts() as $name => $receipt ) {
 			$got = IATO_MCP_Change_Receipt::object_cap_for( $receipt );
 			$this->assertSame( $expect[ $name ], [ $got['cap'], $got['object_id'], $got['basis'] ], $name );
 		}
+	}
+
+	public function test_restoring_a_live_status_also_requires_the_publish_capability(): void {
+		foreach ( [ 'status restore publish on 21', 'status restore private on 21' ] as $name ) {
+			$got = IATO_MCP_Change_Receipt::object_cap_for( self::all_receipts()[ $name ] );
+			$this->assertSame( [ [ 'cap' => 'publish_posts', 'object_id' => null ] ], $got['also'], $name );
+		}
+		// Restoring to draft, and every other receipt, adds nothing.
+		foreach ( self::all_receipts() as $name => $receipt ) {
+			if ( str_starts_with( $name, 'status restore p' ) ) {
+				continue;
+			}
+			$this->assertSame( [], IATO_MCP_Change_Receipt::object_cap_for( $receipt )['also'], $name );
+		}
+	}
+
+	public function test_contributor_cannot_republish_their_own_draft_through_a_status_rollback(): void {
+		$this->auth_as( self::CONTRIB );
+		foreach ( [ 'status restore publish on 21', 'status restore private on 21' ] as $name ) {
+			$err = IATO_MCP_Rollback::check_permission( self::all_receipts()[ $name ] );
+			$this->assertInstanceOf( WP_Error::class, $err, $name );
+			$this->assertStringContainsString( 'publish_posts', $err->get_error_message(), $name );
+		}
+		// Un-publishing (restore to draft) is an ordinary edit, which they may do on their own post only.
+		$this->assertTrue( IATO_MCP_Rollback::check_permission( self::r( 'post', 'status', 21, 'draft', 'pending' ) ) );
+		$this->assertInstanceOf( WP_Error::class, IATO_MCP_Rollback::check_permission( self::all_receipts()['status restore draft on 20'] ) );
+	}
+
+	public function test_author_can_republish_their_own_draft_through_a_status_rollback(): void {
+		$this->auth_as( self::AUTHOR );
+		$this->assertTrue( IATO_MCP_Rollback::check_permission( self::r( 'post', 'status', 22, 'publish', 'draft' ) ) );
+		$this->assertInstanceOf( WP_Error::class, IATO_MCP_Rollback::check_permission( self::all_receipts()['status restore publish on 21'] ), "another user's draft" );
+	}
+
+	public function test_create_rollback_requires_delete_post_on_the_created_post(): void {
+		$this->auth_as( self::CONTRIB );
+		$this->assertTrue( IATO_MCP_Rollback::check_permission( self::all_receipts()['post create on draft 21'] ), 'own draft' );
+		$err = IATO_MCP_Rollback::check_permission( self::r( 'post', 'create', 10, null, '{}' ) );
+		$this->assertInstanceOf( WP_Error::class, $err, "someone else's page" );
+		$this->assertStringContainsString( 'delete_post', $err->get_error_message() );
+		$this->auth_as( self::AUTHOR );
+		$this->assertInstanceOf( WP_Error::class, IATO_MCP_Rollback::check_permission( self::r( 'post', 'create', 10, null, '{}' ) ) );
+		$this->assertTrue( IATO_MCP_Rollback::check_permission( self::r( 'post', 'create', 20, null, '{}' ) ), 'own published post' );
 	}
 
 	// ── Bearer plugin key keeps full access ───────────────────────────────
@@ -158,7 +212,7 @@ final class RollbackPermissionTest extends TestCase {
 
 	public function test_editor_passes_object_and_type_level_checks_but_not_site_wide_ones(): void {
 		$this->auth_as( self::EDITOR );
-		foreach ( [ 'post title on page 10', 'attachment create 5', 'taxonomy assign on page 10', 'taxonomy create_term 3', 'taxonomy update_term 3', 'taxonomy delete_term', 'post on deleted post 999', 'attachment create on deleted', 'create_term on deleted term' ] as $name ) {
+		foreach ( [ 'post title on page 10', 'attachment create 5', 'taxonomy assign on page 10', 'taxonomy create_term 3', 'taxonomy update_term 3', 'taxonomy delete_term', 'post on deleted post 999', 'attachment create on deleted', 'create_term on deleted term', 'post create on draft 21', 'post create on deleted', 'status restore publish on 21', 'status restore draft on 20' ] as $name ) {
 			$this->assertTrue( IATO_MCP_Rollback::check_permission( self::all_receipts()[ $name ] ), $name );
 		}
 		foreach ( [ 'menu_item', 'redirect', 'unknown type' ] as $name ) {

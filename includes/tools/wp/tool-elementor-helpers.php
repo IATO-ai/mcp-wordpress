@@ -51,6 +51,14 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_level', 'level must be one of h1, h2, h3, h4, h5, h6.' );
 		}
 
+		if ( ! get_post( $post_id ) ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		// Pre-flight: confirm widget exists and is a heading.
 		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
 		if ( is_wp_error( $decoded ) ) {
@@ -136,6 +144,14 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( '' === $key_name ) {
 			return new WP_Error( 'missing_key', 'key is required.' );
+		}
+
+		if ( ! get_post( $post_id ) ) {
+			return new WP_Error( 'not_found', 'Post not found.' );
+		}
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
 		}
 
 		// 'value' may be legitimately null (= remove); array_key_exists, not isset.

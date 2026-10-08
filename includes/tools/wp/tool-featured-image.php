@@ -40,6 +40,11 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		if ( is_wp_error( $object_check ) ) {
+			return $object_check;
+		}
+
 		// Distinguish "absent" (no change) from "explicitly null/0" (clear).
 		if ( ! array_key_exists( 'attachment_id', $args ) ) {
 			return new WP_Error( 'missing_attachment_id', 'attachment_id is required (use null or 0 to clear).' );
