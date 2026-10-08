@@ -15,6 +15,7 @@ delete_option( 'iato_mcp_key' );
 delete_option( 'iato_mcp_api_key' );
 delete_option( 'iato_mcp_crawl_id' );
 delete_option( 'iato_mcp_tools' );
+delete_option( 'iato_mcp_bridge_tools_repaired' );
 delete_option( 'iato_mcp_show_wizard' );
 delete_option( 'iato_mcp_wizard_dismissed' );
 delete_option( 'iato_mcp_oauth_clients' );

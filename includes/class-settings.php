@@ -276,6 +276,10 @@ class IATO_MCP_Settings {
 	 */
 	public static function ajax_save_settings(): void {
 		check_ajax_referer( 'iato_mcp_save_settings', 'nonce' );
+
+		// Key state at render time (before anything in this request is saved);
+		// decides whether the bridge-tool checkboxes were gated. See tools below.
+		$api_key_before = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( [ 'message' => __( 'Unauthorized.', 'iato-mcp' ) ], 403 );
 		}
@@ -296,7 +300,16 @@ class IATO_MCP_Settings {
 		if ( isset( $_POST['iato_mcp_tools'] ) && is_array( $_POST['iato_mcp_tools'] ) ) {
 			$tools_raw = array_map( 'sanitize_text_field', wp_unslash( $_POST['iato_mcp_tools'] ) );
 		}
-		$tools = self::sanitize_tools( $tools_raw );
+		// Bridge tools are rendered as disabled checkboxes while no IATO API key
+		// exists, and disabled inputs are never posted. Tools the form could not
+		// submit keep their previous state (see includes/tools-selection.php).
+		// $bridge_gated reflects the key as it was when the form was rendered,
+		// i.e. before this request saved it.
+		$tools = iato_mcp_merge_gated_tools(
+			self::sanitize_tools( $tools_raw, false ),
+			get_option( 'iato_mcp_tools', [] ),
+			'' === $api_key_before
+		);
 		update_option( 'iato_mcp_tools', $tools );
 
 		// WordPress Abilities exposure toggle (hidden value=0 sibling pattern,
@@ -315,7 +328,7 @@ class IATO_MCP_Settings {
 		$media_url_enabled = isset( $_POST['iato_mcp_media_url_source_enabled'] )
 			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_media_url_source_enabled'] ) )
 			: false;
-		update_option( 'iato_mcp_media_url_source_enabled', $media_url_enabled );
+		update_option( 'iato_mcp_media_url_source_enabled', self::sanitize_bool_flag( $media_url_enabled ) );
 
 		// Host allowlist — newline-delimited textarea. sanitize_host_list()
 		// strips schemes/paths and rejects malformed hostnames.
@@ -476,10 +489,12 @@ class IATO_MCP_Settings {
 		] );
 
 		// --- Media upload settings (v1.6.0) ---
+		// Stored as '1' / '0' like iato_mcp_abilities_enabled: update_option( $name, false )
+		// on a missing row is a silent no-op, so a boolean flag never creates its row.
 		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_source_enabled', [
-			'type'              => 'boolean',
-			'sanitize_callback' => 'rest_sanitize_boolean',
-			'default'           => false,
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '0',
 		] );
 		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_host_allowlist', [
 			'type'              => 'array',
@@ -574,12 +589,25 @@ class IATO_MCP_Settings {
 		return rest_sanitize_boolean( $value ) ? '1' : '0';
 	}
 
-	public static function sanitize_tools( $value ): array {
+	public static function sanitize_tools( $value, bool $merge_gated = true ): array {
 		if ( ! is_array( $value ) ) {
 			return [];
 		}
 
-		return array_values( array_intersect( array_map( 'sanitize_text_field', $value ), self::TOOL_NAMES ) );
+		$clean = array_values( array_intersect( array_map( 'sanitize_text_field', $value ), self::TOOL_NAMES ) );
+
+		// register_setting() sanitize path (options.php and update_option):
+		// preserve bridge tools the form could not submit while they were
+		// gated. ajax_save_settings() already merged with the pre-save key
+		// state and passes $merge_gated = false.
+		if ( $merge_gated && function_exists( 'iato_mcp_merge_gated_tools' ) ) {
+			$clean = iato_mcp_merge_gated_tools(
+				$clean,
+				get_option( 'iato_mcp_tools', [] ),
+				'' === sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) )
+			);
+		}
+		return $clean;
 	}
 
 	// ── Settings Page ────────────────────────────────────────────────────────────
@@ -643,7 +671,7 @@ class IATO_MCP_Settings {
 		$abilities_enabled   = IATO_MCP_Abilities::is_enabled();
 		$abilities_api_exists = function_exists( 'wp_register_ability' );
 
-		$media_url_enabled = (bool) get_option( 'iato_mcp_media_url_source_enabled', false );
+		$media_url_enabled = rest_sanitize_boolean( get_option( 'iato_mcp_media_url_source_enabled', '0' ) );
 		$media_host_list   = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
 		$media_max_bytes   = (int) get_option( 'iato_mcp_media_max_upload_size', 10 * MB_IN_BYTES );
 		$media_rate_limit  = (int) get_option( 'iato_mcp_media_upload_rate_limit', 20 );
@@ -880,7 +908,7 @@ class IATO_MCP_Settings {
 								<h3>
 									<?php echo esc_html( $category ); ?>
 									<?php if ( $is_iato_category ) : ?>
-										<span class="iato-category-hint" id="iato-platform-cat-hint">
+										<span class="iato-category-hint iato-platform-cat-hint">
 											<?php
 											echo $api_key_present
 												? esc_html__( '— requires IATO API key ✓', 'iato-mcp' )
@@ -905,6 +933,14 @@ class IATO_MCP_Settings {
 									$checked = $all_on || in_array( $tool, $enabled, true );
 									$desc    = self::TOOL_DESCRIPTIONS[ $tool ] ?? '';
 								?>
+									<?php if ( $category_gated && $checked ) : ?>
+										<?php
+										// Disabled checkboxes are never submitted, so a save made while
+										// the bridge tools are gated would store them as "off". Carry
+										// the current (enabled) state through either save path instead.
+										?>
+										<input type="hidden" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" />
+									<?php endif; ?>
 									<label class="iato-tool-item<?php echo $category_gated ? ' iato-tool-item--gated' : ''; ?>">
 										<div class="iato-toggle">
 											<input type="checkbox" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" <?php checked( $checked ); ?> <?php echo $category_gated ? 'disabled' : ''; ?> />
@@ -1809,12 +1845,12 @@ CSS;
 					}).then(function(r) { return r.json(); }).then(function(resp) {
 						testBtn.disabled = false;
 						var platformBadge = document.getElementById('iato-platform-badge');
-						var catHint = document.getElementById('iato-platform-cat-hint');
+						var catHints = document.querySelectorAll('.iato-platform-cat-hint');
 						if (resp && resp.success) {
 							var msg = (resp.data && resp.data.message) ? resp.data.message : 'Connected.';
 							statusEl.innerHTML = '<span class="iato-badge iato-badge--success">Validated</span> <span class="iato-hint">' + escapeHtml(msg) + '</span>';
 							if (platformBadge) platformBadge.innerHTML = '<span class="iato-badge iato-badge--success">Connected</span>';
-							if (catHint) catHint.textContent = '— requires IATO API key ✓';
+							catHints.forEach(function(h){ h.textContent = '— requires IATO API key ✓'; });
 						} else {
 							var d = (resp && resp.data) || {};
 							var parts = [];

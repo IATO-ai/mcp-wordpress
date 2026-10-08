@@ -58,6 +58,7 @@ require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
+require_once IATO_MCP_DIR . 'includes/tools-selection.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
 require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
@@ -179,6 +180,20 @@ function iato_mcp_maybe_run_migrations() {
 			IATO_MCP_Media_Phase_Log::create_table();
 		}
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
+	}
+
+	// One-shot repair for sites hit by the "bridge tools saved as off" bug: a
+	// non-empty iato_mcp_tools that contains none of the twelve bridge tools is
+	// treated as a save made before an IATO key existed and gets them back.
+	// Runs once (flag option), is idempotent, and leaves any list that already
+	// contains at least one bridge tool alone. See includes/tools-selection.php.
+	if ( ! get_option( 'iato_mcp_bridge_tools_repaired' ) && function_exists( 'iato_mcp_repair_bridge_tools' ) ) {
+		$saved  = get_option( 'iato_mcp_tools', [] );
+		$repair = iato_mcp_repair_bridge_tools( is_array( $saved ) ? $saved : [] );
+		if ( $repair['repaired'] ) {
+			update_option( 'iato_mcp_tools', $repair['tools'] );
+		}
+		update_option( 'iato_mcp_bridge_tools_repaired', '1', false );
 	}
 }
 
