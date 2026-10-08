@@ -139,9 +139,9 @@ All errors include `error_message` (string) and `error_data` (object). On a 409 
 
 ### Auth
 
-- **Read tools** (`list_elementor_widgets`, `get_elementor_widget`, `find_elementor_widgets`, `resolve_url`): no capability check beyond the standard MCP authentication. Mirrors `tool-seo.php:24` (`get_seo_data`).
-- **Write tools** (`update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`, `set_heading_level`, `set_widget_setting`): `current_user_can('edit_posts')`. Mirrors `tool-seo.php:64` (`update_seo_data`).
-- **Capability check is per-post**: the bulk update walks each post and skips ones the current user can't edit, returning per-update `auth_denied` in the response rather than failing the whole call.
+- **Read tools** (`list_elementor_widgets`, `get_elementor_widget`, `get_elementor_data`, `get_page_builder`, `find_elementor_widgets`): since 1.12.1 every read goes through `IATO_MCP_Auth::require_read_post()`: `read_post` on the post (a revision is resolved to its parent first), `edit_post` as well when the post is password-protected, and `manage_options` for `elementor_library` templates. `find_elementor_widgets` scans only readable posts (explicit `post_ids` that were dropped come back in `skipped_unreadable`; posts the automatic scan dropped are only counted in `skipped_unreadable_count`) and needs `manage_options` for `include_templates`. `resolve_url` returns IDs, not content, and has no per-post check. The site key passes every check. Mirrors `get_seo_data` and `get_post`.
+- **Write tools** (`update_elementor_widget`, `update_elementor_patch`, `update_elementor_widgets_bulk`, `set_heading_level`, `set_widget_setting`, `update_elementor_data`): `IATO_MCP_Auth::require_cap('edit_posts')` at entry, then `edit_post` on the specific post (since 1.12.1); `update_elementor_data` applies `require_read_post()` to `inherit_settings_from`. Mirrors `update_seo_data`.
+- **Capability check is per-post**: the bulk update checks `edit_post` for each target and reports a refused row in `results[]` with `error: iato_mcp_forbidden` (counted in `failed`) rather than failing the whole call.
 
 ### Change receipts
 
