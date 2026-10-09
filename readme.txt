@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.12.1
+Stable tag: 1.12.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -137,6 +137,10 @@ AI clients like Claude Desktop authenticate via a WordPress Application Password
 
 WordPress content (post titles, meta descriptions, etc.) is never sent to IATO. IATO crawls your public URLs the same way a search engine would. Claude processes content within your AI client session only. The IATO API is only called when you use bridge tools, and only crawl analysis data (not your content) is transmitted.
 
+= A page lost an embed or script after an IATO edit. How do I repair it? =
+
+Open the page in Elementor, go to History, then Revisions, and apply the last revision saved by a person before the first IATO edit. Then re-apply the IATO changes you want to keep. If revisions are disabled on the site, there is no earlier copy to restore.
+
 = Can I control which tools are available? =
 
 Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can turn off any tool you don't want AI clients to access.
@@ -153,6 +157,10 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.12.2 =
+* Fixed: editing an Elementor page with an IATO site key or OAuth connection removed iframes, scripts and other HTML from widgets the edit didn't change, and turned & into &amp; in text. Edits now change only the values they set. Affects 1.0.0 to 1.12.1. Connections using an Application Password of a user who may publish unfiltered HTML (administrators and editors on a single site, super admins on multisite) were not affected.
+* Fixed: rolling back Elementor content now restores it exactly.
 
 = 1.12.1 =
 * Security: write tools now check permission on the specific post, page, term, or attachment being changed, and publishing requires publish rights.
@@ -382,6 +390,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.12.2 =
+Fixes Elementor edits made with an IATO key or OAuth connection removing embeds, scripts and other HTML from other widgets. To repair a page edited before this update, restore an earlier version in Elementor's History panel, under Revisions.
 
 = 1.4.10 =
 The JSON config snippets the plugin emits now use a unique-per-site inner `mcpServers` key derived from the site's hostname (e.g. `iato-garennebigby-dev`) instead of the hardcoded `iato-wordpress`. Lets agencies paste config snippets from many WordPress installs into a single Claude Desktop config without silent overwrites. Existing connections keep working unchanged.

@@ -790,6 +790,124 @@ class IATO_MCP_Elementor_Adapter {
 		return true;
 	}
 
+	// ── Elementor's REST meta sanitize callbacks ──────────────────────────
+
+	/** Hooks WordPress runs from sanitize_meta() for the keys the plugin writes verbatim. */
+	private const META_SANITIZE_HOOK_PATTERN = '/^sanitize_post_meta__elementor_(data|page_settings)(_for_.+)?$/';
+
+	/** Nesting depth of without_elementor_meta_sanitizing(); callbacks are removed at 0→1 and restored at 1→0. */
+	private static int $meta_guard_depth = 0;
+
+	/** @var array<string,array<int,array<string,array>>> what was removed: hook => priority => id => callback */
+	private static array $meta_guard_removed = [];
+
+	/**
+	 * Run $fn with Elementor's sanitize callbacks for `_elementor_data` and
+	 * `_elementor_page_settings` removed, then put them back.
+	 *
+	 * Elementor (4.3.4, modules/wp-rest/classes/elementor-post-meta.php)
+	 * registers those keys with register_meta() on rest_api_init with a
+	 * sanitize_callback that runs wp_kses_post over every string in the value
+	 * for requests without the unfiltered_html capability. Through 1.12.1 that
+	 * filtered the whole tree on every edit made with the site key: iframes,
+	 * scripts and other HTML in widgets the edit never touched were stripped
+	 * and `&` became `&amp;` in every text. The plugin now sanitises the
+	 * values an edit changes itself (IATO_MCP_Elementor_Sanitizer) and writes
+	 * everything else back as it was, inside this guard.
+	 *
+	 * The hooks are found at runtime in $wp_filter (both the plain hook and
+	 * every `_for_<post_type>` variant register_meta() created), every
+	 * callback on them is removed and restored in a finally block, so a write
+	 * that throws still restores them. Nested calls are safe: only the
+	 * outermost removes and restores. Every callback on the matched hooks is
+	 * removed, whichever plugin added it; under WP_DEBUG each one is written
+	 * to the PHP error log so a clash with another plugin can be diagnosed.
+	 * Used only around the plugin's own writes of already-sanitised or
+	 * previously stored values.
+	 */
+	public static function without_elementor_meta_sanitizing( callable $fn ): mixed {
+		if ( 0 === self::$meta_guard_depth ) {
+			self::$meta_guard_removed = [];
+			if ( isset( $GLOBALS['wp_filter'] ) && is_array( $GLOBALS['wp_filter'] ) ) {
+				foreach ( $GLOBALS['wp_filter'] as $hook => $wp_hook ) {
+					if ( ! is_string( $hook ) || ! preg_match( self::META_SANITIZE_HOOK_PATTERN, $hook ) || ! is_object( $wp_hook ) || empty( $wp_hook->callbacks ) ) {
+						continue;
+					}
+					foreach ( $wp_hook->callbacks as $priority => $callbacks ) {
+						foreach ( $callbacks as $id => $callback ) {
+							if ( ! isset( $callback['function'] ) ) {
+								continue;
+							}
+							self::$meta_guard_removed[ $hook ][ $priority ][ $id ] = $callback;
+							remove_filter( $hook, $callback['function'], (int) $priority );
+							if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+								error_log( sprintf( '[iato-mcp] temporarily removed %s (priority %d) from %s for an Elementor data write', self::describe_callback( $callback['function'] ), (int) $priority, $hook ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+							}
+						}
+					}
+				}
+			}
+		}
+		++self::$meta_guard_depth;
+		try {
+			return $fn();
+		} finally {
+			--self::$meta_guard_depth;
+			if ( 0 === self::$meta_guard_depth ) {
+				foreach ( self::$meta_guard_removed as $hook => $priorities ) {
+					foreach ( $priorities as $priority => $callbacks ) {
+						foreach ( $callbacks as $callback ) {
+							add_filter( $hook, $callback['function'], (int) $priority, (int) ( $callback['accepted_args'] ?? 1 ) );
+						}
+					}
+				}
+				self::$meta_guard_removed = [];
+			}
+		}
+	}
+
+	/** Human-readable name of a hook callback, for the WP_DEBUG log line. */
+	private static function describe_callback( mixed $fn ): string {
+		if ( is_string( $fn ) ) {
+			return $fn;
+		}
+		if ( is_array( $fn ) && 2 === count( $fn ) ) {
+			return ( is_object( $fn[0] ) ? get_class( $fn[0] ) : (string) $fn[0] ) . '::' . (string) $fn[1];
+		}
+		return is_object( $fn ) ? get_class( $fn ) : gettype( $fn );
+	}
+
+	/** The stored element tree (arrays), or null when there is none or it is unreadable. */
+	public static function stored_elements( int $post_id ): ?array {
+		$raw = get_post_meta( $post_id, '_elementor_data', true );
+		if ( is_array( $raw ) ) {
+			return self::force_arrays( $raw );
+		}
+		if ( ! is_string( $raw ) || '' === $raw ) {
+			return null;
+		}
+		$decoded = json_decode( $raw, true );
+		return is_array( $decoded ) ? self::force_arrays( $decoded ) : null;
+	}
+
+	/**
+	 * Sanitise the values of $elements that differ from the stored tree,
+	 * unless the current user may store unfiltered HTML (then 1.12.1
+	 * behaviour: nothing is touched).
+	 *
+	 * @return array{elements:array,changed:string[]}
+	 */
+	public static function sanitize_changes( int $post_id, array $elements, ?array $stored_elements ): array {
+		$elements = self::force_arrays( $elements );
+		if ( current_user_can( 'unfiltered_html' ) ) {
+			return [ 'elements' => $elements, 'changed' => [] ];
+		}
+		if ( null === $stored_elements ) {
+			$stored_elements = self::stored_elements( $post_id );
+		}
+		return IATO_MCP_Elementor_Sanitizer::diff_tree( $elements, $stored_elements );
+	}
+
 	// ── Write pipeline ────────────────────────────────────────────────────
 
 	/**
@@ -808,8 +926,12 @@ class IATO_MCP_Elementor_Adapter {
 	 * (computed on the just-written string) are passed back here so callers
 	 * don't re-read meta.
 	 *
-	 * @param array  $decoded_elements Mutated elements array.
-	 * @param string $previous_revision Revision hash captured before mutation.
+	 * @param array      $decoded_elements  Mutated elements array.
+	 * @param string     $previous_revision Revision hash captured before mutation.
+	 * @param array|null $stored_elements   The tree as it was before the mutation
+	 *                                      (what the caller decoded); read from
+	 *                                      meta when null. Only values that differ
+	 *                                      from it are sanitised (1.12.2).
 	 *
 	 * @return array{
 	 *   previous_revision:string,
@@ -817,13 +939,16 @@ class IATO_MCP_Elementor_Adapter {
 	 *   content_updated:bool,
 	 *   post_content_length:int,
 	 *   meta_persisted:bool,
-	 *   meta_length:int
+	 *   meta_length:int,
+	 *   sanitized?:bool,
+	 *   sanitized_paths?:string[]
 	 * }|WP_Error
 	 */
 	public static function write_pipeline(
 		int $post_id,
 		array $decoded_elements,
-		string $previous_revision
+		string $previous_revision,
+		?array $stored_elements = null
 	): array|WP_Error {
 		$post = get_post( $post_id );
 		if ( ! $post ) {
@@ -831,14 +956,25 @@ class IATO_MCP_Elementor_Adapter {
 		}
 
 		$old_content = (string) get_post_field( 'post_content', $post_id );
-		$encoded     = wp_json_encode( $decoded_elements );
+
+		// 0. (1.12.2) Sanitise only what this request changed, by value shape;
+		// identical values are written back verbatim. Skipped for users who
+		// hold unfiltered_html (unchanged 1.12.1 behaviour for them).
+		$diff             = self::sanitize_changes( $post_id, $decoded_elements, $stored_elements );
+		$decoded_elements = $diff['elements'];
+		$changed          = $diff['changed'];
+
+		$encoded = wp_json_encode( $decoded_elements );
 		if ( false === $encoded ) {
 			return new WP_Error( 'encode_failed', 'Failed to JSON-encode the modified Elementor tree.' );
 		}
 
-		// 1. Write meta.
-		update_post_meta( $post_id, '_elementor_data', wp_slash( $encoded ) );
-		update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
+		// 1. Write meta, with Elementor's whole-value sanitize callback out of
+		// the way (see without_elementor_meta_sanitizing()).
+		self::without_elementor_meta_sanitizing( function () use ( $post_id, $encoded ) {
+			update_post_meta( $post_id, '_elementor_data', wp_slash( $encoded ) );
+			update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
+		} );
 
 		// 2. Cache clear.
 		delete_post_meta( $post_id, '_elementor_css' );
@@ -890,7 +1026,7 @@ class IATO_MCP_Elementor_Adapter {
 		$meta_persisted   = ( strlen( $persisted_meta ) === strlen( $encoded ) );
 		$current_revision = self::compute_revision( $persisted_meta );
 
-		return [
+		$result = [
 			'previous_revision'   => $previous_revision,
 			'current_revision'    => $current_revision,
 			'content_updated'     => $content_updated,
@@ -898,6 +1034,16 @@ class IATO_MCP_Elementor_Adapter {
 			'meta_persisted'      => $meta_persisted,
 			'meta_length'         => strlen( $persisted_meta ),
 		];
+		if ( ! empty( $changed ) ) {
+			$result['sanitized']       = true;
+			$result['sanitized_paths'] = $changed;
+		}
+		return $result;
+	}
+
+	/** The sanitising keys of a pipeline result, for tool responses. */
+	public static function sanitize_report( array $pipeline ): array {
+		return empty( $pipeline['sanitized'] ) ? [] : [ 'sanitized' => true, 'sanitized_paths' => $pipeline['sanitized_paths'] ];
 	}
 
 	/**
@@ -935,6 +1081,7 @@ class IATO_MCP_Elementor_Adapter {
 		}
 		[ $elements, $raw ] = $decoded;
 		$previous_revision  = self::compute_revision( $raw );
+		$stored_elements    = $elements; // the tree before this request's change
 
 		if ( null !== $if_revision && $previous_revision !== $if_revision ) {
 			return new WP_Error(
@@ -1005,7 +1152,7 @@ class IATO_MCP_Elementor_Adapter {
 			return $preview;
 		}
 
-		$pipeline = self::write_pipeline( $post_id, $elements, $previous_revision );
+		$pipeline = self::write_pipeline( $post_id, $elements, $previous_revision, $stored_elements );
 		if ( is_wp_error( $pipeline ) ) {
 			return $pipeline;
 		}
@@ -1017,7 +1164,7 @@ class IATO_MCP_Elementor_Adapter {
 			'applied_patch'       => $applied_patch,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
-		];
+		] + self::sanitize_report( $pipeline );
 		if ( $echo_prev ) {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}
