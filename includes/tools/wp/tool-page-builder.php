@@ -401,11 +401,13 @@ IATO_MCP_Server::register_tool(
 				$key    = $step['key'];
 				$before = $step['before'];
 				$after  = $step['after'];
-				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after ) );
-				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
 				if ( 0 === stripos( $key, '_elementor_' ) ) {
+					IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, $after ) );
 					$touched_elementor_meta = true;
+				} else {
+					IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after ) );
 				}
+				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
 			}
 			clean_post_cache( $post_id );
 			if ( $touched_elementor_meta && class_exists( '\Elementor\Plugin' ) ) {

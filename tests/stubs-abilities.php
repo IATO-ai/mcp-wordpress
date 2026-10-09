@@ -37,6 +37,9 @@ final class IATO_Test_Abilities_State {
 if ( ! function_exists( 'add_filter' ) ) {
 	function add_filter( string $hook, callable $cb, int $priority = 10, int $args = 1 ): bool {
 		IATO_Test_Abilities_State::$filters[ $hook ][] = $cb;
+		if ( isset( $GLOBALS['wp_filter'] ) && is_array( $GLOBALS['wp_filter'] ) ) {
+			IATO_Test_WP::add_hook( $hook, $cb, $priority, $args ); // the $wp_filter model, when a test set it up
+		}
 		return true;
 	}
 }

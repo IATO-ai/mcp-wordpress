@@ -210,10 +210,14 @@ IATO_MCP_Server::register_tool(
 			delete_post_meta( $post_id, $key );
 			$after_stored = null;
 		} else {
-			// Sanitised above (strings; Elementor arrays by shape); written with
-			// the kses lock lifted so Elementor's REST sanitize_callback does not
-			// re-filter untouched values.
-			IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after_val ) );
+			// Sanitised above (strings; Elementor arrays by shape). Elementor keys
+			// are written with the kses lock lifted and Elementor's REST
+			// sanitize_callback removed, so untouched values are not re-filtered.
+			if ( 0 === stripos( $key, '_elementor_' ) ) {
+				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, $after_val ) );
+			} else {
+				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after_val ) );
+			}
 			$after_stored = $after_val;
 		}
 

@@ -76,7 +76,7 @@ namespace {
 		function get_post_field( string $field, int $id ): string { return (string) ( IATO_Test_WP::$posts[ $id ][ $field ] ?? '' ); }
 	}
 	if ( ! function_exists( 'update_post_meta' ) ) {
-		function update_post_meta( int $id, string $key, mixed $value ): bool { $v = is_string( $value ) ? stripslashes( $value ) : $value; IATO_Test_WP::$meta[ $id ][ $key ] = $v; IATO_Test_WP::$writes[] = [ $id, $key, $v ]; return true; }
+		function update_post_meta( int $id, string $key, mixed $value ): bool { $v = is_string( $value ) ? stripslashes( $value ) : $value; IATO_Test_WP::$meta[ $id ][ $key ] = $v; IATO_Test_WP::$writes[] = [ $id, $key, $v ]; IATO_Test_WP::note_write( $key ); return true; }
 	}
 	if ( ! function_exists( 'delete_post_meta' ) ) {
 		function delete_post_meta( int $id, string $key ): bool { unset( IATO_Test_WP::$meta[ $id ][ $key ] ); return true; }
@@ -115,12 +115,23 @@ namespace {
 				'css'  => fn( string $v ) => 'C[' . strip_tags( $v ) . ']',
 			] );
 			self::allow_unfiltered( false );
+			// What Elementor 4.3.4 registers on rest_api_init: the plain hook and
+			// one _for_<post_type> variant per Elementor-enabled post type.
+			IATO_Test_WP::reset_hooks();
+			$kses = fn( $v ) => $v; // never invoked in these tests; identity is enough
+			foreach ( self::ELEMENTOR_HOOKS as $hook ) {
+				IATO_Test_WP::add_hook( $hook, $kses, 10, 1 );
+			}
+			IATO_Test_WP::add_hook( 'sanitize_post_meta_other_key', $kses, 10, 1 );
 		}
 
 		protected function tearDown(): void {
 			IATO_MCP_Elementor_Sanitizer::set_functions( null );
 			self::allow_unfiltered( false );
+			unset( $GLOBALS['wp_filter'] );
 		}
+
+		private const ELEMENTOR_HOOKS = [ 'sanitize_post_meta__elementor_data', 'sanitize_post_meta__elementor_data_for_page', 'sanitize_post_meta__elementor_data_for_post', 'sanitize_post_meta__elementor_page_settings_for_page' ];
 
 		private static function allow_unfiltered( bool $allow ): void {
 			$ref = new ReflectionClass( IATO_MCP_Auth::class );
@@ -243,6 +254,67 @@ namespace {
 
 		public static function lift_modes(): array {
 			return [ [ 'ok' ], [ 'throw' ] ];
+		}
+
+		// ── Elementor's REST meta sanitize callbacks are kept out of the plugin's own writes (from 1.12.2) ──
+
+		public function test_elementor_meta_callbacks_are_removed_during_the_fallback_write_and_restored_after(): void {
+			\Elementor\FakeDocument::$mode = 'refuse'; // user 0: Elementor refuses, the plugin writes
+			$this->assertSame( self::ELEMENTOR_HOOKS, IATO_Test_WP::live_elementor_hooks() );
+			IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$data_writes = array_values( array_filter( IATO_Test_WP::$hooks_at_write, fn( $w ) => '_elementor_data' === $w[0] ) );
+			$this->assertNotEmpty( $data_writes );
+			$this->assertSame( 0, $data_writes[0][1], 'no elementor meta hook had callbacks while _elementor_data was written' );
+			$this->assertSame( self::ELEMENTOR_HOOKS, IATO_Test_WP::live_elementor_hooks(), 'every callback is back afterwards' );
+			$this->assertSame( 1, IATO_Test_WP::hook_count( 'sanitize_post_meta_other_key' ), 'unrelated hooks untouched' );
+		}
+
+		public function test_callbacks_are_restored_when_the_write_throws_and_nested_calls_are_safe(): void {
+			try {
+				IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing( function () {
+					$this->assertSame( [], IATO_Test_WP::live_elementor_hooks(), 'removed inside' );
+					IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing( function () {
+						$this->assertSame( [], IATO_Test_WP::live_elementor_hooks(), 'still removed in a nested call' );
+					} );
+					$this->assertSame( [], IATO_Test_WP::live_elementor_hooks(), 'the inner call did not restore early' );
+					throw new RuntimeException( 'boom' );
+				} );
+				$this->fail( 'exception should propagate' );
+			} catch ( RuntimeException $e ) {
+				$this->assertSame( 'boom', $e->getMessage() );
+			}
+			$this->assertSame( self::ELEMENTOR_HOOKS, IATO_Test_WP::live_elementor_hooks(), 'restored after the throw' );
+			$this->assertSame( 'ok', IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing( fn() => 'ok' ) );
+		}
+
+		public function test_write_elementor_meta_lifts_the_lock_and_removes_the_callbacks_together(): void {
+			$ref = new ReflectionClass( IATO_MCP_Auth::class );
+			$ref->getProperty( 'kses_locked' )->setValue( null, true );
+			$seen = IATO_MCP_Elementor_Adapter::write_elementor_meta( function () use ( $ref ) {
+				return [ $ref->getProperty( 'kses_locked' )->getValue(), IATO_Test_WP::live_elementor_hooks() ];
+			} );
+			$this->assertSame( [ false, [] ], $seen, 'inside: lock lifted, callbacks gone' );
+			$this->assertTrue( $ref->getProperty( 'kses_locked' )->getValue(), 'lock back' );
+			$this->assertSame( self::ELEMENTOR_HOOKS, IATO_Test_WP::live_elementor_hooks(), 'callbacks back' );
+			$ref->getProperty( 'kses_locked' )->setValue( null, false );
+		}
+
+		public function test_a_throwing_elementor_save_leaves_the_callbacks_in_place_for_the_fallback_write(): void {
+			\Elementor\FakeDocument::$mode = 'throw';
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$this->assertSame( 'error', $r['elementor_save'] );
+			$this->assertSame( 'plugin', $r['stored_by'] );
+			$data_writes = array_values( array_filter( IATO_Test_WP::$hooks_at_write, fn( $w ) => '_elementor_data' === $w[0] ) );
+			$this->assertSame( 0, $data_writes[0][1], 'the fallback write ran without the callbacks' );
+			$this->assertSame( self::ELEMENTOR_HOOKS, IATO_Test_WP::live_elementor_hooks(), 'and they are back afterwards' );
+		}
+
+		public function test_without_elementor_callbacks_registered_changed_leaves_are_still_sanitised(): void {
+			IATO_Test_WP::reset_hooks(); // an Elementor version that registers no meta sanitize callback
+			\Elementor\FakeDocument::$mode = 'refuse';
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$this->assertSame( [ 'w1/settings/title' ], $r['sanitized_paths'] );
+			$this->assertSame( 'K[Hialert(1)x]', json_decode( IATO_Test_WP::$meta[ self::POST ]['_elementor_data'], true )[0]['elements'][0]['settings']['title'] );
 		}
 
 		public function test_decode_data_accepts_a_tree_stored_as_an_array(): void {

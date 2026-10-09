@@ -257,21 +257,29 @@ class IATO_MCP_Rollback {
 			delete_post_meta( $post_id, $field );
 		} else {
 			// Arrays/objects were JSON-encoded into the receipt; decode them back
-			// for round-trip parity. A value that is JSON text in the database
-			// itself (Elementor's _elementor_data) must stay a string: decide by
-			// what the key holds now, and decode only when that is not a string.
-			$restore = $before_value;
-			$current = get_post_meta( $post_id, $field, true );
-			if ( is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) && ! ( is_string( $current ) && '' !== $current ) ) {
+			// for round-trip parity. Elementor's _elementor_data is JSON text in
+			// the database itself and must come back as a string (Elementor and
+			// the plugin's reader expect text). For other keys, decode only when
+			// the key does not currently hold a string.
+			$restore          = $before_value;
+			$current          = get_post_meta( $post_id, $field, true );
+			$is_json_text_key = ( '_elementor_data' === $field );
+			if ( ! $is_json_text_key && is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) && ! ( is_string( $current ) && '' !== $current ) ) {
 				$decoded = json_decode( $restore, true );
 				if ( null !== $decoded ) {
 					$restore = $decoded;
 				}
 			}
 			// Verbatim: the value was captured from the database before the
-			// change; the kses lock is lifted so Elementor's REST sanitize_callback
-			// does not re-filter it on the way back.
-			IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $field, is_string( $restore ) ? wp_slash( $restore ) : $restore ) );
+			// change; for Elementor keys the kses lock is lifted and Elementor's
+			// REST sanitize_callback removed, so nothing re-filters it on the way
+			// back.
+			$value = is_string( $restore ) ? wp_slash( $restore ) : $restore;
+			if ( 0 === stripos( $field, '_elementor_' ) && class_exists( 'IATO_MCP_Elementor_Adapter' ) ) {
+				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $field, $value ) );
+			} else {
+				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $field, $value ) );
+			}
 		}
 
 		clean_post_cache( $post_id );

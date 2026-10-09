@@ -2,12 +2,13 @@
 /**
  * Sanitising pass for Elementor element trees written by the plugin.
  *
- * Used when the plugin stores a tree itself: when Elementor's Document::save()
- * refused, threw, or Elementor is not loaded (IATO_MCP_Elementor_Adapter::
- * write_pipeline()), and for `_elementor_page_settings` writes. Elementor's
- * own save runs wp_kses_post over every string in the document when the user
- * lacks unfiltered_html (Document::save(), Utils::kses_post_deep); this pass
- * is narrower on purpose:
+ * Applied to every tree the plugin writes or hands to Elementor's
+ * Document::save() (IATO_MCP_Elementor_Adapter::write_pipeline()), and to
+ * `_elementor_page_settings` writes. Elementor's own save runs wp_kses_post
+ * over every string in the document when the user lacks unfiltered_html
+ * (Utils::kses_post_deep); the plugin lifts its kses lock around that save,
+ * so for classic widgets this pass is the sanitiser on both paths. It is
+ * narrower than Elementor's on purpose:
  *
  *   - only values the request changed are touched: each leaf is compared with
  *     the stored tree at the same path (element id + setting path) and kept
@@ -93,10 +94,12 @@ class IATO_MCP_Elementor_Sanitizer {
 			return (string) $fns['css']( $value );
 		}
 		if ( 'raw' === $key && 'custom_css' === $prev ) {
-			// Atomic styles store the CSS base64-encoded (Elementor Utils::encode_string).
+			// Atomic styles store the CSS base64-encoded (Elementor Utils::encode_string):
+			// decode strictly, sanitise the CSS, re-encode canonically. A value
+			// that does not decode is dropped, as Elementor's Style_Parser does.
 			$decoded = base64_decode( $value, true );
-			if ( false === $decoded || base64_encode( $decoded ) !== $value ) {
-				return (string) $fns['css']( $value );
+			if ( false === $decoded ) {
+				return '';
 			}
 			return base64_encode( (string) $fns['css']( $decoded ) );
 		}
@@ -119,8 +122,9 @@ class IATO_MCP_Elementor_Sanitizer {
 	/**
 	 * Sanitise the values of $new that differ from $stored, element by element
 	 * (matched by id; a new element has no stored counterpart, so all of its
-	 * values are new). Structure keys (id, elType, widgetType, isInner,
-	 * elements) are never touched; `settings` and `styles` are diffed.
+	 * values are new). Every key of an element is diffed (`settings`,
+	 * `styles`, and anything else a client sends), except `elements`, which
+	 * is recursed into; a non-array entry in an element list is a leaf too.
 	 *
 	 * @param array<int,array> $new    the tree about to be written
 	 * @param array<int,array> $stored the tree currently stored (null = nothing stored)
@@ -187,19 +191,42 @@ class IATO_MCP_Elementor_Sanitizer {
 		}
 	}
 
+	/** Do two elements share elType and widgetType (both compared as strings, missing = '')? */
+	public static function same_type( array $a, array $b ): bool {
+		foreach ( [ 'elType', 'widgetType' ] as $key ) {
+			if ( (string) ( $a[ $key ] ?? '' ) !== (string) ( $b[ $key ] ?? '' ) ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	/** @param string[] $changed */
 	private static function walk( array $elements, array $stored_by_id, array &$changed ): array {
 		foreach ( $elements as $i => $el ) {
 			if ( ! is_array( $el ) ) {
+				// Not an element, but it is stored: a leaf with no stored counterpart.
+				$clean = self::sanitize_value( $el, [ '#' . $i ] );
+				if ( $clean !== $el ) {
+					self::note_change( [ '#' . $i ], $changed );
+				}
+				$elements[ $i ] = $clean;
 				continue;
 			}
 			$id     = isset( $el['id'] ) && is_scalar( $el['id'] ) ? (string) $el['id'] : '#' . $i;
 			$stored = $stored_by_id[ $id ] ?? null;
-			foreach ( [ 'settings', 'styles' ] as $section ) {
-				if ( isset( $el[ $section ] ) && is_array( $el[ $section ] ) ) {
-					$stored_section = ( is_array( $stored ) && isset( $stored[ $section ] ) && is_array( $stored[ $section ] ) ) ? $stored[ $section ] : null;
-					$el[ $section ] = self::diff_value( $el[ $section ], $stored_section, [ $id, $section ], $changed );
+			// Same id but another widget or element type: every setting counts as
+			// new. A value kept verbatim could otherwise move from a field the
+			// old widget escapes on output into one the new widget renders raw.
+			if ( is_array( $stored ) && ! self::same_type( $el, $stored ) ) {
+				$stored = null;
+			}
+			foreach ( $el as $key => $value ) {
+				if ( 'elements' === $key && is_array( $value ) ) {
+					continue; // children: recursed below
 				}
+				$stored_value = ( is_array( $stored ) && array_key_exists( $key, $stored ) ) ? $stored[ $key ] : null;
+				$el[ $key ]   = self::diff_value( $value, $stored_value, [ $id, (string) $key ], $changed );
 			}
 			if ( ! empty( $el['elements'] ) && is_array( $el['elements'] ) ) {
 				$el['elements'] = self::walk( $el['elements'], $stored_by_id, $changed );
@@ -207,6 +234,15 @@ class IATO_MCP_Elementor_Sanitizer {
 			$elements[ $i ] = $el;
 		}
 		return $elements;
+	}
+
+	/** @param string[] $changed */
+	private static function note_change( array $path, array &$changed ): void {
+		if ( count( $changed ) < self::MAX_PATHS ) {
+			$changed[] = implode( '/', $path );
+		} else {
+			++self::$overflow;
+		}
 	}
 
 	/**
@@ -229,13 +265,9 @@ class IATO_MCP_Elementor_Sanitizer {
 			}
 			return $new;
 		}
-		$clean = self::sanitize_value( $new, array_slice( $path, 2 ) ?: $path, $type_hint );
+		$clean = self::sanitize_value( $new, count( $path ) > 2 ? array_slice( $path, 2 ) : $path, $type_hint );
 		if ( $clean !== $new ) {
-			if ( count( $changed ) < self::MAX_PATHS ) {
-				$changed[] = implode( '/', $path );
-			} else {
-				++self::$overflow;
-			}
+			self::note_change( $path, $changed );
 		}
 		return $clean;
 	}

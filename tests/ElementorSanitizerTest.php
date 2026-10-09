@@ -113,10 +113,65 @@ final class ElementorSanitizerTest extends TestCase {
 		$this->assertContains( 'w2/settings/html', $r['changed'] );
 	}
 
-	public function test_structure_keys_are_never_touched(): void {
-		$new = [ [ 'id' => '<x>', 'elType' => '<y>', 'widgetType' => '<z>', 'isInner' => '<i>', 'settings' => [], 'elements' => [] ] ];
-		$r   = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, null );
-		$this->assertSame( $new, $r['elements'] );
+	public function test_an_element_whose_type_changed_has_every_setting_treated_as_new(): void {
+		// Same id, same settings, but the widget type changes from one that
+		// escapes `title` on output to one that could render it raw.
+		$stored = [ [ 'id' => 'w1', 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => [ 'title' => '<em>kept</em>', 'plain' => 'a & b' ], 'elements' => [] ] ];
+		$new    = $stored;
+		$new[0]['widgetType'] = 'html';
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, $stored );
+		$this->assertSame( 'K[<em>kept</em>]', $r['elements'][0]['settings']['title'], 'unchanged value, but the widget type changed: sanitised' );
+		$this->assertSame( 'a & b', $r['elements'][0]['settings']['plain'], 'plain text still untouched' );
+		$this->assertSame( [ 'w1/settings/title' ], $r['changed'] );
+
+		$new = $stored;
+		$new[0]['elType'] = 'container';
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, $stored );
+		$this->assertSame( [ 'w1/settings/title' ], $r['changed'], 'elType change counts too' );
+
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $stored, $stored );
+		$this->assertSame( [], $r['changed'], 'same type: unchanged values stay verbatim' );
+
+		$this->assertTrue( IATO_MCP_Elementor_Sanitizer::same_type( [ 'elType' => 'widget', 'widgetType' => 'x' ], [ 'elType' => 'widget', 'widgetType' => 'x' ] ) );
+		$this->assertFalse( IATO_MCP_Elementor_Sanitizer::same_type( [ 'elType' => 'widget' ], [ 'elType' => 'widget', 'widgetType' => 'x' ] ), 'a missing widgetType is not the same as a set one' );
+	}
+
+	public function test_every_element_key_is_diffed_not_only_settings(): void {
+		$stored = [ [ 'id' => 'w1', 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => [ 'title' => 'a' ], 'elements' => [] ] ];
+		$new    = $stored;
+		$new[0]['htmlCache']       = '<script>x</script>';
+		$new[0]['editor_settings'] = [ 'note' => '<b>n</b>', 'plain' => 'ok' ];
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, $stored );
+		$this->assertSame( 'K[<script>x</script>]', $r['elements'][0]['htmlCache'], 'a key outside settings/styles is a leaf too' );
+		$this->assertSame( 'K[<b>n</b>]', $r['elements'][0]['editor_settings']['note'] );
+		$this->assertSame( 'ok', $r['elements'][0]['editor_settings']['plain'] );
+		$this->assertSame( [ 'w1/htmlCache', 'w1/editor_settings/note' ], $r['changed'] );
+
+		$new = $stored;
+		$new[0]['settings'] = '<script>s</script>'; // settings given as a string
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, $stored );
+		$this->assertSame( 'K[<script>s</script>]', $r['elements'][0]['settings'] );
+
+		$new = $stored;
+		$new[0]['id'] = '<i>'; // structure keys are strings too; a new id has no stored counterpart
+		$new[0]['widgetType'] = '<w>';
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, $stored );
+		$this->assertSame( 'K[<i>]', $r['elements'][0]['id'] );
+		$this->assertSame( 'K[<w>]', $r['elements'][0]['widgetType'] );
+		$this->assertSame( 'a', $r['elements'][0]['settings']['title'], 'its settings count as new, but plain text needs no sanitising' );
+		$this->assertSame( [ '<i>/id', '<i>/widgetType' ], $r['changed'], 'paths are keyed by the element id as sent' );
+
+		$new = $stored;
+		$new[0]['elements'] = '<script>e</script>'; // children given as a string
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( $new, $stored );
+		$this->assertSame( 'K[<script>e</script>]', $r['elements'][0]['elements'], 'a non-array elements key is a leaf' );
+		$this->assertSame( [ 'w1/elements' ], $r['changed'] );
+
+		$r = IATO_MCP_Elementor_Sanitizer::diff_tree( [ '<script>top</script>', 7, $stored[0] ], $stored );
+		$this->assertSame( 'K[<script>top</script>]', $r['elements'][0], 'a scalar where an element should be is sanitised' );
+		$this->assertSame( 7, $r['elements'][1] );
+		$this->assertSame( $stored[0], $r['elements'][2], 'the real element is unchanged' );
+		$this->assertSame( [ '#0' ], $r['changed'] );
 	}
 
 	public function test_reported_paths_are_capped(): void {
@@ -142,6 +197,6 @@ final class ElementorSanitizerTest extends TestCase {
 		$this->assertSame( '', $v( 'javascript:x', [ 'value' ], 'url' ), 'atomic url envelope by hint' );
 		$this->assertSame( 'C[a > b]', $v( 'a > b', [ 'custom_css' ] ) );
 		$this->assertSame( base64_encode( 'C[a > b]' ), $v( base64_encode( 'a > b' ), [ 'custom_css', 'raw' ] ) );
-		$this->assertSame( 'C[not base64!]', $v( 'not base64!', [ 'custom_css', 'raw' ] ), 'a raw value that is not base64 is sanitised as plain CSS' );
+		$this->assertSame( '', $v( 'not base64!', [ 'custom_css', 'raw' ] ), 'a raw value that does not decode is dropped, as Elementor does' );
 	}
 }

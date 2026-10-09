@@ -137,6 +137,10 @@ AI clients like Claude Desktop authenticate via a WordPress Application Password
 
 WordPress content (post titles, meta descriptions, etc.) is never sent to IATO. IATO crawls your public URLs the same way a search engine would. Claude processes content within your AI client session only. The IATO API is only called when you use bridge tools, and only crawl analysis data (not your content) is transmitted.
 
+= A page lost an embed or script after an IATO edit. How do I repair it? =
+
+Open the page in Elementor, go to History, then Revisions, and apply the last revision saved by a person before the first IATO edit. Then re-apply the IATO changes you want to keep. If revisions are disabled on the site, there is no earlier copy to restore.
+
 = Can I control which tools are available? =
 
 Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can turn off any tool you don't want AI clients to access.
@@ -163,9 +167,13 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Fix: database changes are now tracked by a schema version separate from the plugin version, so a site that ran a pre-release build still receives every later table change.
 * Security: update_post_meta and inherit_keys no longer write Elementor builder data. Every _elementor_ key is refused except _elementor_page_settings (whose values are sanitised), _elementor_edit_mode and _elementor_template_type; the error names the Elementor tool to use. Element trees stored as arrays by earlier versions are still read.
 * Security: when Elementor's own save refuses, throws (some addon packs) or Elementor is not loaded, the plugin now sanitises the values the request changed before storing the tree, by field type: URL fields through esc_url_raw, custom_css through sanitize_textarea_field, strings containing markup through wp_kses_post; untouched values, plain text, numbers and booleans are stored verbatim. Elementor's save runs first and the raw tree is never written. Responses carry sanitized: true and the changed setting paths when a value was altered; dry runs report the same.
-* Fix: an Elementor edit through MCP no longer changes content in widgets the request did not touch, on every save path; what a person authored elsewhere on the page is stored as it was.
+* Fix: the 1.12.2 fix (edits change only the values they set) now also holds when Elementor's own save runs, which it does for a key bound to an owner and for OAuth connections; what a person authored elsewhere on the page is stored as it was.
 * Security: content written through MCP with an Application Password is now filtered like a non-administrator's (the same kses rules that already applied to the API key and OAuth), so scripts and embeds in Elementor widgets or post content are stripped even for administrators. A developer who needs raw HTML through MCP can opt out with the iato_mcp_allow_unfiltered_html filter (receives the user ID and the credential kind; honoured only for Application Password users who hold unfiltered_html).
 * Note on upgrade: OAuth connections made before 1.13.0 keep working (they hold the API key) but cannot be revoked individually. An admin notice explains how to move them to their own tokens (remove and re-add the connector in the AI client) and that regenerating the API key disconnects all of them; Settings and Diagnostics keep pointing this out until the key is regenerated. An authorization that was in progress during the upgrade has to be started again.
+
+= 1.12.2 =
+* Fixed: editing an Elementor page with an IATO site key or OAuth connection removed iframes, scripts and other HTML from widgets the edit didn't change, and turned & into &amp; in text. Edits now change only the values they set. Affects 1.0.0 to 1.12.1. Connections using an Application Password of a user who may publish unfiltered HTML (administrators and editors on a single site, super admins on multisite) were not affected.
+* Fixed: rolling back Elementor content now restores it exactly.
 
 = 1.12.1 =
 * Security: write tools now check permission on the specific post, page, term, or attachment being changed, and publishing requires publish rights.
@@ -395,6 +403,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.12.2 =
+Fixes Elementor edits made with an IATO key or OAuth connection removing embeds, scripts and other HTML from other widgets. To repair a page edited before this update, restore an earlier version in Elementor's History panel, under Revisions.
 
 = 1.4.10 =
 The JSON config snippets the plugin emits now use a unique-per-site inner `mcpServers` key derived from the site's hostname (e.g. `iato-garennebigby-dev`) instead of the hardcoded `iato-wordpress`. Lets agencies paste config snippets from many WordPress installs into a single Claude Desktop config without silent overwrites. Existing connections keep working unchanged.

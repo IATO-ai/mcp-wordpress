@@ -299,6 +299,38 @@ if PAGE_AUTHOR and PW_AUTHOR:
 else:
     record('author fixture and credential available', False, (PAGE_AUTHOR, bool(PW_AUTHOR)))
 
+print('# G. unbound legacy key (user 0): the 1.12.2 callback guard covers what the lift cannot')
+owner_before = opt('iato_mcp_key_owner')
+try:
+    set_opt('iato_mcp_key_owner', '0')
+    del_opt('iato_mcp_test_force_save_fail')
+    # reseed the human page so the untouched-widget check is byte for byte
+    cid_lg = 'wr_' + os.urandom(8).hex()
+    wp('db', 'query', f"INSERT INTO {PREFIX}iato_change_receipts (change_id, post_id, target_type, field, before_value, after_value, applied_at) VALUES ('{cid_lg}', {PAGE}, 'post_meta', '_elementor_data', '{PRISTINE.replace(chr(92), chr(92)*2).replace(chr(39), chr(39)*2)}', 'sanitize-live-seed', NOW())")
+    r = call('key', 'rollback', {'change_id': cid_lg})
+    record('legacy key: rollback restores the human page byte for byte', not r.get('isError') and meta_text() == PRISTINE, (r, meta_text()[:120]))
+    clear_probe()
+    r = call('key', 'set_widget_setting', {'id': PAGE, 'widget_id': H, 'key': 'title', 'value': PAYLOAD})
+    during, after_ = cap_probe()
+    record('legacy key: Elementor refuses user 0, the plugin stores the sanitised tree', r.get('elementor_save') is False and r.get('stored_by') == 'plugin' and r.get('sanitized_paths') == [H + '/settings/title'], r)
+    t = setting(H, 'title')
+    record('legacy key: payload stripped, <b> kept', '<script' not in t and 'onclick' not in t and '<b>Hi</b>' in t, t)
+    h = widget(meta(), HTML)['settings']['html']
+    record('legacy key: untouched HTML widget keeps its iframe and script byte for byte', h == widget(PRISTINE_TREE, HTML)['settings']['html'], h[:160])
+    record('legacy key: untouched text-editor unchanged', widget(meta(), ED)['settings']['editor'] == widget(PRISTINE_TREE, ED)['settings']['editor'], widget(meta(), ED)['settings']['editor'])
+    record('legacy key: user 0 never holds unfiltered_html', during == '0' and after_ == '0', (during, after_))
+    r = call('key', 'set_widget_setting', {'id': PAGE, 'widget_id': H, 'key': 'title', 'value': 'Tom & Jerry'})
+    record('legacy key: Tom & Jerry stays unencoded and is not reported', setting(H, 'title') == 'Tom & Jerry' and 'sanitized' not in r, (setting(H, 'title'), r))
+    r = call('key', 'update_post_meta', {'id': PAGE, 'key': '_elementor_page_settings', 'value': {'custom_css': 'selector > h1 { color: red }', 'plain': 'a & b'}})
+    ps = json.loads(wp('post', 'meta', 'get', str(PAGE), '_elementor_page_settings', '--format=json'))
+    record('legacy key: _elementor_page_settings keeps > and & (callback removed for the write)', ps.get('custom_css') == 'selector > h1 { color: red }' and ps.get('plain') == 'a & b', (ps, r))
+finally:
+    if owner_before:
+        set_opt('iato_mcp_key_owner', owner_before)
+    else:
+        del_opt('iato_mcp_key_owner')
+record('key owner restored', opt('iato_mcp_key_owner') == owner_before, (owner_before, opt('iato_mcp_key_owner')))
+
 print(f'\n# {passes} passed, {len(fails)} failed')
 if fails:
     print('# failed: ' + '; '.join(fails))

@@ -126,6 +126,12 @@ if ( ! function_exists( 'esc_html' ) ) {
 }
 if ( ! function_exists( 'remove_filter' ) ) {
 	function remove_filter( string $hook, callable $cb, int $priority = 10 ): bool {
+		foreach ( ( $GLOBALS['wp_filter'][ $hook ]->callbacks[ $priority ] ?? [] ) as $id => $entry ) {
+			if ( $entry['function'] === $cb ) {
+				unset( $GLOBALS['wp_filter'][ $hook ]->callbacks[ $priority ][ $id ] );
+				return true;
+			}
+		}
 		return true;
 	}
 }

@@ -137,6 +137,8 @@ IATO_MCP_Server::register_tool(
 
 			if ( null === $after || '' === $after ) {
 				delete_post_meta( $post_id, $key );
+			} elseif ( 0 === stripos( $key, '_elementor_' ) ) {
+				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, $after ) );
 			} else {
 				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after ) );
 			}

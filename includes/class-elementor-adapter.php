@@ -795,6 +795,108 @@ class IATO_MCP_Elementor_Adapter {
 		return true;
 	}
 
+	// ── Elementor's REST meta sanitize callbacks ──────────────────────────
+
+	/** Hooks WordPress runs from sanitize_meta() for the keys the plugin writes verbatim. */
+	private const META_SANITIZE_HOOK_PATTERN = '/^sanitize_post_meta__elementor_(data|page_settings)(_for_.+)?$/';
+
+	/** Nesting depth of without_elementor_meta_sanitizing(); callbacks are removed at 0→1 and restored at 1→0. */
+	private static int $meta_guard_depth = 0;
+
+	/** @var array<string,array<int,array<string,array>>> what was removed: hook => priority => id => callback */
+	private static array $meta_guard_removed = [];
+
+	/**
+	 * Run $fn with Elementor's sanitize callbacks for `_elementor_data` and
+	 * `_elementor_page_settings` removed, then put them back.
+	 *
+	 * Elementor (4.3.4, modules/wp-rest/classes/elementor-post-meta.php)
+	 * registers those keys with register_meta() on rest_api_init with a
+	 * sanitize_callback that runs wp_kses_post over every string in the value
+	 * for requests without the unfiltered_html capability. Through 1.12.1 that
+	 * filtered the whole tree on every edit made with the site key: iframes,
+	 * scripts and other HTML in widgets the edit never touched were stripped
+	 * and `&` became `&amp;` in every text. The plugin sanitises the values an
+	 * edit changes itself (IATO_MCP_Elementor_Sanitizer) and writes everything
+	 * else back as it was, inside this guard (1.12.2). Since 1.13.0 the kses
+	 * lock is also lifted around these writes (IATO_MCP_Auth::write_unlocked()),
+	 * which covers users who hold the capability; this guard is what covers a
+	 * request with no capability to show through: an unbound legacy key, which
+	 * runs as user 0.
+	 *
+	 * The hooks are found at runtime in $wp_filter (both the plain hook and
+	 * every `_for_<post_type>` variant register_meta() created), every
+	 * callback on them is removed and restored in a finally block, so a write
+	 * that throws still restores them. Nested calls are safe: only the
+	 * outermost removes and restores. Every callback on the matched hooks is
+	 * removed, whichever plugin added it; under WP_DEBUG each one is written
+	 * to the PHP error log so a clash with another plugin can be diagnosed.
+	 * Used only around the plugin's own writes of already-sanitised or
+	 * previously stored values.
+	 */
+	public static function without_elementor_meta_sanitizing( callable $fn ): mixed {
+		if ( 0 === self::$meta_guard_depth ) {
+			self::$meta_guard_removed = [];
+			if ( isset( $GLOBALS['wp_filter'] ) && is_array( $GLOBALS['wp_filter'] ) ) {
+				foreach ( $GLOBALS['wp_filter'] as $hook => $wp_hook ) {
+					if ( ! is_string( $hook ) || ! preg_match( self::META_SANITIZE_HOOK_PATTERN, $hook ) || ! is_object( $wp_hook ) || empty( $wp_hook->callbacks ) ) {
+						continue;
+					}
+					foreach ( $wp_hook->callbacks as $priority => $callbacks ) {
+						foreach ( $callbacks as $id => $callback ) {
+							if ( ! isset( $callback['function'] ) ) {
+								continue;
+							}
+							self::$meta_guard_removed[ $hook ][ $priority ][ $id ] = $callback;
+							remove_filter( $hook, $callback['function'], (int) $priority );
+							if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+								error_log( sprintf( '[iato-mcp] temporarily removed %s (priority %d) from %s for an Elementor data write', self::describe_callback( $callback['function'] ), (int) $priority, $hook ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+							}
+						}
+					}
+				}
+			}
+		}
+		++self::$meta_guard_depth;
+		try {
+			return $fn();
+		} finally {
+			--self::$meta_guard_depth;
+			if ( 0 === self::$meta_guard_depth ) {
+				foreach ( self::$meta_guard_removed as $hook => $priorities ) {
+					foreach ( $priorities as $priority => $callbacks ) {
+						foreach ( $callbacks as $callback ) {
+							add_filter( $hook, $callback['function'], (int) $priority, (int) ( $callback['accepted_args'] ?? 1 ) );
+						}
+					}
+				}
+				self::$meta_guard_removed = [];
+			}
+		}
+	}
+
+	/** Human-readable name of a hook callback, for the WP_DEBUG log line. */
+	private static function describe_callback( mixed $fn ): string {
+		if ( is_string( $fn ) ) {
+			return $fn;
+		}
+		if ( is_array( $fn ) && 2 === count( $fn ) ) {
+			return ( is_object( $fn[0] ) ? get_class( $fn[0] ) : (string) $fn[0] ) . '::' . (string) $fn[1];
+		}
+		return is_object( $fn ) ? get_class( $fn ) : gettype( $fn );
+	}
+
+	/**
+	 * Run a write of already-sanitised (or previously stored) Elementor meta:
+	 * the plugin's kses lock is lifted (IATO_MCP_Auth::write_unlocked()) and
+	 * Elementor's whole-value REST sanitize callbacks are out of the way
+	 * (without_elementor_meta_sanitizing()). Both are restored afterwards,
+	 * also when the write throws.
+	 */
+	public static function write_elementor_meta( callable $fn ): mixed {
+		return self::without_elementor_meta_sanitizing( fn() => IATO_MCP_Auth::write_unlocked( $fn ) );
+	}
+
 	// ── Write pipeline ────────────────────────────────────────────────────
 
 	/**
@@ -917,13 +1019,16 @@ class IATO_MCP_Elementor_Adapter {
 		// 3. The plugin writes the tree itself only when Elementor did not: the
 		// tree written is the sanitised one from step 0 (an unsanitised tree is
 		// never on disk, not even transiently).
-		// The write runs with the kses lock lifted: the tree was sanitised in
-		// step 0, and Elementor's REST sanitize_callback on _elementor_data
-		// would otherwise kses every string, including untouched human content.
+		// The write runs with the kses lock lifted and Elementor's REST
+		// sanitize_callback on _elementor_data removed (write_elementor_meta()):
+		// the tree was sanitised in step 0, and that callback would otherwise
+		// kses every string, including untouched human content. The callback
+		// removal is what covers an unbound legacy key (user 0, no capability
+		// for the lift to show through).
 		$stored_by = 'elementor';
 		if ( true !== $elementor_save ) {
 			$stored_by = 'plugin';
-			IATO_MCP_Auth::write_unlocked( function () use ( $post_id, $encoded ) {
+			self::write_elementor_meta( function () use ( $post_id, $encoded ) {
 				update_post_meta( $post_id, '_elementor_data', wp_slash( $encoded ) );
 				update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
 			} );
