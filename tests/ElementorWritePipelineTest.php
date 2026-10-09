@@ -15,8 +15,11 @@ namespace Elementor {
 		/** @var 'ok'|'refuse'|'throw' */
 		public static string $mode = 'ok';
 		public static array $received = [];
+		/** @var array<int,array> map_meta_cap for unfiltered_html as seen inside save() */
+		public static array $cap_during_save = [];
 		public function save( array $data ): bool {
 			self::$received[] = $data;
+			self::$cap_during_save[] = \apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] );
 			if ( 'throw' === self::$mode ) {
 				throw new \RuntimeException( 'Settings validation failed. simulated Elementor failure' );
 			}
@@ -29,7 +32,7 @@ namespace Elementor {
 			return true;
 		}
 	}
-	final class FakeDocuments { public function get( int $id ) { return new FakeDocument(); } }
+	final class FakeDocuments { public static bool $absent = false; public function get( int $id ) { return self::$absent ? null : new FakeDocument(); } }
 	final class FakeFilesManager { public static int $cleared = 0; public function clear_cache(): void { self::$cleared++; } }
 	final class FakeFrontend {
 		public static int $renders = 0;
@@ -73,7 +76,7 @@ namespace {
 		function get_post_field( string $field, int $id ): string { return (string) ( IATO_Test_WP::$posts[ $id ][ $field ] ?? '' ); }
 	}
 	if ( ! function_exists( 'update_post_meta' ) ) {
-		function update_post_meta( int $id, string $key, mixed $value ): bool { IATO_Test_WP::$meta[ $id ][ $key ] = is_string( $value ) ? stripslashes( $value ) : $value; return true; }
+		function update_post_meta( int $id, string $key, mixed $value ): bool { $v = is_string( $value ) ? stripslashes( $value ) : $value; IATO_Test_WP::$meta[ $id ][ $key ] = $v; IATO_Test_WP::$writes[] = [ $id, $key, $v ]; return true; }
 	}
 	if ( ! function_exists( 'delete_post_meta' ) ) {
 		function delete_post_meta( int $id, string $key ): bool { unset( IATO_Test_WP::$meta[ $id ][ $key ] ); return true; }
@@ -98,10 +101,155 @@ namespace {
 		}
 
 		protected function setUp(): void {
-			IATO_Test_WP::$meta  = [ self::POST => [ '_elementor_data' => '[]' ] ];
-			IATO_Test_WP::$posts = [ self::POST => [ 'post_content' => '<h2>old content</h2>' ] ];
+			IATO_Test_WP::$meta   = [ self::POST => [ '_elementor_data' => '[]' ] ];
+			IATO_Test_WP::$posts  = [ self::POST => [ 'post_content' => '<h2>old content</h2>' ] ];
+			IATO_Test_WP::$writes = [];
 			\Elementor\FakeDocument::$received = [];
+			\Elementor\FakeDocuments::$absent  = false;
 			\Elementor\FakeFrontend::$renders  = 0;
+			// Marker sanitisers: the pass is proven by the markers, the real
+			// wp_kses_post / esc_url_raw behaviour by the live suite.
+			IATO_MCP_Elementor_Sanitizer::set_functions( [
+				'kses' => fn( string $v ) => 'K[' . strip_tags( $v ) . ']',
+				'url'  => fn( string $v ) => str_starts_with( strtolower( $v ), 'javascript:' ) ? '' : $v,
+				'css'  => fn( string $v ) => 'C[' . strip_tags( $v ) . ']',
+			] );
+			self::allow_unfiltered( false );
+		}
+
+		protected function tearDown(): void {
+			IATO_MCP_Elementor_Sanitizer::set_functions( null );
+			self::allow_unfiltered( false );
+		}
+
+		private static function allow_unfiltered( bool $allow ): void {
+			$ref = new ReflectionClass( IATO_MCP_Auth::class );
+			$ref->getProperty( 'unfiltered_html_allowed' )->setValue( null, $allow );
+		}
+
+		private const PAYLOAD = '<b>Hi</b><script>alert(1)</script><span onclick="alert(1)">x</span>';
+
+		/** The stored page: a human-authored HTML widget (iframe + script) next to the heading the request edits. */
+		private function stored(): array {
+			return [ [ 'id' => 'c1', 'elType' => 'container', 'settings' => [], 'elements' => [
+				[ 'id' => 'w1', 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => [ 'title' => 'Old title', 'header_size' => 'h2' ], 'elements' => [] ],
+				[ 'id' => 'w2', 'elType' => 'widget', 'widgetType' => 'html', 'settings' => [ 'html' => '<iframe src="https://maps.example.com/"></iframe><script>var human=1;</script>' ], 'elements' => [] ],
+			] ] ];
+		}
+
+		/** The same page with the heading changed to the payload. */
+		private function edited(): array {
+			$t = $this->stored();
+			$t[0]['elements'][0]['settings']['title'] = self::PAYLOAD;
+			return $t;
+		}
+
+		private function meta_writes_of( string $key ): array {
+			return array_values( array_filter( IATO_Test_WP::$writes, fn( $w ) => $w[1] === $key ) );
+		}
+
+		#[\PHPUnit\Framework\Attributes\DataProvider( 'fallback_modes' )]
+		public function test_fallback_sanitises_only_what_changed( string $mode ): void {
+			if ( 'absent' === $mode ) {
+				\Elementor\FakeDocuments::$absent = true;
+			} else {
+				\Elementor\FakeDocument::$mode = $mode;
+			}
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+
+			$this->assertIsArray( $r );
+			$this->assertSame( 'plugin', $r['stored_by'] );
+			$this->assertSame( 'absent' === $mode ? null : ( 'throw' === $mode ? 'error' : false ), $r['elementor_save'] );
+			$this->assertTrue( $r['sanitized'] );
+			$this->assertSame( [ 'w1/settings/title' ], $r['sanitized_paths'] );
+			$stored = json_decode( IATO_Test_WP::$meta[ self::POST ]['_elementor_data'], true );
+			$this->assertSame( 'K[Hi' . 'alert(1)' . 'x]', $stored[0]['elements'][0]['settings']['title'], 'the changed value went through the kses marker' );
+			$this->assertStringContainsString( '<iframe', $stored[0]['elements'][1]['settings']['html'], 'the untouched HTML widget survives verbatim' );
+			$this->assertStringContainsString( '<script>var human=1;</script>', $stored[0]['elements'][1]['settings']['html'] );
+			foreach ( $this->meta_writes_of( '_elementor_data' ) as $w ) {
+				$this->assertStringNotContainsString( '<script>alert(1)', (string) $w[2], 'the raw payload was never written, not even transiently' );
+			}
+			$this->assertTrue( $r['meta_persisted'] );
+		}
+
+		public static function fallback_modes(): array {
+			return [ [ 'throw' ], [ 'refuse' ], [ 'absent' ] ];
+		}
+
+		public function test_success_path_hands_elementor_the_sanitised_tree_and_writes_nothing_itself(): void {
+			\Elementor\FakeDocument::$mode = 'ok';
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$this->assertSame( 'elementor', $r['stored_by'] );
+			$this->assertTrue( $r['elementor_save'] );
+			$this->assertTrue( $r['sanitized'] );
+			$this->assertSame( 'K[Hialert(1)x]', \Elementor\FakeDocument::$received[0]['elements'][0]['elements'][0]['settings']['title'], 'Elementor received the sanitised value' );
+			$this->assertSame( [], $this->meta_writes_of( '_elementor_data' ), 'no plugin write of _elementor_data when Elementor stored it' );
+		}
+
+		public function test_nothing_reported_when_nothing_was_altered(): void {
+			\Elementor\FakeDocument::$mode = 'throw';
+			$t = $this->stored();
+			$t[0]['elements'][0]['settings']['title'] = 'Tom & Jerry';
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $t, 'sha256:prev', $this->stored() );
+			$this->assertArrayNotHasKey( 'sanitized', $r );
+			$this->assertArrayNotHasKey( 'sanitized_paths', $r );
+			$this->assertSame( 'Tom & Jerry', json_decode( IATO_Test_WP::$meta[ self::POST ]['_elementor_data'], true )[0]['elements'][0]['settings']['title'] );
+		}
+
+		public function test_stored_tree_is_read_from_meta_when_the_caller_passes_none(): void {
+			\Elementor\FakeDocument::$mode = 'throw';
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev' );
+			$this->assertSame( [ 'w1/settings/title' ], $r['sanitized_paths'] );
+			$this->assertStringContainsString( '<iframe', json_decode( IATO_Test_WP::$meta[ self::POST ]['_elementor_data'], true )[0]['elements'][1]['settings']['html'] );
+		}
+
+		public function test_unfiltered_html_allowed_keeps_the_raw_payload(): void {
+			\Elementor\FakeDocument::$mode = 'throw';
+			self::allow_unfiltered( true );
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$this->assertArrayNotHasKey( 'sanitized', $r );
+			$this->assertSame( self::PAYLOAD, json_decode( IATO_Test_WP::$meta[ self::POST ]['_elementor_data'], true )[0]['elements'][0]['settings']['title'] );
+		}
+
+		public function test_dry_run_preview_reports_the_same_paths(): void {
+			$this->assertSame( [ 'sanitized' => true, 'sanitized_paths' => [ 'w1/settings/title' ] ], IATO_MCP_Elementor_Adapter::sanitize_preview( $this->edited(), $this->stored() ) );
+			$this->assertSame( [], IATO_MCP_Elementor_Adapter::sanitize_preview( $this->stored(), $this->stored() ) );
+			self::allow_unfiltered( true );
+			$this->assertSame( [], IATO_MCP_Elementor_Adapter::sanitize_preview( $this->edited(), $this->stored() ) );
+		}
+
+		#[\PHPUnit\Framework\Attributes\DataProvider( 'lift_modes' )]
+		public function test_kses_lock_is_lifted_only_during_elementors_save( string $mode ): void {
+			\Elementor\FakeDocument::$mode            = $mode;
+			\Elementor\FakeDocument::$cap_during_save = [];
+			// Lock as authenticate() does for a bound key / OAuth token.
+			$ref = new ReflectionClass( IATO_MCP_Auth::class );
+			$ref->getProperty( 'kses_locked' )->setValue( null, true );
+			add_filter( 'map_meta_cap', [ IATO_MCP_Auth::class, 'filter_map_meta_cap' ], 10, 4 );
+			$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ), 'locked before' );
+
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+
+			$this->assertSame( [ [ 'unfiltered_html' ] ], \Elementor\FakeDocument::$cap_during_save, 'inside the save the user\'s real capability shows through' );
+			$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ), 'locked again after the save, also when it threw' );
+			$this->assertSame( 'throw' === $mode ? 'error' : true, $r['elementor_save'] );
+			$this->assertSame( 'K[Hialert(1)x]', \Elementor\FakeDocument::$received[0]['elements'][0]['elements'][0]['settings']['title'], 'Elementor still receives the sanitised tree' );
+			$ref->getProperty( 'kses_locked' )->setValue( null, false );
+		}
+
+		public static function lift_modes(): array {
+			return [ [ 'ok' ], [ 'throw' ] ];
+		}
+
+		public function test_decode_data_accepts_a_tree_stored_as_an_array(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = $this->stored(); // a pre-1.13.0 update_post_meta write
+			$r = IATO_MCP_Elementor_Adapter::decode_data( self::POST );
+			$this->assertIsArray( $r );
+			$this->assertSame( 'w1', $r[0][0]['elements'][0]['id'] );
 		}
 
 		public function test_elementor_save_throws_the_tool_still_completes_and_reports_it(): void {

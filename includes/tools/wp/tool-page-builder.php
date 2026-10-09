@@ -262,6 +262,17 @@ IATO_MCP_Server::register_tool(
 		if ( json_last_error() !== JSON_ERROR_NONE ) {
 			return new WP_Error( 'invalid_json', 'Invalid JSON: ' . json_last_error_msg() );
 		}
+		if ( ! is_array( $decoded ) ) {
+			return new WP_Error( 'invalid_json', 'elementor_data must be a JSON array of elements.' );
+		}
+		$decoded = IATO_MCP_Elementor_Adapter::force_arrays( $decoded );
+
+		// What is stored now: the sanitising pass compares against it so only the
+		// values this request changes are touched, and the revision guards use it.
+		$stored_elements = IATO_MCP_Elementor_Adapter::stored_elements( $post_id );
+		$stored_raw      = get_post_meta( $post_id, '_elementor_data', true );
+		$stored_raw      = is_array( $stored_raw ) ? (string) wp_json_encode( $stored_raw ) : (string) $stored_raw;
+		$previous_revision = IATO_MCP_Elementor_Adapter::compute_revision( $stored_raw );
 
 		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
 		// surfaces them, and apply them after the main Elementor write succeeds.
@@ -322,18 +333,34 @@ IATO_MCP_Server::register_tool(
 				if ( is_wp_error( $policy ) ) {
 					return $policy;
 				}
+				// Only the allowlisted _elementor_ keys may be copied; the element
+				// tree and the other builder data go through the Elementor tools.
+				$elementor_policy = IATO_MCP_Meta_Policy::check_elementor_meta_write( $key );
+				if ( is_wp_error( $elementor_policy ) ) {
+					return $elementor_policy;
+				}
 				$source_value = get_post_meta( $inherit_source, $key, true );
 				$target_value = get_post_meta( $post_id, $key, true );
 
-				// No-op short-circuit: same value already present on target.
-				// Distinguish by string-compare (covers serialized arrays too).
-				if ( (string) $source_value === (string) $target_value ) {
+				// No-op short-circuit: same value already present on target. Compared
+				// serialised, so arrays are compared by content (a plain string cast
+				// turns every array into "Array").
+				if ( maybe_serialize( $source_value ) === maybe_serialize( $target_value ) ) {
 					$inherit_skipped[] = [ 'key' => $key, 'reason' => 'noop' ];
 					continue;
 				}
 
 				$before = ( '' === $target_value ) ? null : $target_value;
-				$inherit_plan[] = [ 'key' => $key, 'before' => $before, 'after' => $source_value ];
+				$after  = $source_value;
+				$entry  = [ 'key' => $key, 'before' => $before, 'after' => $after ];
+				if ( IATO_MCP_Meta_Policy::is_elementor_key( $key ) && ( is_array( $after ) || is_object( $after ) ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+					$s              = IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after, is_array( $target_value ) ? $target_value : null );
+					$entry['after'] = $s['value'];
+					if ( ! empty( $s['changed'] ) ) {
+						$entry['sanitized_paths'] = $s['changed'];
+					}
+				}
+				$inherit_plan[] = $entry;
 			}
 		}
 
@@ -345,92 +372,26 @@ IATO_MCP_Server::register_tool(
 				'json_valid'        => true,
 				'inherit_planned'   => $inherit_plan,
 				'inherited_skipped' => $inherit_skipped,
-			] );
+			] + IATO_MCP_Elementor_Adapter::sanitize_preview( $decoded, $stored_elements ) );
 		}
 
-		// Capture old post_content for comparison after save.
-		$old_content = get_post_field( 'post_content', $post_id );
-
-		// 1. Write _elementor_data meta directly — Document->save() does NOT
-		//    persist the 'elements' parameter to meta; it only uses them
-		//    temporarily for rendering. Without this explicit write, meta
-		//    stays unchanged and post_content regenerates from stale data.
-		update_post_meta( $post_id, '_elementor_data', wp_slash( $elementor_data ) );
-		update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
-
-		// 2. Clear all caches so Document->save() reads the fresh meta.
-		delete_post_meta( $post_id, '_elementor_css' );
-		wp_cache_delete( $post_id, 'post_meta' );
-		wp_cache_delete( $post_id, 'posts' );
-
-		if ( class_exists( '\Elementor\Plugin' ) ) {
-			$plugin = \Elementor\Plugin::$instance;
-			if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
-				$plugin->files_manager->clear_cache();
-			}
+		// The shared pipeline (IATO_MCP_Elementor_Adapter::write_pipeline): sanitise
+		// what changed, Elementor's own save first, the plugin's write only when
+		// Elementor did not store the tree, frontend fallback, persistence check.
+		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $decoded, $previous_revision, $stored_elements );
+		if ( is_wp_error( $pipeline ) ) {
+			return $pipeline;
 		}
+		$meta_persisted = (bool) $pipeline['meta_persisted'];
 
-		// 3. Call Document->save() for rendering post_content and rebuilding CSS.
-		//    Elementor's AI module filter (remove_temporary_containers) expects
-		//    array elements, not stdClass — force_arrays ensures this.
-		$regenerated    = false;
-		$elementor_save = null;
-		$save_error     = null;
-		if ( class_exists( '\Elementor\Plugin' ) ) {
-			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
-			if ( $document ) {
-				$force_arrays = function ( $data ) use ( &$force_arrays ) {
-					if ( is_object( $data ) ) {
-						$data = (array) $data;
-					}
-					if ( is_array( $data ) ) {
-						return array_map( $force_arrays, $data );
-					}
-					return $data;
-				};
-
-				$decoded = $force_arrays( $decoded );
-
-				// Guarded call into Elementor; result reported as elementor_save
-				// (false = Elementor refused, e.g. no current user; true = saved;
-				// 'error' = it threw). See IATO_MCP_Elementor_Adapter::write_pipeline().
-				try {
-					$elementor_save = (bool) $document->save( [ 'elements' => $decoded ] );
-				} catch ( \Throwable $e ) {
-					$elementor_save = 'error';
-					$save_error     = $e->getMessage();
-				}
-				$regenerated = true;
-			}
-		}
-
-		// 4. Check if post_content actually changed.
-		wp_cache_delete( $post_id, 'posts' );
-		wp_cache_delete( $post_id, 'post_meta' );
-		$new_content     = get_post_field( 'post_content', $post_id );
-		$content_updated = ( $new_content !== $old_content );
-
-		// 5. If Document->save() didn't update post_content, force render via Frontend.
-		if ( $regenerated && ! $content_updated && class_exists( '\Elementor\Plugin' ) ) {
-			$frontend = \Elementor\Plugin::instance()->frontend;
-			if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
-				$rendered = $frontend->get_builder_content( $post_id, true );
-				if ( ! empty( $rendered ) && $rendered !== $old_content ) {
-					wp_update_post( [
-						'ID'           => $post_id,
-						'post_content' => $rendered,
-					] );
-					$new_content     = $rendered;
-					$content_updated = true;
-				}
-			}
-		}
-
-		// 6. Verify meta actually persisted — catch silent write failures.
-		// Structural comparison: Elementor's save re-encodes the JSON when it runs.
-		wp_cache_delete( $post_id, 'post_meta' );
-		$persisted_meta = (string) get_post_meta( $post_id, '_elementor_data', true );
-		$meta_persisted = IATO_MCP_Elementor_Adapter::same_element_tree( $persisted_meta, is_array( $decoded ) ? $decoded : [] );
+		// One receipt for the whole document, like update_elementor_patch.
+		$receipt = IATO_MCP_Change_Receipt::record(
+			$post_id,
+			'elementor_widget',
+			'elementor:document:replace',
+			$pipeline['previous_revision'],
+			$pipeline['current_revision']
+		);
 
 		// Apply inherited meta writes (if any) after the main Elementor write succeeds.
 		$inherit_receipts = [];
@@ -440,7 +401,7 @@ IATO_MCP_Server::register_tool(
 				$key    = $step['key'];
 				$before = $step['before'];
 				$after  = $step['after'];
-				update_post_meta( $post_id, $key, $after );
+				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after ) );
 				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
 				if ( 0 === stripos( $key, '_elementor_' ) ) {
 					$touched_elementor_meta = true;
@@ -458,16 +419,23 @@ IATO_MCP_Server::register_tool(
 		$response = [
 			'post_id'              => $post_id,
 			'success'              => $meta_persisted,
-			'regenerated'          => $regenerated,
-			'content_updated'      => $content_updated,
-			'post_content_length'  => strlen( $new_content ),
+			'regenerated'          => null !== $pipeline['elementor_save'],
+			'content_updated'      => $pipeline['content_updated'],
+			'post_content_length'  => $pipeline['post_content_length'],
 			'meta_persisted'       => $meta_persisted,
-			'elementor_save'       => $elementor_save,
-			'meta_length'          => strlen( $persisted_meta ),
+			'meta_length'          => $pipeline['meta_length'],
 			'input_length'         => strlen( $elementor_data ),
+			'current_revision'     => $pipeline['current_revision'],
+		] + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
+		$response['change_receipt'] = [
+			'change_id'   => $receipt['change_id'],
+			'target_type' => $receipt['target_type'],
+			'field'       => $receipt['field'],
+			'applied_at'  => $receipt['applied_at'],
 		];
-		if ( null !== $save_error ) {
-			$response['elementor_save_error'] = $save_error;
+		$inherit_sanitized = array_merge( ...array_map( fn( $st ) => $st['sanitized_paths'] ?? [], $inherit_plan ?: [ [] ] ) );
+		if ( ! empty( $inherit_sanitized ) ) {
+			$response['inherited_sanitized_paths'] = $inherit_sanitized;
 		}
 		if ( ! empty( $inherit_receipts ) ) {
 			$response['change_receipts'] = $inherit_receipts;

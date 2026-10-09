@@ -1,6 +1,6 @@
 # Sprint C0 handover: token binding (Part 1) and the "bridge tools saved as off" fix (Part 2)
 
-> Superseded in part by 1.13.0: OAuth consent no longer binds the site key; OAuth connections get their own tokens (see CLAUDE.md, "OAuth server"). `tests/wp-env/oauth-consent-check.sh` was replaced by `tests/wp-env/oauth-live.sh`.
+> Superseded in part by 1.13.0: OAuth consent no longer binds the site key; OAuth connections get their own tokens (see CLAUDE.md, "OAuth server"). `tests/wp-env/oauth-consent-check.sh` was replaced by `tests/wp-env/oauth-live.sh`. The write pipeline no longer keeps a raw tree when Elementor's save fails, and Application Password requests are kses-locked too (see CLAUDE.md, "Elementor write pipeline and sanitising").
 
 Date: 2026-10-07. Two branches, nothing committed by me:
 - **Part 1** staged on `feat/token-user-binding` (off `feat/abilities-registration` at `7bc4592`).

@@ -161,6 +161,12 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $policy ) ) {
 			return $policy;
 		}
+		// Elementor builder data (the element tree, rendered HTML, CSS, ...) is
+		// written only by the Elementor tools, which sanitise it (1.13.0).
+		$elementor_policy = IATO_MCP_Meta_Policy::check_elementor_meta_write( $key );
+		if ( is_wp_error( $elementor_policy ) ) {
+			return $elementor_policy;
+		}
 
 		// Capture before-value. Empty strings normalise to null per the receipt spec.
 		$before = get_post_meta( $post_id, $key, true );
@@ -170,15 +176,24 @@ IATO_MCP_Server::register_tool(
 		$delete    = array_key_exists( 'value', $args ) && null === $after_raw;
 
 		// Sanitise the after-value by type. Strings get sanitize_text_field;
-		// arrays/objects pass through (update_post_meta serialises them).
+		// arrays/objects pass through (update_post_meta serialises them), except
+		// under an `_elementor_` key, where the strings inside are sanitised by
+		// shape unless the request may store unfiltered HTML.
+		$sanitized_paths = [];
 		if ( is_string( $after_raw ) ) {
 			$after_val = sanitize_text_field( $after_raw );
 		} elseif ( is_array( $after_raw ) || is_object( $after_raw ) ) {
 			$after_val = $after_raw;
+			if ( IATO_MCP_Meta_Policy::is_elementor_key( $key ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+				$s               = IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after_raw, $before );
+				$after_val       = $s['value'];
+				$sanitized_paths = $s['changed'];
+			}
 		} else {
 			// bool, int, float, null pass straight through.
 			$after_val = $after_raw;
 		}
+		$sanitized_report = empty( $sanitized_paths ) ? [] : [ 'sanitized' => true, 'sanitized_paths' => $sanitized_paths ];
 
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
@@ -188,14 +203,17 @@ IATO_MCP_Server::register_tool(
 				'before_value' => $before,
 				'after_value'  => $delete ? null : $after_val,
 				'action'       => $delete ? 'would_delete' : 'would_update',
-			] );
+			] + $sanitized_report );
 		}
 
 		if ( $delete ) {
 			delete_post_meta( $post_id, $key );
 			$after_stored = null;
 		} else {
-			update_post_meta( $post_id, $key, $after_val );
+			// Sanitised above (strings; Elementor arrays by shape); written with
+			// the kses lock lifted so Elementor's REST sanitize_callback does not
+			// re-filter untouched values.
+			IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after_val ) );
 			$after_stored = $after_val;
 		}
 
@@ -221,7 +239,7 @@ IATO_MCP_Server::register_tool(
 			'key'          => $key,
 			'before_value' => $before,
 			'after_value'  => $after_stored,
-		];
+		] + $sanitized_report;
 		IATO_MCP_Change_Receipt::append( $data, $receipt );
 		return IATO_MCP_Server::ok( $data );
 	}

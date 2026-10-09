@@ -44,7 +44,12 @@ class IATO_MCP_Elementor_Adapter {
 		}
 
 		$raw = get_post_meta( $post_id, '_elementor_data', true );
-		if ( empty( $raw ) ) {
+		if ( is_array( $raw ) ) {
+			// Stored as an array (a pre-1.13.0 update_post_meta write); Elementor
+			// accepts that shape, json_decode() would not.
+			$raw = wp_json_encode( $raw );
+		}
+		if ( empty( $raw ) || ! is_string( $raw ) ) {
 			return new WP_Error(
 				'not_elementor',
 				"Post {$post_id} has no Elementor data. Use get_page_builder to confirm."
@@ -808,8 +813,12 @@ class IATO_MCP_Elementor_Adapter {
 	 * (computed on the just-written string) are passed back here so callers
 	 * don't re-read meta.
 	 *
-	 * @param array  $decoded_elements Mutated elements array.
-	 * @param string $previous_revision Revision hash captured before mutation.
+	 * @param array      $decoded_elements  Mutated elements array.
+	 * @param string     $previous_revision Revision hash captured before mutation.
+	 * @param array|null $stored_elements   The tree as stored before the mutation
+	 *                                      (what the caller decoded); read from
+	 *                                      meta when null. Used to sanitise only
+	 *                                      the values the request changed.
 	 *
 	 * @return array{
 	 *   previous_revision:string,
@@ -817,30 +826,50 @@ class IATO_MCP_Elementor_Adapter {
 	 *   content_updated:bool,
 	 *   post_content_length:int,
 	 *   meta_persisted:bool,
-	 *   meta_length:int
+	 *   meta_length:int,
+	 *   elementor_save:bool|string|null,
+	 *   stored_by:string,
+	 *   sanitized?:bool,
+	 *   sanitized_paths?:string[]
 	 * }|WP_Error
 	 */
 	public static function write_pipeline(
 		int $post_id,
 		array $decoded_elements,
-		string $previous_revision
+		string $previous_revision,
+		?array $stored_elements = null
 	): array|WP_Error {
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', "Post {$post_id} not found." );
 		}
 
-		$old_content = (string) get_post_field( 'post_content', $post_id );
-		$encoded     = wp_json_encode( $decoded_elements );
+		$old_content      = (string) get_post_field( 'post_content', $post_id );
+		$decoded_elements = self::force_arrays( $decoded_elements );
+
+		// 0. Sanitise what the request changed (1.13.0). Every value that
+		// differs from the stored tree at the same element + path goes through
+		// IATO_MCP_Elementor_Sanitizer; identical values are kept verbatim, so
+		// HTML a human put in an untouched widget survives. Skipped only when
+		// the request may store unfiltered HTML (IATO_MCP_Auth, filter
+		// iato_mcp_allow_unfiltered_html). Elementor's own save, below, adds
+		// its blanket kses pass on top for users without unfiltered_html.
+		$changed = [];
+		if ( ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+			if ( null === $stored_elements ) {
+				$stored_elements = self::stored_elements( $post_id );
+			}
+			$diff             = IATO_MCP_Elementor_Sanitizer::diff_tree( $decoded_elements, $stored_elements );
+			$decoded_elements = $diff['elements'];
+			$changed          = $diff['changed'];
+		}
+
+		$encoded = wp_json_encode( $decoded_elements );
 		if ( false === $encoded ) {
 			return new WP_Error( 'encode_failed', 'Failed to JSON-encode the modified Elementor tree.' );
 		}
 
-		// 1. Write meta.
-		update_post_meta( $post_id, '_elementor_data', wp_slash( $encoded ) );
-		update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
-
-		// 2. Cache clear.
+		// 1. Cache clear before the save so Elementor renders fresh.
 		delete_post_meta( $post_id, '_elementor_css' );
 		wp_cache_delete( $post_id, 'post_meta' );
 		wp_cache_delete( $post_id, 'posts' );
@@ -852,12 +881,23 @@ class IATO_MCP_Elementor_Adapter {
 			}
 		}
 
-		// 3. Document::save() to render post_content. Guarded: it is another
-		// plugin's code. Its return value is reported — it is false when the
-		// current user may not edit the post (always the case under an unbound
-		// legacy Bearer key, which runs as user 0), true when Elementor saved
-		// (re-serialising the elements through their classes and sanitising
-		// them with kses for users without unfiltered_html).
+		// 2. Elementor's own Document::save() first: it validates and stores the
+		// elements through their classes and renders post_content. Guarded: it
+		// is another plugin's code. false = Elementor refused (the current user
+		// may not edit the post; always the case under an unbound legacy key,
+		// which runs as user 0); 'error' = it threw (addon packs whose controls
+		// fail validation); null = Elementor is not loaded.
+		//
+		// The save runs with the plugin's kses lock lifted (IATO_MCP_Auth::
+		// write_unlocked(), restored in a finally block even when the save
+		// throws). The lift only restores the capability the user holds
+		// without the lock: an administrator saves the tree as sanitised in
+		// step 0 and Elementor skips its own whole-document kses pass (which
+		// would otherwise strip HTML a person put in widgets the request never
+		// touched); a user who does not hold unfiltered_html (Author,
+		// Contributor, every role on multisite) gets Elementor's standard
+		// filtering exactly as in its editor. Nothing request-controlled other
+		// than the sanitised tree reaches the save: no page settings are passed.
 		$regenerated    = false;
 		$elementor_save = null;
 		$save_error     = null;
@@ -865,13 +905,29 @@ class IATO_MCP_Elementor_Adapter {
 			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
 			if ( $document ) {
 				try {
-					$elementor_save = (bool) $document->save( [ 'elements' => self::force_arrays( $decoded_elements ) ] );
+					$elementor_save = IATO_MCP_Auth::write_unlocked( fn() => (bool) $document->save( [ 'elements' => $decoded_elements ] ) );
 				} catch ( \Throwable $e ) {
 					$elementor_save = 'error';
 					$save_error     = $e->getMessage();
 				}
 				$regenerated = true;
 			}
+		}
+
+		// 3. The plugin writes the tree itself only when Elementor did not: the
+		// tree written is the sanitised one from step 0 (an unsanitised tree is
+		// never on disk, not even transiently).
+		// The write runs with the kses lock lifted: the tree was sanitised in
+		// step 0, and Elementor's REST sanitize_callback on _elementor_data
+		// would otherwise kses every string, including untouched human content.
+		$stored_by = 'elementor';
+		if ( true !== $elementor_save ) {
+			$stored_by = 'plugin';
+			IATO_MCP_Auth::write_unlocked( function () use ( $post_id, $encoded ) {
+				update_post_meta( $post_id, '_elementor_data', wp_slash( $encoded ) );
+				update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
+			} );
+			wp_cache_delete( $post_id, 'post_meta' );
 		}
 
 		// 4. Verify post_content actually changed.
@@ -913,11 +969,54 @@ class IATO_MCP_Elementor_Adapter {
 			'meta_persisted'      => $meta_persisted,
 			'meta_length'         => strlen( $persisted_meta ),
 			'elementor_save'      => $elementor_save,
+			'stored_by'           => $stored_by,
 		];
 		if ( null !== $save_error ) {
 			$result['elementor_save_error'] = $save_error;
 		}
+		if ( ! empty( $changed ) ) {
+			$result['sanitized']       = true;
+			$result['sanitized_paths'] = $changed;
+		}
 		return $result;
+	}
+
+	/** The stored element tree (arrays), or null when there is none. */
+	public static function stored_elements( int $post_id ): ?array {
+		$raw = get_post_meta( $post_id, '_elementor_data', true );
+		if ( is_array( $raw ) ) {
+			return self::force_arrays( $raw );
+		}
+		if ( ! is_string( $raw ) || '' === $raw ) {
+			return null;
+		}
+		$decoded = json_decode( $raw, true );
+		return is_array( $decoded ) ? self::force_arrays( $decoded ) : null;
+	}
+
+	/**
+	 * Keys write_pipeline() adds about Elementor's save and sanitising, copied
+	 * onto tool responses so the caller sees what happened to its content.
+	 */
+	public static function pipeline_report( array $pipeline ): array {
+		$out = [ 'elementor_save' => $pipeline['elementor_save'] ?? null, 'stored_by' => $pipeline['stored_by'] ?? null ];
+		if ( isset( $pipeline['elementor_save_error'] ) ) {
+			$out['elementor_save_error'] = $pipeline['elementor_save_error'];
+		}
+		if ( ! empty( $pipeline['sanitized'] ) ) {
+			$out['sanitized']       = true;
+			$out['sanitized_paths'] = $pipeline['sanitized_paths'];
+		}
+		return $out;
+	}
+
+	/** Dry-run counterpart: what the sanitising pass would change. Empty when nothing. */
+	public static function sanitize_preview( array $new_elements, ?array $stored_elements ): array {
+		if ( IATO_MCP_Auth::unfiltered_html_allowed() ) {
+			return [];
+		}
+		$r = IATO_MCP_Elementor_Sanitizer::preview( self::force_arrays( $new_elements ), $stored_elements );
+		return $r['sanitized'] ? [ 'sanitized' => true, 'sanitized_paths' => $r['sanitized_paths'] ] : [];
 	}
 
 	/**
@@ -982,6 +1081,7 @@ class IATO_MCP_Elementor_Adapter {
 		}
 		[ $elements, $raw ] = $decoded;
 		$previous_revision  = self::compute_revision( $raw );
+		$stored_elements    = $elements; // the tree before this request's change
 
 		if ( null !== $if_revision && $previous_revision !== $if_revision ) {
 			return new WP_Error(
@@ -1045,14 +1145,14 @@ class IATO_MCP_Elementor_Adapter {
 				'dry_run'          => true,
 				'current_revision' => null,
 				'applied_patch'    => $applied_patch,
-			];
+			] + self::sanitize_preview( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
 			return $preview;
 		}
 
-		$pipeline = self::write_pipeline( $post_id, $elements, $previous_revision );
+		$pipeline = self::write_pipeline( $post_id, $elements, $previous_revision, $stored_elements );
 		if ( is_wp_error( $pipeline ) ) {
 			return $pipeline;
 		}
@@ -1064,7 +1164,7 @@ class IATO_MCP_Elementor_Adapter {
 			'applied_patch'       => $applied_patch,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
-		];
+		] + self::pipeline_report( $pipeline );
 		if ( $echo_prev ) {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}

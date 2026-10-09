@@ -111,6 +111,19 @@ class IATO_MCP_Auth {
 	/** @var array<string,array|null> OAuth token rows by hash; WP runs permission_callback more than once per request. */
 	private static array $oauth_token_cache = [];
 
+	/**
+	 * May this request store unfiltered HTML (Elementor trees, post content)?
+	 * False for the site key and OAuth tokens always. For an Application
+	 * Password it is false unless the `iato_mcp_allow_unfiltered_html` filter
+	 * returns true for that user and the user holds unfiltered_html; the
+	 * decision is taken once in authenticate(), before the kses lock.
+	 */
+	private static bool $unfiltered_html_allowed = false;
+
+	public static function unfiltered_html_allowed(): bool {
+		return self::$unfiltered_html_allowed;
+	}
+
 	/** @return array{kind?:string,user_id?:int,client_id?:string,grant_id?:string} */
 	public static function credential(): array {
 		return self::$credential;
@@ -216,6 +229,28 @@ class IATO_MCP_Auth {
 		self::$kses_locked = true;
 		if ( function_exists( 'add_filter' ) ) {
 			add_filter( 'map_meta_cap', [ self::class, 'filter_map_meta_cap' ], 10, 4 );
+		}
+	}
+
+	/**
+	 * Run $fn with the kses lock lifted, for the plugin's own meta writes of
+	 * values it has already sanitised (the Elementor fallback write, rollback
+	 * restores, page-settings writes). Elementor registers a REST
+	 * sanitize_callback on `_elementor_data` and `_elementor_page_settings`
+	 * (modules/wp-rest/classes/elementor-post-meta.php) that runs kses over the
+	 * *whole* value for users without unfiltered_html; left in place it would
+	 * strip HTML a human put in widgets the request never touched. Lifting the
+	 * lock restores the real user's capability for the duration of the write
+	 * only; user 0 and users without the capability are unaffected. Never used
+	 * around Elementor's own Document::save().
+	 */
+	public static function write_unlocked( callable $fn ): mixed {
+		$was               = self::$kses_locked;
+		self::$kses_locked = false;
+		try {
+			return $fn();
+		} finally {
+			self::$kses_locked = $was;
 		}
 	}
 
@@ -375,6 +410,24 @@ class IATO_MCP_Auth {
 				self::$authenticated      = true;
 				self::$authenticated_user = $user;
 				self::$credential         = [ 'kind' => 'application_password', 'user_id' => (int) $user->ID ];
+
+				// Content written through MCP is filtered like a non-administrator's
+				// (1.13.0): the AI client is the actor, whatever the user's role.
+				// A developer who needs raw HTML through MCP opts in with
+				//   add_filter( 'iato_mcp_allow_unfiltered_html', fn( $allow, $user_id, $kind ) => true, 10, 3 );
+				// which is honoured only for Application Password users who hold
+				// unfiltered_html. The site key and OAuth tokens are always locked.
+				$allow = (bool) apply_filters( 'iato_mcp_allow_unfiltered_html', false, (int) $user->ID, 'application_password' )
+					&& user_can( $user, 'unfiltered_html' );
+				if ( ! $allow ) {
+					self::lock_unfiltered_html();
+					// WP core decided its content filters at init, before this
+					// callback ran and before the lock existed; re-evaluate them.
+					if ( function_exists( 'kses_init' ) ) {
+						kses_init();
+					}
+				}
+				self::$unfiltered_html_allowed = $allow;
 				return true;
 			}
 

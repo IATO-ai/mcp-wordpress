@@ -256,15 +256,22 @@ class IATO_MCP_Rollback {
 		if ( null === $before_value ) {
 			delete_post_meta( $post_id, $field );
 		} else {
-			// JSON-encoded arrays/objects were stored as strings; try to decode for round-trip parity.
+			// Arrays/objects were JSON-encoded into the receipt; decode them back
+			// for round-trip parity. A value that is JSON text in the database
+			// itself (Elementor's _elementor_data) must stay a string: decide by
+			// what the key holds now, and decode only when that is not a string.
 			$restore = $before_value;
-			if ( is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) ) {
+			$current = get_post_meta( $post_id, $field, true );
+			if ( is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) && ! ( is_string( $current ) && '' !== $current ) ) {
 				$decoded = json_decode( $restore, true );
 				if ( null !== $decoded ) {
 					$restore = $decoded;
 				}
 			}
-			update_post_meta( $post_id, $field, $restore );
+			// Verbatim: the value was captured from the database before the
+			// change; the kses lock is lifted so Elementor's REST sanitize_callback
+			// does not re-filter it on the way back.
+			IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $field, is_string( $restore ) ? wp_slash( $restore ) : $restore ) );
 		}
 
 		clean_post_cache( $post_id );

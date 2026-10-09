@@ -114,6 +114,12 @@ Navigate to **Settings → IATO MCP** in your WordPress admin.
 - **API Key** — A 32-character key generated on plugin activation. Used in the `Authorization: Bearer` header.
 - **Regenerate Key** — Creates a new key (invalidates the old one — you'll need to update your AI client config). OAuth connections made before version 1.13.0 also stop working; connections listed under Connected OAuth clients are not affected.
 
+### What gets filtered
+
+Content written through MCP is filtered the way WordPress filters a non-administrator's: scripts, event handlers and embeds are removed from post content and from Elementor widgets, whatever the role of the user behind the credential. Elementor edits report `sanitized: true` and the setting paths that were changed, so the AI client can tell you what was removed; dry runs report the same. Only the values a request changes are filtered; content a person authored in other widgets on the same page stays as it is. If you need raw HTML through MCP, a developer can enable it for Application Password users with the `iato_mcp_allow_unfiltered_html` filter.
+
+The generic `update_post_meta` tool cannot write Elementor's own data (`_elementor_data`, caches, CSS); the Elementor tools are the way to edit pages, and the error says which one to use.
+
 ### Connected OAuth clients
 
 Every AI client that connected through OAuth (for example the Claude connector or Claude Code) is listed with the application name, the host it sends you back to, the administrator it acts as, when it connected and when it was last used. **Revoke** disconnects that one client; the others and the API key keep working. **Disconnect all** revokes every OAuth connection at once (the API key is not affected). Deleting or demoting the approving administrator also disconnects their clients. Connections made before version 1.13.0 hold the API key and are not listed; remove and re-add the connector in the AI client to move it to its own token.

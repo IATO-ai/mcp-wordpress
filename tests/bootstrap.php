@@ -61,6 +61,8 @@ final class IATO_Test_WP {
 	public static array $meta = [];
 	/** @var array<int,array<string,mixed>> fake posts: [post_id] => [ 'post_content' => ... ] */
 	public static array $posts = [];
+	/** @var array<int,array{0:int,1:string,2:mixed}> every update_post_meta() call, in order */
+	public static array $writes = [];
 }
 if ( ! function_exists( 'get_post_meta' ) ) {
 	function get_post_meta( int $post_id, string $key = '', bool $single = false ): mixed {
@@ -87,6 +89,7 @@ if ( ! function_exists( 'get_permalink' ) ) {
 require_once __DIR__ . '/stubs-abilities.php';
 require_once __DIR__ . '/stubs-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
+require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-abilities.php';

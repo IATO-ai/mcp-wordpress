@@ -61,6 +61,64 @@ class IATO_MCP_Meta_Policy {
 	];
 
 	/**
+	 * The only `_elementor_` keys the generic meta tools (update_post_meta,
+	 * set_page_settings, inherit_settings_from) may write. Every other key
+	 * under that prefix holds builder data (the element tree, rendered HTML,
+	 * CSS, SVG, caches) and must go through the Elementor tools, which
+	 * sanitise what they store. An allowlist rather than a denylist, so a
+	 * key added by a future Elementor release or an addon is refused by
+	 * default. `_elementor_page_settings` values are sanitised on write.
+	 */
+	public const ELEMENTOR_WRITABLE = [ '_elementor_page_settings', '_elementor_edit_mode', '_elementor_template_type' ];
+
+	public static function is_elementor_key( string $key ): bool {
+		return 0 === stripos( $key, '_elementor_' );
+	}
+
+	/**
+	 * Refuse `_elementor_` keys outside ELEMENTOR_WRITABLE. Runs after
+	 * check_write(); set_page_settings is unaffected (its only Elementor key is
+	 * `_elementor_page_settings`).
+	 *
+	 * @return true|WP_Error WP_Error('elementor_content_key')
+	 */
+	public static function check_elementor_meta_write( string $key ): bool|WP_Error {
+		if ( ! self::is_elementor_key( $key ) || in_array( strtolower( $key ), self::ELEMENTOR_WRITABLE, true ) ) {
+			return true;
+		}
+		return new WP_Error(
+			'elementor_content_key',
+			sprintf(
+				'Meta key %s holds Elementor builder data and cannot be written with this tool. Use update_elementor_data for the element tree, update_elementor_widget / update_elementor_patch / set_widget_setting for widget settings, and set_page_settings for page settings.',
+				$key
+			),
+			[ 'key' => $key, 'writable_elementor_keys' => self::ELEMENTOR_WRITABLE ]
+		);
+	}
+
+	/**
+	 * Sanitise an array/object value written under an `_elementor_` key
+	 * (`_elementor_page_settings`): only values that differ from the stored
+	 * ones are touched, by shape (IATO_MCP_Elementor_Sanitizer). Scalars are
+	 * returned as given (the meta tools already run sanitize_text_field on
+	 * strings).
+	 *
+	 * @return array{value:mixed,changed:string[]}
+	 */
+	public static function sanitize_elementor_value( string $key, mixed $value, mixed $stored ): array {
+		if ( ! is_array( $value ) && ! is_object( $value ) ) {
+			return [ 'value' => $value, 'changed' => [] ];
+		}
+		$value  = json_decode( (string) wp_json_encode( $value ), true );
+		$stored = is_array( $stored ) ? $stored : ( is_object( $stored ) ? json_decode( (string) wp_json_encode( $stored ), true ) : null );
+		if ( ! is_array( $value ) || ! class_exists( 'IATO_MCP_Elementor_Sanitizer' ) ) {
+			return [ 'value' => $value, 'changed' => [] ];
+		}
+		$r = IATO_MCP_Elementor_Sanitizer::diff_settings( $value, $stored, $key );
+		return [ 'value' => $r['value'], 'changed' => $r['changed'] ];
+	}
+
+	/**
 	 * True if the key matches a denylist pattern. Case-insensitive.
 	 */
 	public static function is_denied( string $key ): bool {

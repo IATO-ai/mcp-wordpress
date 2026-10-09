@@ -258,6 +258,7 @@ IATO_MCP_Server::register_tool(
 		}
 		[ $elements, $raw ] = $decoded;
 		$previous_revision  = IATO_MCP_Elementor_Adapter::compute_revision( $raw );
+		$stored_elements    = $elements; // before the patch
 
 		$if_revision = isset( $args['if_revision'] ) ? (string) $args['if_revision'] : null;
 		if ( null !== $if_revision && '' !== $if_revision && $previous_revision !== $if_revision ) {
@@ -283,14 +284,14 @@ IATO_MCP_Server::register_tool(
 				'dry_run'          => true,
 				'current_revision' => null,
 				'applied_patch'    => $applied,
-			];
+			] + IATO_MCP_Elementor_Adapter::sanitize_preview( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
 			return IATO_MCP_Server::ok( $preview );
 		}
 
-		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $elements, $previous_revision );
+		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $elements, $previous_revision, $stored_elements );
 		if ( is_wp_error( $pipeline ) ) {
 			return $pipeline;
 		}
@@ -301,7 +302,7 @@ IATO_MCP_Server::register_tool(
 			'applied_patch'       => $applied,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
-		];
+		] + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
 		if ( $echo_prev ) {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}

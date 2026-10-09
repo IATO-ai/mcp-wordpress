@@ -25,7 +25,7 @@ final class AuthBindingTest extends TestCase {
 
 	private function reset_auth_statics(): void {
 		$ref = new ReflectionClass( IATO_MCP_Auth::class );
-		foreach ( [ 'authenticated' => false, 'authenticated_user' => null, 'legacy_unbound' => false, 'kses_locked' => false, 'rejection_logged' => false, 'site_key_full_access' => false, 'credential' => [], 'token_refused' => false, 'oauth_token_cache' => [] ] as $name => $value ) {
+		foreach ( [ 'authenticated' => false, 'authenticated_user' => null, 'legacy_unbound' => false, 'kses_locked' => false, 'rejection_logged' => false, 'site_key_full_access' => false, 'credential' => [], 'token_refused' => false, 'oauth_token_cache' => [], 'unfiltered_html_allowed' => false ] as $name => $value ) {
 			if ( $ref->hasProperty( $name ) ) {
 				$ref->getProperty( $name )->setValue( null, $value );
 			}
@@ -228,6 +228,62 @@ final class AuthBindingTest extends TestCase {
 		$this->assertTrue( IATO_MCP_Auth::require_bound_user() );
 		$this->assertTrue( IATO_MCP_Auth::require_cap( 'edit_posts' ) );
 		$this->assertInstanceOf( WP_Error::class, IATO_MCP_Auth::require_cap( 'manage_options' ) );
-		$this->assertSame( [ 'unfiltered_html' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 5, [] ), 'no kses lock on the App Password path' );
+	}
+
+	// ── Application Password: kses lock by default (1.13.0) ───────────────
+
+	private function app_password_request( int $user_id ): WP_REST_Request {
+		IATO_Test_Auth_State::$logged_in       = true;
+		IATO_Test_Auth_State::$current_user_id = $user_id;
+		return new WP_REST_Request( [ 'Authorization' => 'Basic ZWRpdG9yOnB3' ] );
+	}
+
+	public function test_application_password_is_kses_locked_by_default(): void {
+		$this->assertTrue( IATO_MCP_Auth::authenticate( $this->app_password_request( 1 ) ) ); // admin holds unfiltered_html
+		$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ), 'locked like a bound key' );
+		$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'edit_css' ], 'edit_css', 1, [] ) );
+		$this->assertFalse( IATO_MCP_Auth::unfiltered_html_allowed() );
+	}
+
+	public function test_filter_allows_unfiltered_html_only_for_users_who_hold_it(): void {
+		$seen = [];
+		add_filter( 'iato_mcp_allow_unfiltered_html', function ( bool $allow, int $user_id, string $kind ) use ( &$seen ) {
+			$seen[] = [ $user_id, $kind ];
+			return true;
+		}, 10, 3 );
+
+		$this->assertTrue( IATO_MCP_Auth::authenticate( $this->app_password_request( 1 ) ) );
+		$this->assertTrue( IATO_MCP_Auth::unfiltered_html_allowed(), 'admin with unfiltered_html + filter true' );
+		$this->assertSame( [ 'unfiltered_html' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ), 'no lock' );
+		$this->assertSame( [ [ 1, 'application_password' ] ], $seen, 'filter receives the user id and the credential kind' );
+
+		$this->reset_auth_statics();
+		$this->assertTrue( IATO_MCP_Auth::authenticate( $this->app_password_request( 5 ) ) ); // editor lacks the cap in this fixture
+		$this->assertFalse( IATO_MCP_Auth::unfiltered_html_allowed(), 'the filter cannot grant a capability the user lacks' );
+		$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 5, [] ) );
+	}
+
+	public function test_write_unlocked_lifts_the_kses_lock_for_the_callback_only(): void {
+		self::bind( 1 );
+		IATO_MCP_Auth::authenticate( self::bearer() );
+		$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ) );
+		$inside = IATO_MCP_Auth::write_unlocked( fn() => apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ) );
+		$this->assertSame( [ 'unfiltered_html' ], $inside, 'the real capability shows through during the write' );
+		$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ), 'locked again afterwards' );
+		try {
+			IATO_MCP_Auth::write_unlocked( function () { throw new RuntimeException( 'boom' ); } );
+			$this->fail( 'exception should propagate' );
+		} catch ( RuntimeException $e ) {
+			$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ), 'relocked even when the write throws' );
+		}
+		$this->assertSame( 'x', IATO_MCP_Auth::write_unlocked( fn() => 'x' ), 'returns the callback result' );
+	}
+
+	public function test_site_key_and_oauth_never_get_unfiltered_html(): void {
+		add_filter( 'iato_mcp_allow_unfiltered_html', fn() => true, 10, 3 );
+		self::bind( 1 );
+		$this->assertTrue( IATO_MCP_Auth::authenticate( self::bearer() ) );
+		$this->assertFalse( IATO_MCP_Auth::unfiltered_html_allowed() );
+		$this->assertSame( [ 'do_not_allow' ], apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] ) );
 	}
 }
