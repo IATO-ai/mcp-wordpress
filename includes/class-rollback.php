@@ -256,15 +256,29 @@ class IATO_MCP_Rollback {
 		if ( null === $before_value ) {
 			delete_post_meta( $post_id, $field );
 		} else {
-			// JSON-encoded arrays/objects were stored as strings; try to decode for round-trip parity.
+			// Arrays/objects were JSON-encoded into the receipt; decode them back
+			// for round-trip parity. Elementor's _elementor_data is JSON text in
+			// the database itself and must come back as a string (Elementor and
+			// the plugin's reader expect text; 1.12.2). For other keys, decode
+			// only when the key does not currently hold a string.
 			$restore = $before_value;
-			if ( is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) ) {
+			$current = get_post_meta( $post_id, $field, true );
+			$is_json_text_key = ( '_elementor_data' === $field );
+			if ( ! $is_json_text_key && is_string( $restore ) && ( str_starts_with( $restore, '{' ) || str_starts_with( $restore, '[' ) ) && ! ( is_string( $current ) && '' !== $current ) ) {
 				$decoded = json_decode( $restore, true );
 				if ( null !== $decoded ) {
 					$restore = $decoded;
 				}
 			}
-			update_post_meta( $post_id, $field, $restore );
+			$value = is_string( $restore ) ? wp_slash( $restore ) : $restore;
+			if ( 0 === stripos( $field, '_elementor_' ) && class_exists( 'IATO_MCP_Elementor_Adapter' ) ) {
+				// Verbatim: the value was captured from the database before the
+				// change; Elementor's whole-value sanitize callback must not
+				// re-filter it on the way back (1.12.2).
+				IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing( fn() => update_post_meta( $post_id, $field, $value ) );
+			} else {
+				update_post_meta( $post_id, $field, $value );
+			}
 		}
 
 		clean_post_cache( $post_id );

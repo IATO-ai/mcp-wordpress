@@ -262,6 +262,10 @@ IATO_MCP_Server::register_tool(
 		if ( json_last_error() !== JSON_ERROR_NONE ) {
 			return new WP_Error( 'invalid_json', 'Invalid JSON: ' . json_last_error_msg() );
 		}
+		if ( ! is_array( $decoded ) ) {
+			return new WP_Error( 'invalid_json', 'elementor_data must be a JSON array of elements.' );
+		}
+		$input_length = strlen( $elementor_data );
 
 		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
 		// surfaces them, and apply them after the main Elementor write succeeds.
@@ -351,12 +355,29 @@ IATO_MCP_Server::register_tool(
 		// Capture old post_content for comparison after save.
 		$old_content = get_post_field( 'post_content', $post_id );
 
+		// 0. (1.12.2) Sanitise only the values that differ from the stored tree,
+		// by value shape; identical values are written back verbatim. Skipped
+		// for users who hold unfiltered_html. The written string is the
+		// (possibly) sanitised tree re-encoded.
+		$decoded = IATO_MCP_Elementor_Adapter::force_arrays( $decoded );
+		$diff    = IATO_MCP_Elementor_Adapter::sanitize_changes( $post_id, $decoded, IATO_MCP_Elementor_Adapter::stored_elements( $post_id ) );
+		$decoded = $diff['elements'];
+		$sanitized_paths = $diff['changed'];
+		// What is written is the decoded (and, where needed, sanitised) tree
+		// re-encoded, never the caller's string: every value went through the
+		// pass, whatever shape the client sent.
+		$elementor_data = (string) wp_json_encode( $decoded );
+
 		// 1. Write _elementor_data meta directly — Document->save() does NOT
 		//    persist the 'elements' parameter to meta; it only uses them
 		//    temporarily for rendering. Without this explicit write, meta
 		//    stays unchanged and post_content regenerates from stale data.
-		update_post_meta( $post_id, '_elementor_data', wp_slash( $elementor_data ) );
-		update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
+		//    Elementor's whole-value sanitize callback is kept out of this write
+		//    (IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing()).
+		IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing( function () use ( $post_id, $elementor_data ) {
+			update_post_meta( $post_id, '_elementor_data', wp_slash( $elementor_data ) );
+			update_post_meta( $post_id, '_elementor_edit_mode', 'builder' );
+		} );
 
 		// 2. Clear all caches so Document->save() reads the fresh meta.
 		delete_post_meta( $post_id, '_elementor_css' );
@@ -377,18 +398,6 @@ IATO_MCP_Server::register_tool(
 		if ( class_exists( '\Elementor\Plugin' ) ) {
 			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
 			if ( $document ) {
-				$force_arrays = function ( $data ) use ( &$force_arrays ) {
-					if ( is_object( $data ) ) {
-						$data = (array) $data;
-					}
-					if ( is_array( $data ) ) {
-						return array_map( $force_arrays, $data );
-					}
-					return $data;
-				};
-
-				$decoded = $force_arrays( $decoded );
-
 				$document->save( [ 'elements' => $decoded ] );
 				$regenerated = true;
 			}
@@ -452,8 +461,12 @@ IATO_MCP_Server::register_tool(
 			'post_content_length'  => strlen( $new_content ),
 			'meta_persisted'       => $meta_persisted,
 			'meta_length'          => strlen( $persisted_meta ),
-			'input_length'         => strlen( $elementor_data ),
+			'input_length'         => $input_length,
 		];
+		if ( ! empty( $sanitized_paths ) ) {
+			$response['sanitized']       = true;
+			$response['sanitized_paths'] = $sanitized_paths;
+		}
 		if ( ! empty( $inherit_receipts ) ) {
 			$response['change_receipts'] = $inherit_receipts;
 		}

@@ -258,6 +258,7 @@ IATO_MCP_Server::register_tool(
 		}
 		[ $elements, $raw ] = $decoded;
 		$previous_revision  = IATO_MCP_Elementor_Adapter::compute_revision( $raw );
+		$stored_elements    = $elements; // before the patch
 
 		$if_revision = isset( $args['if_revision'] ) ? (string) $args['if_revision'] : null;
 		if ( null !== $if_revision && '' !== $if_revision && $previous_revision !== $if_revision ) {
@@ -290,12 +291,12 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( $preview );
 		}
 
-		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $elements, $previous_revision );
+		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $elements, $previous_revision, $stored_elements );
 		if ( is_wp_error( $pipeline ) ) {
 			return $pipeline;
 		}
 
-		$response = [
+		$response = IATO_MCP_Elementor_Adapter::sanitize_report( $pipeline ) + [
 			'post_id'             => $post_id,
 			'current_revision'    => $pipeline['current_revision'],
 			'applied_patch'       => $applied,
