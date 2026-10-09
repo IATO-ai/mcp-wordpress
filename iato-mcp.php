@@ -58,6 +58,7 @@ require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth-store.php';
+require_once IATO_MCP_DIR . 'includes/class-schema.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 require_once IATO_MCP_DIR . 'includes/tools-selection.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
@@ -145,11 +146,12 @@ add_action( 'deleted_user', [ 'IATO_MCP_OAuth', 'on_deleted_user' ], 10, 1 );
 add_action( 'iato_mcp_generate_subsizes', [ 'IATO_MCP_Media_Uploader', 'generate_subsizes_async' ], 10, 3 );
 
 /**
- * Run idempotent one-shot migrations gated by stored db_version.
+ * Run idempotent one-shot migrations.
  *
  * Activation hooks don't fire on plugin update, so any post-install
- * data fix-ups have to live here. Each migration block compares against
- * iato_mcp_db_version and bumps the option on success.
+ * data fix-ups have to live here. The tool-list backfill is gated by the
+ * plugin version (iato_mcp_db_version); table changes and data fix-ups by
+ * the schema version (IATO_MCP_Schema), which is independent of it.
  */
 function iato_mcp_maybe_run_migrations() {
 	$db_version = get_option( 'iato_mcp_db_version', '0' );
@@ -178,62 +180,16 @@ function iato_mcp_maybe_run_migrations() {
 		}
 	}
 
-	// 1.13.0: OAuth issues per-client tokens from its own tables. Clients
-	// registered under the option-based storage are carried over (marked as
-	// authorized so the pending-client pruning leaves them alone); the global
-	// PKCE transient is gone. Sites that had OAuth clients get a one-time
-	// notice: those connections hold the site key and cannot be revoked
-	// individually (IATO_MCP_Settings::oauth_legacy_notice). Must run before
-	// the generic block below, which bumps the stored version.
-	if ( version_compare( $db_version, '1.13.0', '<' ) && class_exists( 'IATO_MCP_OAuth_Store' ) ) {
-		IATO_MCP_OAuth_Store::create_tables();
-		$legacy_clients = get_option( 'iato_mcp_oauth_clients', [] );
-		if ( is_array( $legacy_clients ) && ! empty( $legacy_clients ) ) {
-			$store = IATO_MCP_OAuth_Store::instance();
-			foreach ( $legacy_clients as $client_id => $client ) {
-				$client_id = sanitize_text_field( (string) $client_id );
-				if ( '' === $client_id || ! is_array( $client ) || null !== $store->find_client( $client_id ) ) {
-					continue;
-				}
-				$uris = array_values( array_filter( (array) ( $client['redirect_uris'] ?? [] ), 'is_string' ) );
-				$when = gmdate( 'Y-m-d H:i:s', (int) ( $client['created'] ?? time() ) );
-				$store->insert_client( [
-					'client_id'       => substr( $client_id, 0, 64 ),
-					'client_name'     => mb_substr( sanitize_text_field( (string) ( $client['client_name'] ?? '' ) ), 0, 100 ),
-					'redirect_uris'   => $uris,
-					'registration_ip' => null,
-					'created_at'      => $when,
-					'authorized_at'   => $when,
-				] );
-			}
-			// Two flags: the notice (dismissible) and the fact that pre-1.13.0
-			// connections may still hold the key (cleared only by Regenerate).
-			update_option( 'iato_mcp_oauth_legacy_notice', '1', false );
-			update_option( 'iato_mcp_oauth_legacy_key', '1', false );
-		}
-		delete_option( 'iato_mcp_oauth_clients' );
-		delete_transient( 'iato_mcp_oauth_pkce' );
-	}
+	// Schema migrations (tables and one-shot data fix-ups) are keyed by
+	// IATO_MCP_Schema::VERSION, an integer independent of the plugin version:
+	// a site that ran a pre-release build already stores that build's
+	// db_version, which would make a version_compare gate skip every later
+	// table change. Each step is idempotent; a failing step stops the run and
+	// is retried on the next request. See includes/class-schema.php.
+	IATO_MCP_Schema::run();
 
 	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
-		// Idempotent dbDelta calls so upgraded installs (where the activation
-		// hook didn't fire) pick up new tables and columns on first load after
-		// update.
-		if ( class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
-			IATO_MCP_Media_Phase_Log::create_table();
-		}
-		if ( class_exists( 'IATO_MCP_OAuth_Store' ) ) {
-			IATO_MCP_OAuth_Store::create_tables();
-		}
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
-	}
-
-	// One-shot for sites that ran the first 1.13.0 build (no grants table yet):
-	// create it and derive a grant row for every grant_id in the token table.
-	if ( ! get_option( 'iato_mcp_oauth_grants_backfilled' ) && class_exists( 'IATO_MCP_OAuth_Store' ) ) {
-		IATO_MCP_OAuth_Store::create_tables();
-		IATO_MCP_OAuth_Store::backfill_grants();
-		update_option( 'iato_mcp_oauth_grants_backfilled', '1', false );
 	}
 
 	// One-shot repair for sites hit by the "bridge tools saved as off" bug: a
@@ -527,10 +483,9 @@ function iato_mcp_activate() {
 	// are: an existing key without an owner stays in legacy mode and the Settings
 	// page / admin notice ask for an owner. Nothing binds automatically on upgrade.
 	IATO_MCP_Auth::maybe_generate_key();
-	IATO_MCP_Change_Receipt::create_table();
-	IATO_MCP_Call_Log::create_table();
-	IATO_MCP_Media_Phase_Log::create_table();
-	IATO_MCP_OAuth_Store::create_tables();
+	// Fresh installs run every schema step (which creates the tables);
+	// reactivations run only the steps the site has not seen.
+	IATO_MCP_Schema::run();
 	update_option( 'iato_mcp_show_wizard', true );
 
 	// Clear stale suggestion generation transients so a fresh install/update
