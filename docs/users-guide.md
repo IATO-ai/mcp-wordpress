@@ -90,7 +90,7 @@ The config looks like this:
 4. Log in to your WordPress admin when prompted.
 5. Approve the permissions on the authorization screen.
 
-This method uses OAuth 2.0 with PKCE — no manual key copying required.
+This method uses OAuth 2.1 with PKCE — no manual key copying required. Each connection gets its own token (not the API key), acts as the administrator who approved it, and can be revoked on its own under **Settings → IATO MCP → Connected OAuth clients**. A connection stays valid for 180 days, then asks for approval again.
 
 ### MCP Endpoint
 
@@ -112,7 +112,11 @@ Navigate to **Settings → IATO MCP** in your WordPress admin.
 
 - **Endpoint URL** — Your MCP server URL. Share this with AI clients.
 - **API Key** — A 32-character key generated on plugin activation. Used in the `Authorization: Bearer` header.
-- **Regenerate Key** — Creates a new key (invalidates the old one — you'll need to update your AI client config).
+- **Regenerate Key** — Creates a new key (invalidates the old one — you'll need to update your AI client config). OAuth connections made before version 1.13.0 also stop working; connections listed under Connected OAuth clients are not affected.
+
+### Connected OAuth clients
+
+Every AI client that connected through OAuth (for example the Claude connector or Claude Code) is listed with the application name, the host it sends you back to, the administrator it acts as, when it connected and when it was last used. **Revoke** disconnects that one client; the others and the API key keep working. **Disconnect all** revokes every OAuth connection at once (the API key is not affected). Deleting or demoting the approving administrator also disconnects their clients. Connections made before version 1.13.0 hold the API key and are not listed; remove and re-add the connector in the AI client to move it to its own token.
 
 ### <img src="iato-icon.png" alt="" width="22" align="top" /> IATO Platform
 
@@ -522,7 +526,7 @@ You'll see this error when using bridge or sync tools without an IATO API key. G
 
 - Check that your API key hasn't been regenerated — if it has, update your AI client config.
 - Verify the `Authorization: Bearer <key>` header is being sent correctly.
-- If using OAuth, try disconnecting and reconnecting through the Custom Connector flow.
+- If using OAuth, try disconnecting and reconnecting through the Custom Connector flow. A connection that was revoked, that expired (180 days), or whose approving administrator was deleted or demoted answers 401 until it is approved again.
 
 ### Tools not appearing in AI client
 
@@ -543,8 +547,10 @@ You'll see this error when using bridge or sync tools without an IATO API key. G
 ### Connection works in config but not via Custom Connector
 
 - Your site must be accessible over HTTPS for OAuth to work.
-- Check that `/.well-known/oauth-authorization-server` returns a valid JSON response.
-- Some security plugins may block the OAuth endpoints — whitelist `/oauth/*` paths.
+- Check that `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` return valid JSON responses.
+- Some security plugins may block the OAuth endpoints — whitelist `/oauth/*` paths (`register`, `authorize`, `token`, `revoke`).
+- Claude registers a new OAuth client on every fresh connection. Registration is limited to 10 per source address per 10 minutes and 100 per site per hour; behind a proxy that forwards every request from one address, the first limit applies to the whole site (a developer can raise it with the `iato_mcp_oauth_registration_limits` filter).
+- If your site's address in Settings → General is `http://` but visitors reach it over `https://` (a TLS-terminating proxy), the plugin accepts the https resource and records it in Diagnostics.
 
 ---
 

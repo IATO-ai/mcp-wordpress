@@ -102,6 +102,26 @@ CSS;
 						</td>
 					</tr>
 					<tr>
+						<td><?php esc_html_e( 'OAuth connections', 'iato-mcp' ); ?></td>
+						<td>
+							<?php
+							$oauth_store = IATO_MCP_OAuth_Store::instance();
+							$oauth_live  = $oauth_store->count_active_grants( gmdate( 'Y-m-d H:i:s' ) );
+							$oauth_pend  = $oauth_store->count_pending_clients();
+							printf(
+								/* translators: 1: live connections, 2: registered clients that never completed an authorization */
+								esc_html__( '%1$d connected, %2$d registered but never approved', 'iato-mcp' ),
+								(int) $oauth_live,
+								(int) $oauth_pend
+							);
+							?>
+							&nbsp;<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp#iato-oauth-clients' ) ); ?>"><?php esc_html_e( 'Manage', 'iato-mcp' ); ?></a>
+							<?php if ( get_option( 'iato_mcp_oauth_legacy_key', false ) ) : ?>
+								<br><span class="badge unauthorized"><?php esc_html_e( 'pre-1.13.0 OAuth connections hold the site key', 'iato-mcp' ); ?></span>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
 						<td><?php esc_html_e( 'IATO API key', 'iato-mcp' ); ?></td>
 						<td>
 							<?php if ( '' === $api_key ) : ?>

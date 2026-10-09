@@ -11,8 +11,7 @@ fixtures and passes everything in as environment variables:
   AUTHOR_DRAFT, ATTACHMENT (admin's upload), ELEMENTOR_PAGE (admin's, published).
 Exit code 1 if any check fails.
 """
-import base64, hashlib, json, os, re, secrets, sys, urllib.error, urllib.parse, urllib.request
-from http.cookiejar import CookieJar
+import base64, json, os, re, sys, urllib.error, urllib.parse, urllib.request
 
 BS = chr(92)
 BASE = os.environ.get('BASE', 'http://localhost:8888').rstrip('/')
@@ -217,44 +216,7 @@ m = re.search(r'<script type="application/ld\+json">(.*?)</script>', page.decode
 record('valid schema renders as JSON-LD and parses', m is not None and json.loads(m.group(1)).get('name') == 'Acme & Sons', m.group(1)[:200] if m else None)
 record('valid schema: ampersand hex-escaped in output', m is not None and '&' not in m.group(1), m.group(1)[:200] if m else None)
 
-# ── Findings 5 and 6: OAuth consent headers and PKCE ──────────────────────
-# SKIP_OAUTH=1 skips this section: approving consent binds an unbound site key
-# to the approving admin, which would change the key's mode for the checks after it.
-if os.environ.get('SKIP_OAUTH') == '1':
-    print('# Finding 5/6: OAuth section skipped (SKIP_OAUTH=1)')
-else:
-  print('# Finding 5/6: OAuth consent screen headers and PKCE')
-  jar = CookieJar()
-  op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), NoRedirect)
-  http('GET', BASE + '/wp-login.php', opener=op)
-  st, hd, _ = http('POST', BASE + '/wp-login.php', urllib.parse.urlencode({'log': 'admin', 'pwd': os.environ.get('ADMIN_LOGIN_PW', 'password'), 'wp-submit': 'Log In', 'redirect_to': BASE + '/wp-admin/', 'testcookie': '1'}), opener=op)
-  record('admin cookie login', st == 302 and any(ck.name.startswith('wordpress_logged_in') for ck in jar), (st, [ck.name for ck in jar]))
-  st, _, raw = http('POST', BASE + '/oauth/register', {'client_name': 'secpatch', 'redirect_uris': ['https://client.example/cb']})
-  client_id = json.loads(raw).get('client_id') if st == 201 else None
-  record('oauth client registered', client_id is not None, (st, raw[:200]))
-  verifier = secrets.token_urlsafe(48)
-  challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
-  q = urllib.parse.urlencode({'response_type': 'code', 'client_id': client_id, 'redirect_uri': 'https://client.example/cb', 'state': 's1', 'code_challenge': challenge, 'code_challenge_method': 'S256'})
-  st, hd, raw = http('GET', f'{BASE}/oauth/authorize?{q}', opener=op)
-  record('consent screen renders for admin', st == 200 and b'_wpnonce' in raw and b'Approve' in raw, (st, raw[:200]))
-  record('consent screen: X-Frame-Options DENY', hd.get('x-frame-options', '').upper() == 'DENY', hd.get('x-frame-options'))
-  record("consent screen: CSP frame-ancestors 'none'", "frame-ancestors 'none'" in hd.get('content-security-policy', ''), hd.get('content-security-policy'))
-  st, hd, raw = http('GET', f'{BASE}/oauth/authorize?{q}&code_challenge_method=md5', opener=op)
-  record('unsupported code_challenge_method rejected at authorize', st == 400, (st, raw[:200]))
-  nonce = re.search(r'name="_wpnonce" value="([^"]+)"', raw.decode() if st == 200 else http('GET', f'{BASE}/oauth/authorize?{q}', opener=op)[2].decode())
-  st, hd, raw = http('POST', f'{BASE}/oauth/authorize?{q}', urllib.parse.urlencode({'_wpnonce': nonce.group(1) if nonce else ''}), opener=op)
-  record('approve redirects to client with code', st == 302 and 'code=' in hd.get('location', ''), (st, hd.get('location')))
-  def token(v):
-      return http('POST', BASE + '/oauth/token', {'grant_type': 'authorization_code', 'code': KEY, 'redirect_uri': 'https://client.example/cb', 'client_id': client_id, 'code_verifier': v})
-  st, _, raw = token('wrong-verifier')
-  record('token: wrong code_verifier is invalid_grant', st == 400 and b'invalid_grant' in raw, (st, raw[:200]))
-  st, _, raw = token('')
-  record('token: empty code_verifier is invalid_grant (challenge was issued)', st == 400 and b'code_verifier is required' in raw, (st, raw[:200]))
-  st, _, raw = http('POST', BASE + '/oauth/token', {'grant_type': 'authorization_code', 'code': KEY, 'redirect_uri': 'https://client.example/cb', 'client_id': 'someone-else', 'code_verifier': verifier})
-  record('token: other client_id is invalid_grant and challenge survives', st == 400 and b'client_id' in raw, (st, raw[:200]))
-  st, _, raw = token(verifier)
-  record('token: correct verifier after failed attempts still succeeds', st == 200 and json.loads(raw).get('access_token') == KEY, (st, raw[:200]))
-
+# OAuth (consent screen, PKCE, codes, tokens, revocation) lives in tests/wp-env/oauth-live.sh since 1.13.0.
 
 # ── Read tools: read_post, password-protected, templates, list filtering ──
 print('# Read tools: read_post / password / template gating')

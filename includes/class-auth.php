@@ -2,15 +2,12 @@
 /**
  * Authentication — validates incoming MCP requests on the REST endpoint.
  *
- * Two auth paths are accepted:
+ * Three auth paths are accepted:
  *   1. Plugin Bearer token (`iato_mcp_key`) — auto-generated on activation, used by the
  *      IATO platform's own integrations and by clients that paste the Settings page config.
  *      Documented as full administrative access: only admins should possess this key.
- *      OAuth-issued tokens also flow through this path: OAuth's access_token IS the
- *      plugin key (Known Issue KI-1), so OAuth requests are indistinguishable from
- *      plugin-key requests here.
  *      Token binding (Sprint C0): the key records an owner (`iato_mcp_key_owner`, set
- *      on activation, rotation, the Settings "Token owner" control, or OAuth consent).
+ *      on activation, rotation, or the Settings "Token owner" control).
  *      A bound key runs the request as its owner via wp_set_current_user(), after
  *      re-checking on every request that the owner still exists and still holds
  *      manage_options (otherwise 403 iato_mcp_owner_missing / iato_mcp_owner_demoted).
@@ -18,17 +15,25 @@
  *      as it was for user 0. A key with no owner (issued before binding existed) keeps
  *      the historical behaviour: user 0, require_cap() passes everything, and
  *      require_bound_user() returns iato_mcp_token_unbound for features that need a user.
- *   2. WordPress Application Password (Basic auth) — the WP-native credential, used by
+ *   2. OAuth access token (`Bearer iato_at_...`, 1.13.0) — issued per client by
+ *      IATO_MCP_OAuth, stored hashed, expiring, revocable. Runs as the administrator
+ *      who approved the connection, re-checked on every request exactly like a key
+ *      owner; a refused token gets 401 (expired, revoked, user missing or demoted;
+ *      the last two also revoke the grant). Before 1.13.0 OAuth handed out the site
+ *      key itself, so connections made then still arrive on path 1.
+ *   3. WordPress Application Password (Basic auth) — the WP-native credential, used by
  *      AI clients via the setup wizard (Methods 2 and 3) and by generic HTTP MCP tooling.
  *      Carries the authenticated WP user; per-tool capability checks via require_cap()
  *      enforce against that user. Not affected by token binding.
  *
  * Capability model:
- *   - Bound Bearer / OAuth key: require_cap() calls user_can($owner, $cap). Real.
+ *   - Bound Bearer key / OAuth token: require_cap() calls user_can($user, $cap). Real.
  *   - Unbound legacy Bearer key: require_cap() returns true for any cap (as before).
  *   - Application Password: require_cap() calls user_can($user, $cap) against the
  *     authenticated user. v1.10.0 turned this enforcement on; prior to v1.10.0 the
  *     check was bypassed for both paths.
+ *
+ * credential() reports which path authenticated the request (for receipts / logs).
  *
  * Stateless per-request auth: no nonces, no sessions.
  *
@@ -87,6 +92,54 @@ class IATO_MCP_Auth {
 	 */
 	private static bool $site_key_full_access = false;
 
+	/** Prefixes of OAuth-issued tokens (IATO_MCP_OAuth). The site key has no prefix. */
+	public const OAUTH_ACCESS_PREFIX  = 'iato_at_';
+	public const OAUTH_REFRESH_PREFIX = 'iato_rt_';
+
+	/**
+	 * Which credential authenticated the request:
+	 * kind: site_key | oauth | application_password; user_id; for oauth also
+	 * client_id and grant_id. Empty until authenticate() succeeds.
+	 *
+	 * @var array{kind?:string,user_id?:int,client_id?:string,grant_id?:string}
+	 */
+	private static array $credential = [];
+
+	/** True when a Bearer value was presented and refused (adds error="invalid_token" to the 401). */
+	private static bool $token_refused = false;
+
+	/** @var array<string,array|null> OAuth token rows by hash; WP runs permission_callback more than once per request. */
+	private static array $oauth_token_cache = [];
+
+	/** @return array{kind?:string,user_id?:int,client_id?:string,grant_id?:string} */
+	public static function credential(): array {
+		return self::$credential;
+	}
+
+	public static function token_was_refused(): bool {
+		return self::$token_refused;
+	}
+
+	/**
+	 * Is this user still an administrator? Shared by the site-key owner check,
+	 * the OAuth token check and the OAuth token endpoint.
+	 *
+	 * @return array{state:'ok'|'missing'|'demoted',user:?WP_User}
+	 */
+	public static function administrator_state( int $user_id ): array {
+		if ( $user_id <= 0 ) {
+			return [ 'state' => 'missing', 'user' => null ];
+		}
+		$user = get_user_by( 'id', $user_id );
+		if ( ! $user || ! $user->exists() ) {
+			return [ 'state' => 'missing', 'user' => null ];
+		}
+		if ( ! user_can( $user, self::OWNER_CAP ) ) {
+			return [ 'state' => 'demoted', 'user' => $user ];
+		}
+		return [ 'state' => 'ok', 'user' => $user ];
+	}
+
 	// ── Key owner ─────────────────────────────────────────────────────────
 
 	/**
@@ -98,8 +151,9 @@ class IATO_MCP_Auth {
 
 	/**
 	 * Bind (or, with 0, unbind) the site key to a user. The single write path
-	 * for the owner option: activation, key rotation, the Settings "Token
-	 * owner" control and OAuth consent all go through here.
+	 * for the owner option: activation, key rotation and the Settings "Token
+	 * owner" control go through here. (OAuth consent bound the key until
+	 * 1.12.1; since 1.13.0 OAuth issues its own tokens and never touches it.)
 	 */
 	public static function bind_key_owner( int $user_id ): void {
 		$previous = self::key_owner_id();
@@ -169,7 +223,7 @@ class IATO_MCP_Auth {
 	 * Record a token rejection in the call log so Diagnostics shows why a key
 	 * stopped working. permission_callback failures are otherwise invisible.
 	 */
-	private static function log_rejection( string $code, string $message, int $owner_id ): void {
+	private static function log_rejection( string $code, string $message, int $owner_id, array $args = [] ): void {
 		if ( ! class_exists( 'IATO_MCP_Call_Log' ) ) {
 			return;
 		}
@@ -183,6 +237,7 @@ class IATO_MCP_Auth {
 		IATO_MCP_Call_Log::record( [
 			'rpc_method'      => 'auth',
 			'tool_name'       => null,
+			'request_args'    => $args,
 			'response_status' => 'auth_error',
 			'error_code'      => $code,
 			'error_message'   => $message,
@@ -215,19 +270,36 @@ class IATO_MCP_Auth {
 		$key = wp_generate_password( 32, false );
 		update_option( 'iato_mcp_key', sanitize_text_field( $key ) );
 		self::bind_key_owner( function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0 );
+		// OAuth connections made before 1.13.0 held the old key; a new key is
+		// the only thing that invalidates them, so the flags that say "pre-1.13.0
+		// connections may still hold the key" (Diagnostics badge, Settings hint,
+		// upgrade notice) are cleared here and nowhere else.
+		delete_option( 'iato_mcp_oauth_legacy_key' );
+		delete_option( 'iato_mcp_oauth_legacy_notice' );
 		return $key;
 	}
 
 	/**
 	 * Permission callback for the MCP REST route.
 	 *
-	 * Accepts two auth paths: plugin Bearer token or WordPress Application Password
+	 * Accepts three auth paths: plugin Bearer token, OAuth access token (also a
+	 * Bearer header, recognised by its prefix) or WordPress Application Password
 	 * (Basic auth, already validated by WP core's determine_current_user filter chain).
 	 *
 	 * @param WP_REST_Request $request Incoming request.
 	 * @return true|WP_Error
 	 */
 	public static function authenticate( WP_REST_Request $request ): bool|WP_Error {
+		$header = $request->get_header( 'Authorization' );
+		$bearer = ( $header && 0 === strncasecmp( $header, 'Bearer ', 7 ) ) ? substr( $header, 7 ) : null;
+
+		// OAuth access tokens never equal the site key and carry their own
+		// user, so they are resolved before the site-key configuration check:
+		// an OAuth client keeps working even if the key option were empty.
+		if ( null !== $bearer && str_starts_with( $bearer, self::OAUTH_ACCESS_PREFIX ) ) {
+			return self::authenticate_oauth_token( $bearer );
+		}
+
 		$stored_key = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
 
 		if ( '' === $stored_key ) {
@@ -238,12 +310,11 @@ class IATO_MCP_Auth {
 			);
 		}
 
-		$header = $request->get_header( 'Authorization' );
-
-		if ( $header && 0 === strncasecmp( $header, 'Bearer ', 7 ) ) {
-			$provided_key = substr( $header, 7 );
+		if ( null !== $bearer ) {
+			$provided_key = $bearer;
 
 			if ( ! hash_equals( $stored_key, $provided_key ) ) {
+				self::$token_refused = true;
 				return new WP_Error(
 					'iato_mcp_unauthorized',
 					__( 'Invalid API key.', 'iato-mcp' ),
@@ -252,7 +323,7 @@ class IATO_MCP_Auth {
 			}
 
 			// Token binding: run the request as the key's owner. This is the one
-			// place the current user is set for Bearer / OAuth requests.
+			// place the current user is set for site-key requests.
 			$owner_id = self::key_owner_id();
 
 			if ( 0 === $owner_id ) {
@@ -262,17 +333,18 @@ class IATO_MCP_Auth {
 				self::$authenticated        = true;
 				self::$legacy_unbound       = true;
 				self::$site_key_full_access = true;
+				self::$credential           = [ 'kind' => 'site_key', 'user_id' => 0 ];
 				return true;
 			}
 
-			$owner = get_user_by( 'id', $owner_id );
-			if ( ! $owner || ! $owner->exists() ) {
+			$admin = self::administrator_state( $owner_id );
+			if ( 'missing' === $admin['state'] ) {
 				$message = __( 'The WordPress user who owns this IATO MCP key no longer exists. Assign a new owner or regenerate the key under Settings > IATO MCP.', 'iato-mcp' );
 				self::log_rejection( 'iato_mcp_owner_missing', $message, $owner_id );
 				return new WP_Error( 'iato_mcp_owner_missing', $message, [ 'status' => 403 ] );
 			}
-
-			if ( ! user_can( $owner, self::OWNER_CAP ) ) {
+			$owner = $admin['user'];
+			if ( 'demoted' === $admin['state'] ) {
 				$message = sprintf(
 					/* translators: 1: user login, 2: capability name */
 					__( 'The owner of this IATO MCP key (%1$s) no longer has the %2$s capability. Assign an administrator as owner or regenerate the key under Settings > IATO MCP.', 'iato-mcp' ),
@@ -283,13 +355,8 @@ class IATO_MCP_Auth {
 				return new WP_Error( 'iato_mcp_owner_demoted', $message, [ 'status' => 403 ] );
 			}
 
-			// Deny unfiltered_html before the user switch so kses_init() (which
-			// re-runs on set_current_user) keeps WordPress' content filters on.
-			self::lock_unfiltered_html();
-			wp_set_current_user( $owner->ID );
-
-			self::$authenticated      = true;
-			self::$authenticated_user = $owner;
+			self::run_as( $owner );
+			self::$credential = [ 'kind' => 'site_key', 'user_id' => (int) $owner->ID ];
 			return true;
 		}
 
@@ -307,6 +374,7 @@ class IATO_MCP_Auth {
 			if ( $user && $user->exists() && user_can( $user, 'edit_posts' ) ) {
 				self::$authenticated      = true;
 				self::$authenticated_user = $user;
+				self::$credential         = [ 'kind' => 'application_password', 'user_id' => (int) $user->ID ];
 				return true;
 			}
 
@@ -325,30 +393,104 @@ class IATO_MCP_Auth {
 	}
 
 	/**
+	 * Run the rest of the request as an administrator (bound site key or
+	 * OAuth token). Denies unfiltered_html before the user switch so
+	 * kses_init() (which re-runs on set_current_user) keeps WordPress'
+	 * content filters on, exactly as they were for user 0.
+	 */
+	private static function run_as( WP_User $user ): void {
+		self::lock_unfiltered_html();
+		wp_set_current_user( $user->ID );
+		self::$authenticated      = true;
+		self::$authenticated_user = $user;
+	}
+
+	/**
+	 * OAuth access token path (1.13.0). The token row must be an unexpired,
+	 * unrevoked access token and its approving user must still be an
+	 * administrator. Every refusal is a 401 so a well-behaved client tries
+	 * its refresh token, which fails with invalid_grant for a dead grant and
+	 * sends the user back to consent.
+	 */
+	private static function authenticate_oauth_token( string $token ): bool|WP_Error {
+		$refuse = function ( string $message, int $user_id = 0, ?string $log_code = null, array $log_args = [] ): WP_Error {
+			self::$token_refused = true;
+			if ( null !== $log_code ) {
+				self::log_rejection( $log_code, $message, $user_id, $log_args );
+			}
+			return new WP_Error( 'iato_mcp_unauthorized', $message, [ 'status' => 401 ] );
+		};
+
+		if ( ! class_exists( 'IATO_MCP_OAuth_Store' ) ) {
+			return $refuse( __( 'Invalid or expired access token.', 'iato-mcp' ) );
+		}
+
+		$hash = hash( 'sha256', $token );
+		if ( ! array_key_exists( $hash, self::$oauth_token_cache ) ) {
+			self::$oauth_token_cache[ $hash ] = IATO_MCP_OAuth_Store::instance()->find_token( $hash );
+		}
+		$row = self::$oauth_token_cache[ $hash ];
+		$now = time();
+		$ts  = gmdate( 'Y-m-d H:i:s', $now );
+
+		if ( null === $row || 'access' !== ( $row['kind'] ?? '' ) ) {
+			return $refuse( __( 'Invalid or expired access token.', 'iato-mcp' ) );
+		}
+		// The grant row is the authority: a token issued under a revoked grant
+		// is refused whenever it was created, and a token with no grant row at
+		// all is refused the same way.
+		if ( ( class_exists( 'IATO_MCP_OAuth' ) && IATO_MCP_OAuth::grant_is_dead( $row ) ) || null !== $row['revoked_at'] ) {
+			return $refuse( __( 'This access token has been revoked. Reconnect the application.', 'iato-mcp' ) );
+		}
+		if ( (string) $row['expires_at'] <= $ts ) {
+			return $refuse( __( 'Access token expired. Refresh the token or reconnect the application.', 'iato-mcp' ) );
+		}
+
+		$user_id = (int) $row['user_id'];
+		$admin   = self::administrator_state( $user_id );
+		$args    = [ 'client_id' => (string) $row['client_id'], 'grant_id' => (string) $row['grant_id'] ];
+		if ( 'ok' !== $admin['state'] ) {
+			IATO_MCP_OAuth_Store::instance()->revoke_grant( (string) $row['grant_id'], $ts, 'user_' . $admin['state'] );
+			self::$oauth_token_cache[ $hash ]['revoked_at'] = $ts;
+			if ( 'missing' === $admin['state'] ) {
+				$message = __( 'The WordPress user who approved this connection no longer exists. The connection has been revoked; an administrator must approve it again.', 'iato-mcp' );
+				return $refuse( $message, $user_id, 'iato_mcp_token_user_missing', $args );
+			}
+			$message = sprintf(
+				/* translators: 1: user login, 2: capability name */
+				__( 'The WordPress user who approved this connection (%1$s) no longer has the %2$s capability. The connection has been revoked; an administrator must approve it again.', 'iato-mcp' ),
+				$admin['user']->user_login,
+				self::OWNER_CAP
+			);
+			return $refuse( $message, $user_id, 'iato_mcp_token_user_demoted', $args );
+		}
+
+		self::run_as( $admin['user'] );
+		self::$credential = [ 'kind' => 'oauth', 'user_id' => $user_id ] + $args;
+
+		// "Last used" for the Settings screen, written at most once a minute.
+		$last = (string) ( $row['last_used_at'] ?? '' );
+		if ( '' === $last || ( strtotime( $last . ' UTC' ) ?: 0 ) + 60 <= $now ) {
+			IATO_MCP_OAuth_Store::instance()->touch_last_used( (int) $row['id'], $ts );
+			self::$oauth_token_cache[ $hash ]['last_used_at'] = $ts;
+		}
+		return true;
+	}
+
+	/**
 	 * Assert the current request has permission for the given capability.
 	 *
-	 * Capability model (v1.10.0):
+	 * Capability model (v1.10.0, token binding v1.12, OAuth tokens v1.13):
 	 *
-	 *   - Bearer plugin key (self::$authenticated_user is null): returns true
-	 *     for any cap. Documented as full administrative access — the plugin
-	 *     key is admin-issued and the threat model is "only admins should
-	 *     possess it." Security comes from key issuance, not per-tool checks.
+	 *   - Unbound site key (self::$site_key_full_access): returns true for
+	 *     any cap. Documented as full administrative access — the plugin key
+	 *     is admin-issued and the threat model is "only admins should possess
+	 *     it." Security comes from key issuance, not per-tool checks.
 	 *
-	 *   - Application Password (self::$authenticated_user is the WP_User):
-	 *     calls user_can($user, $cap). Returns true if the user has the cap,
-	 *     WP_Error 403 otherwise. This is the per-user capability enforcement
-	 *     that prior versions deferred — see the v1.10.0 plan.
+	 *   - Bound site key, OAuth token, Application Password
+	 *     (self::$authenticated_user is the WP_User): calls user_can($user,
+	 *     $cap). Returns true if the user has the cap, WP_Error 403 otherwise.
 	 *
-	 * OAuth-issued tokens currently flow through the Bearer plugin-key path
-	 * because OAuth's access_token IS the plugin key (Known Issue KI-1).
-	 * They therefore receive full admin access regardless of the WP user who
-	 * authorized the OAuth flow. Fixing that requires per-user OAuth token
-	 * issuance — separate cycle.
-	 *
-	 * @param string $cap WordPress capability string.
-	 * @return true|WP_Error
-	 */
-	/**
 	 * @param string $cap     Capability (primitive or meta capability such as edit_post).
 	 * @param mixed  ...$args Object arguments forwarded to user_can() for meta
 	 *                        capabilities (e.g. the post ID for edit_post). The

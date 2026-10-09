@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 1.12.1
+Stable tag: 1.13.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -127,7 +127,7 @@ Any MCP-enabled client: Claude Desktop, Cursor, VS Code with GitHub Copilot, and
 
 = How does authentication work? =
 
-The plugin generates a secure API key on activation. You can authenticate in two ways: paste the provided Bearer token config into your AI client, or use Claude Desktop's "Add Custom Connector" flow which handles OAuth 2.0 with PKCE automatically.
+The plugin generates a secure API key on activation. You can authenticate in two ways: paste the provided Bearer token config into your AI client, or use Claude's "Add custom connector" flow, which handles OAuth 2.1 with PKCE automatically. Each OAuth connection gets its own expiring token, acts as the administrator who approved it, and can be revoked on its own under Settings > IATO MCP > Connected OAuth clients.
 
 = Why does the plugin support two auth methods? =
 
@@ -153,6 +153,14 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.13.0 =
+* Security: OAuth connections (the Claude connector, Claude Code, Cursor and other MCP clients) now receive their own tokens. The authorization code is random and single use (5 minutes); the access token expires after 1 hour and is renewed with a rotating refresh token (30 days); a connection expires after 180 days unless it is approved again (filter: iato_mcp_oauth_grant_lifetime). Tokens are stored hashed. Before this release the OAuth code and the access token were the site's API key itself.
+* Security: each OAuth connection acts as the administrator who approved it and is re-checked on every request. Deleting or demoting that user revokes the connection. Approving a connection no longer assigns the site's API key to the approving user.
+* New: Settings > IATO MCP lists connected OAuth clients (application, approving user, connected, last used) with a Revoke button per connection and a Disconnect all button, and the plugin serves a token revocation endpoint at /oauth/revoke. Revoking connections does not affect the API key.
+* Security: dynamic client registration accepts https redirect URIs only (plain http only to localhost, 127.0.0.1 or [::1], any port), stores the application name, is rate-limited (10 per IP per 10 minutes, 100 per site per hour; filter: iato_mcp_oauth_registration_limits), and removes registrations that never complete an authorization after 24 hours or have had no live connection for 30 days.
+* Security: PKCE (S256) is required at /oauth/authorize; the resource parameter (RFC 8707) is checked; the authorization response carries iss (RFC 9207); the consent screen shows the application name, the host it will send you back to, and the user the connection will act as, and its approval is bound to that exact request. Logged-in users who are not administrators get a clear "administrators only" page. Follows the MCP authorization specification revision 2026-07-28. Client ID Metadata Documents ("Use Claude's published identity") are not supported yet; Claude falls back to dynamic registration on its own.
+* Note on upgrade: OAuth connections made before 1.13.0 keep working (they hold the API key) but cannot be revoked individually. An admin notice explains how to move them to their own tokens (remove and re-add the connector in the AI client) and that regenerating the API key disconnects all of them; Settings and Diagnostics keep pointing this out until the key is regenerated. An authorization that was in progress during the upgrade has to be started again.
 
 = 1.12.1 =
 * Security: write tools now check permission on the specific post, page, term, or attachment being changed, and publishing requires publish rights.

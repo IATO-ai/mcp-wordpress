@@ -265,6 +265,10 @@ class IATO_MCP_Settings {
 		add_action( 'admin_post_iato_mcp_assign_key_owner', [ self::class, 'handle_assign_key_owner' ] );
 		add_action( 'admin_post_iato_mcp_dismiss_owner_notice', [ self::class, 'dismiss_owner_notice' ] );
 		add_action( 'admin_notices', [ self::class, 'key_owner_notice' ] );
+		add_action( 'admin_post_iato_mcp_oauth_revoke', [ self::class, 'handle_oauth_revoke' ] );
+		add_action( 'admin_post_iato_mcp_oauth_revoke_all', [ self::class, 'handle_oauth_revoke_all' ] );
+		add_action( 'admin_post_iato_mcp_dismiss_oauth_notice', [ self::class, 'dismiss_oauth_notice' ] );
+		add_action( 'admin_notices', [ self::class, 'oauth_legacy_notice' ] );
 		add_action( 'wp_ajax_iato_mcp_test_api_key', [ self::class, 'ajax_test_api_key' ] );
 		add_action( 'wp_ajax_iato_mcp_save_settings', [ self::class, 'ajax_save_settings' ] );
 	}
@@ -771,7 +775,7 @@ class IATO_MCP_Settings {
 								<button type="button" class="iato-reveal-btn" data-target="iato-mcp-key" title="<?php esc_attr_e( 'Show/hide key', 'iato-mcp' ); ?>">
 									<span class="dashicons dashicons-visibility"></span>
 								</button>
-								<a href="<?php echo esc_url( $regenerate_url ); ?>" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Regenerate key? Existing clients will need the new key.', 'iato-mcp' ) ); ?>');">
+								<a href="<?php echo esc_url( $regenerate_url ); ?>" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Regenerate key? Existing clients will need the new key. OAuth connections made before version 1.13.0 will also stop working; connections listed under Connected OAuth clients are not affected.', 'iato-mcp' ) ); ?>');">
 									<span class="dashicons dashicons-update"></span>
 									<?php esc_html_e( 'Regenerate', 'iato-mcp' ); ?>
 								</a>
@@ -1072,6 +1076,8 @@ class IATO_MCP_Settings {
 					<?php submit_button( __( 'Save Settings', 'iato-mcp' ), 'primary large', 'submit', false ); ?>
 				</div>
 			</form>
+
+			<?php self::render_oauth_clients_card(); ?>
 		</div>
 
 		<?php
@@ -1226,6 +1232,38 @@ class IATO_MCP_Settings {
 				font-size: 13px;
 				margin: -12px 0 20px;
 			}
+
+			/* ── Connected OAuth clients ───────────────────── */
+			.iato-table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 13px;
+			}
+			.iato-table th {
+				text-align: left;
+				padding: 8px 10px;
+				border-bottom: 2px solid var(--iato-border);
+				color: var(--iato-text-secondary);
+				font-size: 12px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.4px;
+			}
+			.iato-table td {
+				padding: 10px;
+				border-bottom: 1px solid var(--iato-border);
+				vertical-align: middle;
+				color: var(--iato-text);
+			}
+			.iato-table td small {
+				display: block;
+				color: var(--iato-text-secondary);
+				font-family: JetBrains Mono, monospace;
+				font-size: 11px;
+				margin-top: 2px;
+			}
+			.iato-table form { margin: 0; }
+			.iato-table .iato-btn { padding: 6px 12px; font-size: 12px; }
 
 			/* ── Badges ────────────────────────────────────────── */
 			.iato-badge {
@@ -2208,6 +2246,193 @@ JS;
 		set_transient( 'settings_errors', get_settings_errors(), 30 );
 
 		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	// ── Connected OAuth clients (1.13.0) ─────────────────────────────────
+
+	/**
+	 * One row per live OAuth grant with a Revoke button. Each button is its
+	 * own POST form to admin-post.php; the General tab's settings form is
+	 * closed before this card so forms do not nest.
+	 */
+	public static function render_oauth_clients_card(): void {
+		if ( ! class_exists( 'IATO_MCP_OAuth_Store' ) || ! class_exists( 'IATO_MCP_OAuth' ) ) {
+			return;
+		}
+		$grants = IATO_MCP_OAuth_Store::instance()->list_active_grants( gmdate( 'Y-m-d H:i:s' ) );
+		// Set by the 1.13.0 migration when OAuth clients existed; cleared only by
+		// Regenerate (the notice flag is separate and only hides the notice).
+		$legacy = (bool) get_option( 'iato_mcp_oauth_legacy_key', false );
+		?>
+		<div class="iato-card" id="iato-oauth-clients">
+			<div class="iato-card-header">
+				<div class="iato-card-title">
+					<span class="dashicons dashicons-admin-links"></span>
+					<h2><?php esc_html_e( 'Connected OAuth clients', 'iato-mcp' ); ?></h2>
+				</div>
+				<span class="iato-badge <?php echo empty( $grants ) ? 'iato-badge--neutral' : 'iato-badge--success'; ?>">
+					<?php
+					/* translators: %d: number of connected clients */
+					echo esc_html( sprintf( _n( '%d connected', '%d connected', count( $grants ), 'iato-mcp' ), count( $grants ) ) );
+					?>
+				</span>
+			</div>
+			<p class="iato-card-desc"><?php esc_html_e( 'AI clients that connected through OAuth (for example the Claude connector). Each one holds its own token, acts as the administrator who approved it, and can be revoked here without affecting the other connections or the API key above.', 'iato-mcp' ); ?></p>
+
+			<?php if ( empty( $grants ) ) : ?>
+				<p class="iato-hint"><?php esc_html_e( 'No OAuth clients are connected.', 'iato-mcp' ); ?></p>
+			<?php else : ?>
+				<table class="iato-table">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Client', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Acts as', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Connected', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Last used', 'iato-mcp' ); ?></th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+					<?php foreach ( $grants as $g ) : ?>
+						<?php
+						$user  = $g['user_id'] > 0 ? get_user_by( 'id', $g['user_id'] ) : false;
+						$name  = '' !== $g['client_name'] ? $g['client_name'] : $g['client_id'];
+						$host  = IATO_MCP_OAuth::redirect_host( $g['redirect_uri'] );
+						$since = IATO_MCP_OAuth::format_local( $g['connected_at'] );
+						$last  = '' !== (string) $g['last_used_at'] ? IATO_MCP_OAuth::format_local( (string) $g['last_used_at'] ) : '';
+						?>
+						<tr>
+							<td>
+								<?php echo esc_html( $name ); ?>
+								<?php if ( '' !== $host ) : ?><small><?php echo esc_html( $host ); ?></small><?php endif; ?>
+							</td>
+							<td>
+								<?php if ( $user && $user->exists() ) : ?>
+									<?php echo esc_html( $user->display_name ); ?> <small><?php echo esc_html( $user->user_login ); ?></small>
+								<?php else : ?>
+									<span class="iato-badge iato-badge--danger"><?php printf( /* translators: %d: user ID */ esc_html__( 'deleted user #%d', 'iato-mcp' ), (int) $g['user_id'] ); ?></span>
+								<?php endif; ?>
+							</td>
+							<td><?php echo esc_html( $since ); ?></td>
+							<td><?php echo '' !== $last ? esc_html( $last ) : esc_html__( 'Never', 'iato-mcp' ); ?></td>
+							<td style="text-align:right;">
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+									<input type="hidden" name="action" value="iato_mcp_oauth_revoke" />
+									<input type="hidden" name="grant_id" value="<?php echo esc_attr( $g['grant_id'] ); ?>" />
+									<?php wp_nonce_field( 'iato_mcp_oauth_revoke_' . $g['grant_id'] ); ?>
+									<button type="submit" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Revoke this connection? The client will have to connect and be approved again.', 'iato-mcp' ) ); ?>');">
+										<span class="dashicons dashicons-no"></span>
+										<?php esc_html_e( 'Revoke', 'iato-mcp' ); ?>
+									</button>
+								</form>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:14px;text-align:right;">
+					<input type="hidden" name="action" value="iato_mcp_oauth_revoke_all" />
+					<?php wp_nonce_field( 'iato_mcp_oauth_revoke_all' ); ?>
+					<button type="submit" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Disconnect every OAuth client? Each one will have to connect and be approved again. The API key is not affected.', 'iato-mcp' ) ); ?>');">
+						<span class="dashicons dashicons-dismiss"></span>
+						<?php esc_html_e( 'Disconnect all', 'iato-mcp' ); ?>
+					</button>
+				</form>
+			<?php endif; ?>
+
+			<?php if ( $legacy ) : ?>
+				<p class="iato-hint" style="margin-top:12px;"><?php esc_html_e( 'Connections made before version 1.13.0 use the API key above and are not listed here. To move one to its own token, remove the connector in the AI client and add it again. Regenerating the API key disconnects all of them at once.', 'iato-mcp' ); ?></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Revoke one OAuth grant (admin-post, nonce per grant, manage_options).
+	 */
+	public static function handle_oauth_revoke(): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the nonce is checked on the next line; it is keyed by this value.
+		$grant_id = isset( $_POST['grant_id'] ) ? sanitize_text_field( wp_unslash( $_POST['grant_id'] ) ) : '';
+		check_admin_referer( 'iato_mcp_oauth_revoke_' . $grant_id );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+
+		$revoked = IATO_MCP_OAuth::revoke_grant_by_admin( $grant_id, (int) get_current_user_id(), time() );
+		if ( $revoked ) {
+			add_settings_error( 'iato_mcp_oauth', 'iato_mcp_oauth_revoked', __( 'The connection has been revoked. The client will be asked to connect again.', 'iato-mcp' ), 'updated' );
+		} else {
+			add_settings_error( 'iato_mcp_oauth', 'iato_mcp_oauth_revoke_noop', __( 'That connection was already revoked or had expired.', 'iato-mcp' ), 'error' );
+		}
+		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	/**
+	 * Revoke every live OAuth grant (admin-post, nonce, manage_options).
+	 */
+	public static function handle_oauth_revoke_all(): void {
+		check_admin_referer( 'iato_mcp_oauth_revoke_all' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+
+		$n = IATO_MCP_OAuth::revoke_all_grants_by_admin( (int) get_current_user_id(), time() );
+		if ( $n > 0 ) {
+			add_settings_error(
+				'iato_mcp_oauth',
+				'iato_mcp_oauth_revoked_all',
+				sprintf(
+					/* translators: %d: number of connections revoked */
+					_n( '%d OAuth connection has been revoked. The client will be asked to connect again.', '%d OAuth connections have been revoked. Each client will be asked to connect again.', $n, 'iato-mcp' ),
+					$n
+				),
+				'updated'
+			);
+		} else {
+			add_settings_error( 'iato_mcp_oauth', 'iato_mcp_oauth_revoke_all_noop', __( 'There were no live OAuth connections to revoke.', 'iato-mcp' ), 'error' );
+		}
+		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	/**
+	 * One-time notice after upgrading from a release where OAuth handed out
+	 * the site key: those connections cannot be revoked individually. Set by
+	 * the 1.13.0 migration, dismissed site-wide (deletes the notice flag only;
+	 * iato_mcp_oauth_legacy_key keeps driving the Settings hint and the
+	 * Diagnostics badge until the key is regenerated).
+	 */
+	public static function oauth_legacy_notice(): void {
+		if ( ! current_user_can( 'manage_options' ) || ! get_option( 'iato_mcp_oauth_legacy_notice', false ) ) {
+			return;
+		}
+		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
+		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_oauth_notice' ), 'iato_mcp_dismiss_oauth_notice' );
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<strong><?php esc_html_e( 'IATO MCP:', 'iato-mcp' ); ?></strong>
+				<?php esc_html_e( 'AI clients connected through OAuth before version 1.13.0 hold this site\'s MCP API key and cannot be revoked individually. To move a client to its own revocable token, remove the connector in the AI client and add it again. Once every OAuth client has been reconnected, regenerate the API key to invalidate the old copies. Regenerating also breaks any Bearer-header configuration that uses the current key.', 'iato-mcp' ); ?>
+				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Open settings', 'iato-mcp' ); ?></a>
+				&nbsp;|&nbsp;<a href="<?php echo esc_url( $dismiss_url ); ?>"><?php esc_html_e( 'Dismiss', 'iato-mcp' ); ?></a>
+			</p>
+		</div>
+		<?php
+	}
+
+	public static function dismiss_oauth_notice(): void {
+		check_admin_referer( 'iato_mcp_dismiss_oauth_notice' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		delete_option( 'iato_mcp_oauth_legacy_notice' );
+		wp_safe_redirect( wp_get_referer() ?: admin_url() );
 		exit;
 	}
 

@@ -103,10 +103,14 @@ class IATO_MCP_Server {
 
 		if ( 401 === $response->get_status() ) {
 			$resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
-			$response->header(
-				'WWW-Authenticate',
-				'Bearer resource_metadata="' . esc_url_raw( $resource_metadata_url ) . '"'
-			);
+			$challenge             = 'Bearer resource_metadata="' . esc_url_raw( $resource_metadata_url ) . '"';
+			// RFC 6750 §3.1: a presented-but-refused token (expired or revoked
+			// OAuth token, wrong site key) is reported as invalid_token, which
+			// is what tells an OAuth client to refresh or re-authorize.
+			if ( class_exists( 'IATO_MCP_Auth' ) && IATO_MCP_Auth::token_was_refused() ) {
+				$challenge .= ', error="invalid_token"';
+			}
+			$response->header( 'WWW-Authenticate', $challenge );
 		}
 
 		return $response;

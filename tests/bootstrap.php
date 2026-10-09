@@ -91,6 +91,9 @@ require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-abilities.php';
 require_once IATO_MCP_DIR . 'includes/class-auth.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth-store.php';
+require_once __DIR__ . '/stubs-oauth.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 
 /** Load a fixture file as the decoded element list (same shape decode_data() returns). */
 function iato_test_fixture( string $name ): array {

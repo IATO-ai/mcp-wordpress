@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.12.1
+ * Version:     1.13.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.12.1' );
+define( 'IATO_MCP_VERSION', '1.13.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -57,6 +57,7 @@ require_once IATO_MCP_DIR . 'includes/class-meta-policy.php';
 require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth-store.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
 require_once IATO_MCP_DIR . 'includes/tools-selection.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
@@ -133,6 +134,10 @@ function iato_mcp_init() {
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
 
+// A deleted administrator's OAuth connections die with the account. (A
+// demoted administrator is caught lazily on the next request or refresh.)
+add_action( 'deleted_user', [ 'IATO_MCP_OAuth', 'on_deleted_user' ], 10, 1 );
+
 // Cron handler for create_media's defer_subsizes path. Generates the
 // intermediate sizes asynchronously so the synchronous MCP response can return
 // before wp_generate_attachment_metadata runs (which can take many seconds on
@@ -173,13 +178,62 @@ function iato_mcp_maybe_run_migrations() {
 		}
 	}
 
+	// 1.13.0: OAuth issues per-client tokens from its own tables. Clients
+	// registered under the option-based storage are carried over (marked as
+	// authorized so the pending-client pruning leaves them alone); the global
+	// PKCE transient is gone. Sites that had OAuth clients get a one-time
+	// notice: those connections hold the site key and cannot be revoked
+	// individually (IATO_MCP_Settings::oauth_legacy_notice). Must run before
+	// the generic block below, which bumps the stored version.
+	if ( version_compare( $db_version, '1.13.0', '<' ) && class_exists( 'IATO_MCP_OAuth_Store' ) ) {
+		IATO_MCP_OAuth_Store::create_tables();
+		$legacy_clients = get_option( 'iato_mcp_oauth_clients', [] );
+		if ( is_array( $legacy_clients ) && ! empty( $legacy_clients ) ) {
+			$store = IATO_MCP_OAuth_Store::instance();
+			foreach ( $legacy_clients as $client_id => $client ) {
+				$client_id = sanitize_text_field( (string) $client_id );
+				if ( '' === $client_id || ! is_array( $client ) || null !== $store->find_client( $client_id ) ) {
+					continue;
+				}
+				$uris = array_values( array_filter( (array) ( $client['redirect_uris'] ?? [] ), 'is_string' ) );
+				$when = gmdate( 'Y-m-d H:i:s', (int) ( $client['created'] ?? time() ) );
+				$store->insert_client( [
+					'client_id'       => substr( $client_id, 0, 64 ),
+					'client_name'     => mb_substr( sanitize_text_field( (string) ( $client['client_name'] ?? '' ) ), 0, 100 ),
+					'redirect_uris'   => $uris,
+					'registration_ip' => null,
+					'created_at'      => $when,
+					'authorized_at'   => $when,
+				] );
+			}
+			// Two flags: the notice (dismissible) and the fact that pre-1.13.0
+			// connections may still hold the key (cleared only by Regenerate).
+			update_option( 'iato_mcp_oauth_legacy_notice', '1', false );
+			update_option( 'iato_mcp_oauth_legacy_key', '1', false );
+		}
+		delete_option( 'iato_mcp_oauth_clients' );
+		delete_transient( 'iato_mcp_oauth_pkce' );
+	}
+
 	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
-		// Idempotent dbDelta call so upgraded installs (where the activation
-		// hook didn't fire) pick up new tables on first load after update.
+		// Idempotent dbDelta calls so upgraded installs (where the activation
+		// hook didn't fire) pick up new tables and columns on first load after
+		// update.
 		if ( class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
 			IATO_MCP_Media_Phase_Log::create_table();
 		}
+		if ( class_exists( 'IATO_MCP_OAuth_Store' ) ) {
+			IATO_MCP_OAuth_Store::create_tables();
+		}
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
+	}
+
+	// One-shot for sites that ran the first 1.13.0 build (no grants table yet):
+	// create it and derive a grant row for every grant_id in the token table.
+	if ( ! get_option( 'iato_mcp_oauth_grants_backfilled' ) && class_exists( 'IATO_MCP_OAuth_Store' ) ) {
+		IATO_MCP_OAuth_Store::create_tables();
+		IATO_MCP_OAuth_Store::backfill_grants();
+		update_option( 'iato_mcp_oauth_grants_backfilled', '1', false );
 	}
 
 	// One-shot repair for sites hit by the "bridge tools saved as off" bug: a
@@ -476,6 +530,7 @@ function iato_mcp_activate() {
 	IATO_MCP_Change_Receipt::create_table();
 	IATO_MCP_Call_Log::create_table();
 	IATO_MCP_Media_Phase_Log::create_table();
+	IATO_MCP_OAuth_Store::create_tables();
 	update_option( 'iato_mcp_show_wizard', true );
 
 	// Clear stale suggestion generation transients so a fresh install/update
@@ -493,7 +548,6 @@ register_activation_hook( __FILE__, 'iato_mcp_activate' );
  * Options are preserved for reactivation; full cleanup is in uninstall.php.
  */
 function iato_mcp_deactivate() {
-	delete_transient( 'iato_mcp_oauth_pkce' );
 	delete_transient( 'iato_mcp_dashboard_data' );
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

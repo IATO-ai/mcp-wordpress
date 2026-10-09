@@ -22,7 +22,6 @@ if [ "${1:-}" = "--cleanup" ]; then
 		while IFS=, read -r uuid name; do case "$name" in live-*) W wp user application-password delete "$u" "$uuid" >/dev/null && echo "deleted $u $name";; esac; done < /tmp/iato-ap.csv
 	done
 	rm -f /tmp/iato-ap.csv
-	W wp eval '$c = get_option("iato_mcp_oauth_clients", []); $c = array_filter($c, fn($v) => ($v["client_name"] ?? "") !== "secpatch"); update_option("iato_mcp_oauth_clients", $c); delete_transient("iato_mcp_oauth_pkce"); echo "oauth clients left: " . count($c) . "\n";'
 	echo "cleanup done"
 	exit 0
 fi

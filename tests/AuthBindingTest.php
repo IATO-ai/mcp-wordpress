@@ -25,7 +25,7 @@ final class AuthBindingTest extends TestCase {
 
 	private function reset_auth_statics(): void {
 		$ref = new ReflectionClass( IATO_MCP_Auth::class );
-		foreach ( [ 'authenticated' => false, 'authenticated_user' => null, 'legacy_unbound' => false, 'kses_locked' => false, 'rejection_logged' => false, 'site_key_full_access' => false ] as $name => $value ) {
+		foreach ( [ 'authenticated' => false, 'authenticated_user' => null, 'legacy_unbound' => false, 'kses_locked' => false, 'rejection_logged' => false, 'site_key_full_access' => false, 'credential' => [], 'token_refused' => false, 'oauth_token_cache' => [] ] as $name => $value ) {
 			if ( $ref->hasProperty( $name ) ) {
 				$ref->getProperty( $name )->setValue( null, $value );
 			}
@@ -67,8 +67,12 @@ final class AuthBindingTest extends TestCase {
 	public function test_rotate_key_rebinds_to_the_rotating_user(): void {
 		self::bind( 5 );
 		IATO_Test_Auth_State::$current_user_id = 1;
+		IATO_Test_Abilities_State::$options['iato_mcp_oauth_legacy_key']    = '1';
+		IATO_Test_Abilities_State::$options['iato_mcp_oauth_legacy_notice'] = '1';
 		IATO_MCP_Auth::rotate_key();
 		$this->assertSame( 1, IATO_MCP_Auth::key_owner_id() );
+		$this->assertArrayNotHasKey( 'iato_mcp_oauth_legacy_key', IATO_Test_Abilities_State::$options, 'a new key is what invalidates pre-1.13.0 OAuth connections' );
+		$this->assertArrayNotHasKey( 'iato_mcp_oauth_legacy_notice', IATO_Test_Abilities_State::$options );
 	}
 
 	public function test_bind_key_owner_helper_logs_every_change(): void {

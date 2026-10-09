@@ -1,5 +1,7 @@
 # Sprint C0 handover: token binding (Part 1) and the "bridge tools saved as off" fix (Part 2)
 
+> Superseded in part by 1.13.0: OAuth consent no longer binds the site key; OAuth connections get their own tokens (see CLAUDE.md, "OAuth server"). `tests/wp-env/oauth-consent-check.sh` was replaced by `tests/wp-env/oauth-live.sh`.
+
 Date: 2026-10-07. Two branches, nothing committed by me:
 - **Part 1** staged on `feat/token-user-binding` (off `feat/abilities-registration` at `7bc4592`).
 - **Part 2** staged on `feat/settings-tools-fix`, a separate git worktree at `../mcp-wordpress-part2` based on the Sprint B commit (a branch cannot be taken off an uncommitted tree while that tree stays staged elsewhere). Its handover is `docs/sprint-c0-part2-handover.md` on that branch. Part 2's patch applies cleanly on top of Part 1 (verified: applied for the live checks, 78 tests green, reverted).

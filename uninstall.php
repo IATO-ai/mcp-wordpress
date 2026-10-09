@@ -19,7 +19,10 @@ delete_option( 'iato_mcp_tools' );
 delete_option( 'iato_mcp_bridge_tools_repaired' );
 delete_option( 'iato_mcp_show_wizard' );
 delete_option( 'iato_mcp_wizard_dismissed' );
-delete_option( 'iato_mcp_oauth_clients' );
+delete_option( 'iato_mcp_oauth_clients' ); // pre-1.13.0 storage; kept in case the migration never ran
+delete_option( 'iato_mcp_oauth_legacy_notice' );
+delete_option( 'iato_mcp_oauth_legacy_key' );
+delete_option( 'iato_mcp_oauth_grants_backfilled' );
 delete_option( 'iato_mcp_workspace_id' );
 delete_option( 'iato_mcp_setup_complete' );
 delete_option( 'iato_mcp_wizard_step' );
@@ -33,10 +36,19 @@ delete_option( 'iato_mcp_media_max_upload_size' );
 delete_option( 'iato_mcp_media_upload_rate_limit' );
 
 // Transients.
-delete_transient( 'iato_mcp_oauth_pkce' );
+delete_transient( 'iato_mcp_oauth_pkce' ); // pre-1.13.0
 
-// Drop change receipts + call log tables.
+// Drop change receipts, call log and OAuth tables.
 global $wpdb;
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_mcp_oauth_tokens" );
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_mcp_oauth_clients" );
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_mcp_oauth_grants" );
+// OAuth registration rate-limit counters.
+// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Uninstall bulk delete of our own transient keys; delete_transient() cannot do pattern matching.
+$wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_iato_mcp_oauth_reg_%' OR option_name LIKE '_transient_timeout_iato_mcp_oauth_reg_%'" );
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}iato_change_receipts" );
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall cleanup: drop our own custom tables.
