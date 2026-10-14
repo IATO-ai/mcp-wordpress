@@ -63,6 +63,49 @@ final class IATO_Test_WP {
 	public static array $posts = [];
 	/** @var array<int,array{0:int,1:string,2:mixed}> every update_post_meta() call, in order */
 	public static array $writes = [];
+	/** @var array<int,array{0:string,1:int}> (meta key, number of live elementor meta hooks) at each update_post_meta() call */
+	public static array $hooks_at_write = [];
+
+	// ── $wp_filter model for IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing() ──
+	public static function reset_hooks(): void {
+		$GLOBALS['wp_filter'] = [];
+		self::$hooks_at_write = [];
+	}
+	public static function add_hook( string $hook, callable $fn, int $priority = 10, int $args = 1 ): void {
+		$GLOBALS['wp_filter'][ $hook ] ??= new WP_Hook();
+		$GLOBALS['wp_filter'][ $hook ]->callbacks[ $priority ][ 'cb' . count( $GLOBALS['wp_filter'][ $hook ]->callbacks[ $priority ] ?? [] ) . spl_object_id( (object) [] ) ] = [ 'function' => $fn, 'accepted_args' => $args ];
+	}
+	public static function hook_count( string $hook ): int {
+		$n = 0;
+		foreach ( ( $GLOBALS['wp_filter'][ $hook ]->callbacks ?? [] ) as $cbs ) {
+			$n += count( $cbs );
+		}
+		return $n;
+	}
+	/** The elementor meta hooks that currently have callbacks, sorted. */
+	public static function live_elementor_hooks(): array {
+		$out = [];
+		foreach ( ( $GLOBALS['wp_filter'] ?? [] ) as $hook => $h ) {
+			if ( str_starts_with( $hook, 'sanitize_post_meta__elementor_' ) && self::hook_count( $hook ) > 0 ) {
+				$out[] = $hook;
+			}
+		}
+		sort( $out );
+		return $out;
+	}
+	/** wp_unslash() on arrays, as update_metadata() applies it. */
+	public static function unslash_deep( array $value ): array {
+		return array_map( fn( $v ) => is_array( $v ) ? self::unslash_deep( $v ) : ( is_string( $v ) ? stripslashes( $v ) : $v ), $value );
+	}
+	public static function note_write( string $key ): void {
+		self::$hooks_at_write[] = [ $key, count( self::live_elementor_hooks() ) ];
+	}
+}
+/** Minimal WP_Hook: callbacks[priority][id] = [function, accepted_args]. */
+if ( ! class_exists( 'WP_Hook' ) ) {
+	class WP_Hook {
+		public array $callbacks = [];
+	}
 }
 if ( ! function_exists( 'get_post_meta' ) ) {
 	function get_post_meta( int $post_id, string $key = '', bool $single = false ): mixed {
@@ -86,9 +129,18 @@ if ( ! function_exists( 'get_permalink' ) ) {
 	}
 }
 
+require_once __DIR__ . '/stubs-abilities.php';
+require_once __DIR__ . '/stubs-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
+require_once IATO_MCP_DIR . 'includes/class-abilities.php';
+require_once IATO_MCP_DIR . 'includes/class-auth.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth-store.php';
+require_once __DIR__ . '/stubs-oauth.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth.php';
+require_once IATO_MCP_DIR . 'includes/class-schema.php';
 
 /** Load a fixture file as the decoded element list (same shape decode_data() returns). */
 function iato_test_fixture( string $name ): array {

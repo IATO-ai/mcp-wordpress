@@ -74,6 +74,7 @@ IATO_MCP_Server::register_tool(
 
 		$planned = [];
 		$touched_elementor = false;
+		$sanitized_paths   = [];
 
 		foreach ( $writes as $write ) {
 			$key = (string) $write['key'];
@@ -93,10 +94,28 @@ IATO_MCP_Server::register_tool(
 				$after    = array_merge( is_array( $existing ) ? $existing : [], $raw_value['__patch__'] );
 				$before   = is_array( $existing ) && ! empty( $existing ) ? $existing : null;
 				$touched_elementor = true;
+				// Strings inside (custom_css, titles, ...) are sanitised by shape
+				// unless the request may store unfiltered HTML (1.13.0).
+				if ( ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+					$s     = IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after, is_array( $existing ) ? $existing : null );
+					$after = $s['value'];
+					if ( ! empty( $s['changed'] ) ) {
+						$sanitized_paths = array_merge( $sanitized_paths, $s['changed'] );
+					}
+				}
 			} else {
 				$before = get_post_meta( $post_id, $key, true );
 				$before = ( '' === $before ) ? null : $before;
 				$after  = is_string( $raw_value ) ? sanitize_text_field( $raw_value ) : $raw_value;
+				// Array values: markup in the strings this write changes goes
+				// through wp_kses_post (1.13.0).
+				if ( ( is_array( $after ) || is_object( $after ) ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+					$s     = IATO_MCP_Meta_Policy::sanitize_array_value( $key, $after, $before );
+					$after = $s['value'];
+					if ( ! empty( $s['changed'] ) ) {
+						$sanitized_paths = array_merge( $sanitized_paths, $s['changed'] );
+					}
+				}
 			}
 
 			$planned[] = [
@@ -106,13 +125,15 @@ IATO_MCP_Server::register_tool(
 			];
 		}
 
+		$sanitized_report = empty( $sanitized_paths ) ? [] : [ 'sanitized' => true, 'sanitized_paths' => $sanitized_paths ];
+
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
 				'dry_run'  => true,
 				'id'       => $post_id,
 				'planned'  => $planned,
 				'skipped'  => $skipped,
-			] );
+			] + $sanitized_report );
 		}
 
 		$applied  = [];
@@ -125,8 +146,10 @@ IATO_MCP_Server::register_tool(
 
 			if ( null === $after || '' === $after ) {
 				delete_post_meta( $post_id, $key );
+			} elseif ( 0 === stripos( $key, '_elementor_' ) ) {
+				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, wp_slash( $after ) ) );
 			} else {
-				update_post_meta( $post_id, $key, $after );
+				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, wp_slash( $after ) ) ); // slashed: update_post_meta() unslashes
 			}
 
 			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
@@ -151,6 +174,6 @@ IATO_MCP_Server::register_tool(
 			'applied'         => $applied,
 			'skipped'         => $skipped,
 			'change_receipts' => $receipts,
-		] );
+		] + $sanitized_report );
 	}
 );

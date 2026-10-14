@@ -262,6 +262,13 @@ class IATO_MCP_Settings {
 		add_action( 'admin_notices', [ self::class, 'setup_wizard_notice' ] );
 		add_action( 'admin_post_iato_mcp_dismiss_wizard', [ self::class, 'dismiss_wizard' ] );
 		add_action( 'admin_post_iato_mcp_regenerate_key', [ self::class, 'handle_regenerate_key' ] );
+		add_action( 'admin_post_iato_mcp_assign_key_owner', [ self::class, 'handle_assign_key_owner' ] );
+		add_action( 'admin_post_iato_mcp_dismiss_owner_notice', [ self::class, 'dismiss_owner_notice' ] );
+		add_action( 'admin_notices', [ self::class, 'key_owner_notice' ] );
+		add_action( 'admin_post_iato_mcp_oauth_revoke', [ self::class, 'handle_oauth_revoke' ] );
+		add_action( 'admin_post_iato_mcp_oauth_revoke_all', [ self::class, 'handle_oauth_revoke_all' ] );
+		add_action( 'admin_post_iato_mcp_dismiss_oauth_notice', [ self::class, 'dismiss_oauth_notice' ] );
+		add_action( 'admin_notices', [ self::class, 'oauth_legacy_notice' ] );
 		add_action( 'wp_ajax_iato_mcp_test_api_key', [ self::class, 'ajax_test_api_key' ] );
 		add_action( 'wp_ajax_iato_mcp_save_settings', [ self::class, 'ajax_save_settings' ] );
 	}
@@ -276,6 +283,10 @@ class IATO_MCP_Settings {
 	 */
 	public static function ajax_save_settings(): void {
 		check_ajax_referer( 'iato_mcp_save_settings', 'nonce' );
+
+		// Key state at render time (before anything in this request is saved);
+		// decides whether the bridge-tool checkboxes were gated. See tools below.
+		$api_key_before = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( [ 'message' => __( 'Unauthorized.', 'iato-mcp' ) ], 403 );
 		}
@@ -296,8 +307,26 @@ class IATO_MCP_Settings {
 		if ( isset( $_POST['iato_mcp_tools'] ) && is_array( $_POST['iato_mcp_tools'] ) ) {
 			$tools_raw = array_map( 'sanitize_text_field', wp_unslash( $_POST['iato_mcp_tools'] ) );
 		}
-		$tools = self::sanitize_tools( $tools_raw );
+		// Bridge tools are rendered as disabled checkboxes while no IATO API key
+		// exists, and disabled inputs are never posted. Tools the form could not
+		// submit keep their previous state (see includes/tools-selection.php).
+		// $bridge_gated reflects the key as it was when the form was rendered,
+		// i.e. before this request saved it.
+		$tools = iato_mcp_merge_gated_tools(
+			self::sanitize_tools( $tools_raw, false ),
+			get_option( 'iato_mcp_tools', [] ),
+			'' === $api_key_before
+		);
 		update_option( 'iato_mcp_tools', $tools );
+
+		// WordPress Abilities exposure toggle (hidden value=0 sibling pattern,
+		// see the media URL toggle below for why rest_sanitize_boolean suffices).
+		$abilities_enabled = isset( $_POST['iato_mcp_abilities_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_abilities_enabled'] ) )
+			: true;
+		// '1' / '0', see register_settings(): a boolean false would not be stored
+		// the first time the option is saved.
+		update_option( 'iato_mcp_abilities_enabled', self::sanitize_bool_flag( $abilities_enabled ) );
 
 		// Media uploads — URL source toggle. The render emits a hidden value=0
 		// sibling so the key is always present in $_POST regardless of checkbox
@@ -306,7 +335,7 @@ class IATO_MCP_Settings {
 		$media_url_enabled = isset( $_POST['iato_mcp_media_url_source_enabled'] )
 			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_media_url_source_enabled'] ) )
 			: false;
-		update_option( 'iato_mcp_media_url_source_enabled', $media_url_enabled );
+		update_option( 'iato_mcp_media_url_source_enabled', self::sanitize_bool_flag( $media_url_enabled ) );
 
 		// Host allowlist — newline-delimited textarea. sanitize_host_list()
 		// strips schemes/paths and rejects malformed hostnames.
@@ -334,6 +363,7 @@ class IATO_MCP_Settings {
 				'api_key_length'      => strlen( $api_key ),
 				'crawl_id'            => $crawl_id,
 				'tools_enabled'       => count( $tools ),
+				'abilities_enabled'   => $abilities_enabled,
 				'media_url_enabled'   => $media_url_enabled,
 				'media_hosts_count'   => count( $host_list ),
 				'media_max_bytes'     => $max_bytes,
@@ -454,11 +484,24 @@ class IATO_MCP_Settings {
 			'default'           => [],
 		] );
 
+		// --- WordPress Abilities exposure (see IATO_MCP_Abilities) ---
+		// Stored as '1' / '0' strings, not booleans: update_option( $name, false )
+		// on a fresh install (no row yet) is a silent no-op because false
+		// serialises identically to "missing", so the first "off" save would be
+		// dropped. A string flag always creates the row.
+		register_setting( self::OPTION_GROUP, 'iato_mcp_abilities_enabled', [
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '1',
+		] );
+
 		// --- Media upload settings (v1.6.0) ---
+		// Stored as '1' / '0' like iato_mcp_abilities_enabled: update_option( $name, false )
+		// on a missing row is a silent no-op, so a boolean flag never creates its row.
 		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_source_enabled', [
-			'type'              => 'boolean',
-			'sanitize_callback' => 'rest_sanitize_boolean',
-			'default'           => false,
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '0',
 		] );
 		register_setting( self::OPTION_GROUP, 'iato_mcp_media_url_host_allowlist', [
 			'type'              => 'array',
@@ -545,12 +588,33 @@ class IATO_MCP_Settings {
 	/**
 	 * Sanitize the enabled tools array.
 	 */
-	public static function sanitize_tools( $value ): array {
+	/**
+	 * Normalise a checkbox value to the '1' / '0' string flag used by
+	 * iato_mcp_abilities_enabled (see register_settings() for why not bool).
+	 */
+	public static function sanitize_bool_flag( $value ): string {
+		return rest_sanitize_boolean( $value ) ? '1' : '0';
+	}
+
+	public static function sanitize_tools( $value, bool $merge_gated = true ): array {
 		if ( ! is_array( $value ) ) {
 			return [];
 		}
 
-		return array_values( array_intersect( array_map( 'sanitize_text_field', $value ), self::TOOL_NAMES ) );
+		$clean = array_values( array_intersect( array_map( 'sanitize_text_field', $value ), self::TOOL_NAMES ) );
+
+		// register_setting() sanitize path (options.php and update_option):
+		// preserve bridge tools the form could not submit while they were
+		// gated. ajax_save_settings() already merged with the pre-save key
+		// state and passes $merge_gated = false.
+		if ( $merge_gated && function_exists( 'iato_mcp_merge_gated_tools' ) ) {
+			$clean = iato_mcp_merge_gated_tools(
+				$clean,
+				get_option( 'iato_mcp_tools', [] ),
+				'' === sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) )
+			);
+		}
+		return $clean;
 	}
 
 	// ── Settings Page ────────────────────────────────────────────────────────────
@@ -604,6 +668,10 @@ class IATO_MCP_Settings {
 		}
 
 		$mcp_key      = sanitize_text_field( get_option( 'iato_mcp_key', '' ) );
+		$key_owner_id = IATO_MCP_Auth::key_owner_id();
+		$key_owner    = $key_owner_id > 0 ? get_user_by( 'id', $key_owner_id ) : null;
+		$owner_admins = get_users( [ 'capability' => IATO_MCP_Auth::OWNER_CAP, 'orderby' => 'display_name', 'fields' => [ 'ID', 'display_name', 'user_login' ] ] );
+		$assign_url   = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_assign_key_owner' ), 'iato_mcp_assign_key_owner' );
 		$endpoint     = rest_url( 'iato-mcp/v1/message' );
 		$iato_api_key = sanitize_text_field( get_option( 'iato_mcp_api_key', '' ) );
 		$api_valid    = (bool) get_option( 'iato_mcp_api_key_valid', false );
@@ -611,7 +679,10 @@ class IATO_MCP_Settings {
 		$enabled      = get_option( 'iato_mcp_tools', [] );
 		$all_on       = empty( $enabled );
 
-		$media_url_enabled = (bool) get_option( 'iato_mcp_media_url_source_enabled', false );
+		$abilities_enabled   = IATO_MCP_Abilities::is_enabled();
+		$abilities_api_exists = function_exists( 'wp_register_ability' );
+
+		$media_url_enabled = rest_sanitize_boolean( get_option( 'iato_mcp_media_url_source_enabled', '0' ) );
 		$media_host_list   = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
 		$media_max_bytes   = (int) get_option( 'iato_mcp_media_max_upload_size', 10 * MB_IN_BYTES );
 		$media_rate_limit  = (int) get_option( 'iato_mcp_media_upload_rate_limit', 20 );
@@ -704,12 +775,54 @@ class IATO_MCP_Settings {
 								<button type="button" class="iato-reveal-btn" data-target="iato-mcp-key" title="<?php esc_attr_e( 'Show/hide key', 'iato-mcp' ); ?>">
 									<span class="dashicons dashicons-visibility"></span>
 								</button>
-								<a href="<?php echo esc_url( $regenerate_url ); ?>" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Regenerate key? Existing clients will need the new key.', 'iato-mcp' ) ); ?>');">
+								<a href="<?php echo esc_url( $regenerate_url ); ?>" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Regenerate key? Existing clients will need the new key. OAuth connections made before version 1.13.0 will also stop working; connections listed under Connected OAuth clients are not affected.', 'iato-mcp' ) ); ?>');">
 									<span class="dashicons dashicons-update"></span>
 									<?php esc_html_e( 'Regenerate', 'iato-mcp' ); ?>
 								</a>
 							</div>
 							<p class="iato-hint"><?php esc_html_e( 'Used in the Authorization: Bearer header. Keep this secret.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato-key-owner-select"><?php esc_html_e( 'Token owner', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<p style="margin:0 0 8px;">
+								<?php if ( $key_owner && $key_owner->exists() ) : ?>
+									<?php if ( user_can( $key_owner, IATO_MCP_Auth::OWNER_CAP ) ) : ?>
+										<span class="iato-badge iato-badge--success"><?php esc_html_e( 'Bound', 'iato-mcp' ); ?></span>
+									<?php else : ?>
+										<span class="iato-badge iato-badge--warning"><?php esc_html_e( 'Owner demoted', 'iato-mcp' ); ?></span>
+									<?php endif; ?>
+									<strong><?php echo esc_html( $key_owner->display_name ); ?></strong> (<?php echo esc_html( $key_owner->user_login ); ?>, ID <?php echo (int) $key_owner->ID; ?>)
+								<?php elseif ( $key_owner_id > 0 ) : ?>
+									<span class="iato-badge iato-badge--warning"><?php esc_html_e( 'Owner missing', 'iato-mcp' ); ?></span>
+									<?php
+									/* translators: %d: user ID */
+									printf( esc_html__( 'User ID %d no longer exists; requests with this key are rejected until a new owner is assigned.', 'iato-mcp' ), (int) $key_owner_id );
+									?>
+								<?php else : ?>
+									<span class="iato-badge iato-badge--neutral"><?php esc_html_e( 'Unassigned (legacy mode)', 'iato-mcp' ); ?></span>
+									<?php esc_html_e( 'Requests with this key run with no WordPress user. Features that need one (Elementor edits through Elementor\'s own abilities, post authorship) are unavailable until an owner is assigned.', 'iato-mcp' ); ?>
+								<?php endif; ?>
+							</p>
+							<div class="iato-key-row">
+								<select id="iato-key-owner-select" class="iato-input" style="max-width:320px;">
+									<?php foreach ( $owner_admins as $admin_user ) : ?>
+										<option value="<?php echo (int) $admin_user->ID; ?>" <?php selected( (int) $admin_user->ID, (int) ( $key_owner_id ?: get_current_user_id() ) ); ?>>
+											<?php echo esc_html( $admin_user->display_name . ' (' . $admin_user->user_login . ')' ); ?>
+										</option>
+									<?php endforeach; ?>
+								</select>
+								<a href="<?php echo esc_url( add_query_arg( 'user_id', get_current_user_id(), $assign_url ) ); ?>" class="iato-btn" id="iato-assign-owner-btn" data-assign-url="<?php echo esc_attr( $assign_url ); ?>">
+									<span class="dashicons dashicons-admin-users"></span>
+									<?php esc_html_e( 'Assign owner', 'iato-mcp' ); ?>
+								</a>
+							</div>
+							<p class="iato-hint"><?php esc_html_e( 'Every request made with this key runs as the owner: WordPress capability checks, post and media authorship, and other plugins\' abilities (Elementor) all see that user. Only administrators can own the key; if the owner is deleted or demoted, the key is rejected until it is reassigned or regenerated. Regenerating the key assigns it to you.', 'iato-mcp' ); ?></p>
+							<script>
+							(function(){var b=document.getElementById('iato-assign-owner-btn'),s=document.getElementById('iato-key-owner-select');if(!b||!s){return;}b.addEventListener('click',function(e){e.preventDefault();var u=b.getAttribute('data-assign-url');window.location.href=u+(u.indexOf('?')>-1?'&':'?')+'user_id='+encodeURIComponent(s.value);});})();
+							</script>
 						</div>
 					</div>
 
@@ -795,6 +908,23 @@ class IATO_MCP_Settings {
 							</p>
 						</div>
 					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_abilities_enabled"><?php esc_html_e( 'WordPress Abilities', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_abilities_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_abilities_enabled" id="iato_mcp_abilities_enabled" value="1" <?php checked( $abilities_enabled ); ?> />
+								<span><?php esc_html_e( 'Expose crawl tools as WordPress Abilities', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint">
+								<?php esc_html_e( 'Registers the read-only IATO crawl tools (broken links, orphan pages, SEO fixes, suggestions, sitemap, …) as iato/* abilities so any MCP server built on the WordPress MCP Adapter, and the wp-abilities/v1 REST API, can discover and run them. Each ability requires the manage_options capability by default (lower it with the iato_mcp_ability_capability filter) and uses the API key above. Requires WordPress 6.9 or later.', 'iato-mcp' ); ?>
+								<?php if ( ! $abilities_api_exists ) : ?>
+									<br /><strong><?php esc_html_e( 'The Abilities API is not available on this WordPress version, so nothing is registered until you upgrade.', 'iato-mcp' ); ?></strong>
+								<?php endif; ?>
+							</p>
+						</div>
+					</div>
 				</div>
 
 				<!-- Card 3: Tools -->
@@ -831,7 +961,7 @@ class IATO_MCP_Settings {
 								<h3>
 									<?php echo esc_html( $category ); ?>
 									<?php if ( $is_iato_category ) : ?>
-										<span class="iato-category-hint" id="iato-platform-cat-hint">
+										<span class="iato-category-hint iato-platform-cat-hint">
 											<?php
 											echo $api_key_present
 												? esc_html__( '— requires IATO API key ✓', 'iato-mcp' )
@@ -856,6 +986,14 @@ class IATO_MCP_Settings {
 									$checked = $all_on || in_array( $tool, $enabled, true );
 									$desc    = self::TOOL_DESCRIPTIONS[ $tool ] ?? '';
 								?>
+									<?php if ( $category_gated && $checked ) : ?>
+										<?php
+										// Disabled checkboxes are never submitted, so a save made while
+										// the bridge tools are gated would store them as "off". Carry
+										// the current (enabled) state through either save path instead.
+										?>
+										<input type="hidden" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" />
+									<?php endif; ?>
 									<label class="iato-tool-item<?php echo $category_gated ? ' iato-tool-item--gated' : ''; ?>">
 										<div class="iato-toggle">
 											<input type="checkbox" name="iato_mcp_tools[]" value="<?php echo esc_attr( $tool ); ?>" <?php checked( $checked ); ?> <?php echo $category_gated ? 'disabled' : ''; ?> />
@@ -938,6 +1076,8 @@ class IATO_MCP_Settings {
 					<?php submit_button( __( 'Save Settings', 'iato-mcp' ), 'primary large', 'submit', false ); ?>
 				</div>
 			</form>
+
+			<?php self::render_oauth_clients_card(); ?>
 		</div>
 
 		<?php
@@ -1092,6 +1232,38 @@ class IATO_MCP_Settings {
 				font-size: 13px;
 				margin: -12px 0 20px;
 			}
+
+			/* ── Connected OAuth clients ───────────────────── */
+			.iato-table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 13px;
+			}
+			.iato-table th {
+				text-align: left;
+				padding: 8px 10px;
+				border-bottom: 2px solid var(--iato-border);
+				color: var(--iato-text-secondary);
+				font-size: 12px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.4px;
+			}
+			.iato-table td {
+				padding: 10px;
+				border-bottom: 1px solid var(--iato-border);
+				vertical-align: middle;
+				color: var(--iato-text);
+			}
+			.iato-table td small {
+				display: block;
+				color: var(--iato-text-secondary);
+				font-family: JetBrains Mono, monospace;
+				font-size: 11px;
+				margin-top: 2px;
+			}
+			.iato-table form { margin: 0; }
+			.iato-table .iato-btn { padding: 6px 12px; font-size: 12px; }
 
 			/* ── Badges ────────────────────────────────────────── */
 			.iato-badge {
@@ -1760,12 +1932,12 @@ CSS;
 					}).then(function(r) { return r.json(); }).then(function(resp) {
 						testBtn.disabled = false;
 						var platformBadge = document.getElementById('iato-platform-badge');
-						var catHint = document.getElementById('iato-platform-cat-hint');
+						var catHints = document.querySelectorAll('.iato-platform-cat-hint');
 						if (resp && resp.success) {
 							var msg = (resp.data && resp.data.message) ? resp.data.message : 'Connected.';
 							statusEl.innerHTML = '<span class="iato-badge iato-badge--success">Validated</span> <span class="iato-hint">' + escapeHtml(msg) + '</span>';
 							if (platformBadge) platformBadge.innerHTML = '<span class="iato-badge iato-badge--success">Connected</span>';
-							if (catHint) catHint.textContent = '— requires IATO API key ✓';
+							catHints.forEach(function(h){ h.textContent = '— requires IATO API key ✓'; });
 						} else {
 							var d = (resp && resp.data) || {};
 							var parts = [];
@@ -1976,7 +2148,85 @@ JS;
 	}
 
 	/**
-	 * Handle MCP key regeneration.
+	 * Assign the site key to a WordPress user (admin-post, nonce, manage_options).
+	 * The target must hold manage_options; binding never rotates the key.
+	 */
+	public static function handle_assign_key_owner(): void {
+		check_admin_referer( 'iato_mcp_assign_key_owner' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+
+		$user_id = isset( $_GET['user_id'] ) ? absint( wp_unslash( $_GET['user_id'] ) ) : 0;
+		$user    = $user_id ? get_user_by( 'id', $user_id ) : false;
+
+		if ( ! $user || ! $user->exists() || ! user_can( $user, IATO_MCP_Auth::OWNER_CAP ) ) {
+			add_settings_error( 'iato_mcp_key', 'iato_mcp_key_owner_invalid', __( 'The selected user does not exist or is not an administrator. The MCP key owner was not changed.', 'iato-mcp' ), 'error' );
+		} else {
+			IATO_MCP_Auth::bind_key_owner( (int) $user->ID );
+			add_settings_error(
+				'iato_mcp_key',
+				'iato_mcp_key_owner_assigned',
+				sprintf(
+					/* translators: %s: user login */
+					__( 'MCP key assigned to %s. Requests made with the key now run as that user.', 'iato-mcp' ),
+					$user->user_login
+				),
+				'updated'
+			);
+		}
+		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	/**
+	 * Admin notice for an unbound (legacy) key: asks the site owner to assign an
+	 * owner or regenerate. Dismissible per user, except on the plugin's own
+	 * Settings page where it always shows while the key is unbound.
+	 */
+	public static function key_owner_notice(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		if ( '' === sanitize_text_field( get_option( 'iato_mcp_key', '' ) ) || IATO_MCP_Auth::key_owner_id() > 0 ) {
+			return;
+		}
+		$screen      = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		$on_own_page = $screen && false !== strpos( (string) $screen->id, self::PAGE_SLUG );
+		if ( ! $on_own_page && get_user_meta( get_current_user_id(), 'iato_mcp_owner_notice_dismissed', true ) ) {
+			return;
+		}
+		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
+		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_owner_notice' ), 'iato_mcp_dismiss_owner_notice' );
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<strong><?php esc_html_e( 'IATO MCP:', 'iato-mcp' ); ?></strong>
+				<?php esc_html_e( 'the site\'s MCP key is not assigned to a WordPress user. Requests using it run with no user, so features that need one (Elementor edits through Elementor\'s own abilities, post and media authorship) are unavailable.', 'iato-mcp' ); ?>
+				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Assign an owner or regenerate the key', 'iato-mcp' ); ?></a>
+				<?php if ( ! $on_own_page ) : ?>
+					&nbsp;|&nbsp;<a href="<?php echo esc_url( $dismiss_url ); ?>"><?php esc_html_e( 'Dismiss', 'iato-mcp' ); ?></a>
+				<?php endif; ?>
+			</p>
+		</div>
+		<?php
+	}
+
+	public static function dismiss_owner_notice(): void {
+		check_admin_referer( 'iato_mcp_dismiss_owner_notice' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		update_user_meta( get_current_user_id(), 'iato_mcp_owner_notice_dismissed', 1 );
+		wp_safe_redirect( wp_get_referer() ?: admin_url() );
+		exit;
+	}
+
+	/**
+	 * Handle MCP key regeneration. rotate_key() binds the new key to the
+	 * regenerating administrator.
 	 */
 	public static function handle_regenerate_key(): void {
 		check_admin_referer( 'iato_mcp_regenerate_key' );
@@ -1990,12 +2240,199 @@ JS;
 		add_settings_error(
 			'iato_mcp_key',
 			'iato_mcp_key_regenerated',
-			__( 'MCP API key regenerated. Update your AI client configuration with the new key.', 'iato-mcp' ),
+			__( 'MCP API key regenerated and assigned to you. Update your AI client configuration with the new key.', 'iato-mcp' ),
 			'updated'
 		);
 		set_transient( 'settings_errors', get_settings_errors(), 30 );
 
 		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	// ── Connected OAuth clients (1.13.0) ─────────────────────────────────
+
+	/**
+	 * One row per live OAuth grant with a Revoke button. Each button is its
+	 * own POST form to admin-post.php; the General tab's settings form is
+	 * closed before this card so forms do not nest.
+	 */
+	public static function render_oauth_clients_card(): void {
+		if ( ! class_exists( 'IATO_MCP_OAuth_Store' ) || ! class_exists( 'IATO_MCP_OAuth' ) ) {
+			return;
+		}
+		$grants = IATO_MCP_OAuth_Store::instance()->list_active_grants( gmdate( 'Y-m-d H:i:s' ) );
+		// Set by the 1.13.0 migration when OAuth clients existed; cleared only by
+		// Regenerate (the notice flag is separate and only hides the notice).
+		$legacy = (bool) get_option( 'iato_mcp_oauth_legacy_key', false );
+		?>
+		<div class="iato-card" id="iato-oauth-clients">
+			<div class="iato-card-header">
+				<div class="iato-card-title">
+					<span class="dashicons dashicons-admin-links"></span>
+					<h2><?php esc_html_e( 'Connected OAuth clients', 'iato-mcp' ); ?></h2>
+				</div>
+				<span class="iato-badge <?php echo empty( $grants ) ? 'iato-badge--neutral' : 'iato-badge--success'; ?>">
+					<?php
+					/* translators: %d: number of connected clients */
+					echo esc_html( sprintf( _n( '%d connected', '%d connected', count( $grants ), 'iato-mcp' ), count( $grants ) ) );
+					?>
+				</span>
+			</div>
+			<p class="iato-card-desc"><?php esc_html_e( 'AI clients that connected through OAuth (for example the Claude connector). Each one holds its own token, acts as the administrator who approved it, and can be revoked here without affecting the other connections or the API key above.', 'iato-mcp' ); ?></p>
+
+			<?php if ( empty( $grants ) ) : ?>
+				<p class="iato-hint"><?php esc_html_e( 'No OAuth clients are connected.', 'iato-mcp' ); ?></p>
+			<?php else : ?>
+				<table class="iato-table">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Client', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Acts as', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Connected', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Last used', 'iato-mcp' ); ?></th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+					<?php foreach ( $grants as $g ) : ?>
+						<?php
+						$user  = $g['user_id'] > 0 ? get_user_by( 'id', $g['user_id'] ) : false;
+						$name  = '' !== $g['client_name'] ? $g['client_name'] : $g['client_id'];
+						$host  = IATO_MCP_OAuth::redirect_host( $g['redirect_uri'] );
+						$since = IATO_MCP_OAuth::format_local( $g['connected_at'] );
+						$last  = '' !== (string) $g['last_used_at'] ? IATO_MCP_OAuth::format_local( (string) $g['last_used_at'] ) : '';
+						?>
+						<tr>
+							<td>
+								<?php echo esc_html( $name ); ?>
+								<?php if ( '' !== $host ) : ?><small><?php echo esc_html( $host ); ?></small><?php endif; ?>
+							</td>
+							<td>
+								<?php if ( $user && $user->exists() ) : ?>
+									<?php echo esc_html( $user->display_name ); ?> <small><?php echo esc_html( $user->user_login ); ?></small>
+								<?php else : ?>
+									<span class="iato-badge iato-badge--danger"><?php printf( /* translators: %d: user ID */ esc_html__( 'deleted user #%d', 'iato-mcp' ), (int) $g['user_id'] ); ?></span>
+								<?php endif; ?>
+							</td>
+							<td><?php echo esc_html( $since ); ?></td>
+							<td><?php echo '' !== $last ? esc_html( $last ) : esc_html__( 'Never', 'iato-mcp' ); ?></td>
+							<td style="text-align:right;">
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+									<input type="hidden" name="action" value="iato_mcp_oauth_revoke" />
+									<input type="hidden" name="grant_id" value="<?php echo esc_attr( $g['grant_id'] ); ?>" />
+									<?php wp_nonce_field( 'iato_mcp_oauth_revoke_' . $g['grant_id'] ); ?>
+									<button type="submit" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Revoke this connection? The client will have to connect and be approved again.', 'iato-mcp' ) ); ?>');">
+										<span class="dashicons dashicons-no"></span>
+										<?php esc_html_e( 'Revoke', 'iato-mcp' ); ?>
+									</button>
+								</form>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:14px;text-align:right;">
+					<input type="hidden" name="action" value="iato_mcp_oauth_revoke_all" />
+					<?php wp_nonce_field( 'iato_mcp_oauth_revoke_all' ); ?>
+					<button type="submit" class="iato-btn iato-btn--danger" onclick="return confirm('<?php echo esc_js( __( 'Disconnect every OAuth client? Each one will have to connect and be approved again. The API key is not affected.', 'iato-mcp' ) ); ?>');">
+						<span class="dashicons dashicons-dismiss"></span>
+						<?php esc_html_e( 'Disconnect all', 'iato-mcp' ); ?>
+					</button>
+				</form>
+			<?php endif; ?>
+
+			<?php if ( $legacy ) : ?>
+				<p class="iato-hint" style="margin-top:12px;"><?php esc_html_e( 'Connections made before version 1.13.0 use the API key above and are not listed here. To move one to its own token, remove the connector in the AI client and add it again. Regenerating the API key disconnects all of them at once.', 'iato-mcp' ); ?></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Revoke one OAuth grant (admin-post, nonce per grant, manage_options).
+	 */
+	public static function handle_oauth_revoke(): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the nonce is checked on the next line; it is keyed by this value.
+		$grant_id = isset( $_POST['grant_id'] ) ? sanitize_text_field( wp_unslash( $_POST['grant_id'] ) ) : '';
+		check_admin_referer( 'iato_mcp_oauth_revoke_' . $grant_id );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+
+		$revoked = IATO_MCP_OAuth::revoke_grant_by_admin( $grant_id, (int) get_current_user_id(), time() );
+		if ( $revoked ) {
+			add_settings_error( 'iato_mcp_oauth', 'iato_mcp_oauth_revoked', __( 'The connection has been revoked. The client will be asked to connect again.', 'iato-mcp' ), 'updated' );
+		} else {
+			add_settings_error( 'iato_mcp_oauth', 'iato_mcp_oauth_revoke_noop', __( 'That connection was already revoked or had expired.', 'iato-mcp' ), 'error' );
+		}
+		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	/**
+	 * Revoke every live OAuth grant (admin-post, nonce, manage_options).
+	 */
+	public static function handle_oauth_revoke_all(): void {
+		check_admin_referer( 'iato_mcp_oauth_revoke_all' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+
+		$n = IATO_MCP_OAuth::revoke_all_grants_by_admin( (int) get_current_user_id(), time() );
+		if ( $n > 0 ) {
+			add_settings_error(
+				'iato_mcp_oauth',
+				'iato_mcp_oauth_revoked_all',
+				sprintf(
+					/* translators: %d: number of connections revoked */
+					_n( '%d OAuth connection has been revoked. The client will be asked to connect again.', '%d OAuth connections have been revoked. Each client will be asked to connect again.', $n, 'iato-mcp' ),
+					$n
+				),
+				'updated'
+			);
+		} else {
+			add_settings_error( 'iato_mcp_oauth', 'iato_mcp_oauth_revoke_all_noop', __( 'There were no live OAuth connections to revoke.', 'iato-mcp' ), 'error' );
+		}
+		set_transient( 'settings_errors', get_settings_errors(), 30 );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&settings-updated=true' ) );
+		exit;
+	}
+
+	/**
+	 * One-time notice after upgrading from a release where OAuth handed out
+	 * the site key: those connections cannot be revoked individually. Set by
+	 * the 1.13.0 migration, dismissed site-wide (deletes the notice flag only;
+	 * iato_mcp_oauth_legacy_key keeps driving the Settings hint and the
+	 * Diagnostics badge until the key is regenerated).
+	 */
+	public static function oauth_legacy_notice(): void {
+		if ( ! current_user_can( 'manage_options' ) || ! get_option( 'iato_mcp_oauth_legacy_notice', false ) ) {
+			return;
+		}
+		$settings_url = admin_url( 'options-general.php?page=' . self::PAGE_SLUG );
+		$dismiss_url  = wp_nonce_url( admin_url( 'admin-post.php?action=iato_mcp_dismiss_oauth_notice' ), 'iato_mcp_dismiss_oauth_notice' );
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<strong><?php esc_html_e( 'IATO MCP:', 'iato-mcp' ); ?></strong>
+				<?php esc_html_e( 'AI clients connected through OAuth before version 1.13.0 hold this site\'s MCP API key and cannot be revoked individually. To move a client to its own revocable token, remove the connector in the AI client and add it again. Once every OAuth client has been reconnected, regenerate the API key to invalidate the old copies. Regenerating also breaks any Bearer-header configuration that uses the current key.', 'iato-mcp' ); ?>
+				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Open settings', 'iato-mcp' ); ?></a>
+				&nbsp;|&nbsp;<a href="<?php echo esc_url( $dismiss_url ); ?>"><?php esc_html_e( 'Dismiss', 'iato-mcp' ); ?></a>
+			</p>
+		</div>
+		<?php
+	}
+
+	public static function dismiss_oauth_notice(): void {
+		check_admin_referer( 'iato_mcp_dismiss_oauth_notice' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		delete_option( 'iato_mcp_oauth_legacy_notice' );
+		wp_safe_redirect( wp_get_referer() ?: admin_url() );
 		exit;
 	}
 

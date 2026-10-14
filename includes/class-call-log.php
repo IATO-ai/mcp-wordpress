@@ -52,7 +52,9 @@ class IATO_MCP_Call_Log {
 			error_code VARCHAR(50) DEFAULT NULL,
 			error_message TEXT DEFAULT NULL,
 			duration_ms INT UNSIGNED DEFAULT 0,
-			PRIMARY KEY (id),
+			credential_kind VARCHAR(30) DEFAULT NULL,
+			client_id VARCHAR(64) DEFAULT NULL,
+			PRIMARY KEY  (id),
 			KEY created_at (created_at),
 			KEY rpc_method (rpc_method),
 			KEY response_status (response_status)
@@ -74,6 +76,9 @@ class IATO_MCP_Call_Log {
 	 *   - error_message   string
 	 *   - duration_ms     int
 	 *   - auth_user_id    int
+	 *   - credential_kind string  site_key | oauth | application_password (1.13.0;
+	 *                             defaults to the request's credential)
+	 *   - client_id       string  OAuth client (defaults to the request's)
 	 *   - ip_address      string
 	 *   - user_agent      string
 	 */
@@ -112,12 +117,39 @@ class IATO_MCP_Call_Log {
 				'error_code'      => isset( $fields['error_code'] ) ? substr( (string) $fields['error_code'], 0, 50 ) : null,
 				'error_message'   => $fields['error_message'] ?? null,
 				'duration_ms'     => (int) ( $fields['duration_ms'] ?? 0 ),
-			],
-			[ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ]
+			] + self::credential_columns( $fields ),
+			array_merge(
+				[ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ],
+				self::has_credential_columns() ? [ '%s', '%s' ] : []
+			)
 		);
 
 		// Trim the log if it exceeds MAX_ENTRIES. Cheap because the table is tiny.
 		self::trim_old( self::MAX_ENTRIES );
+	}
+
+	/** Do the credential columns exist yet (schema step 4)? */
+	private static function has_credential_columns(): bool {
+		return ! class_exists( 'IATO_MCP_Schema' ) || IATO_MCP_Schema::current() >= 4;
+	}
+
+	/**
+	 * Credential kind and OAuth client of the row: as passed, else the
+	 * credential that authenticated the request. Empty before schema step 4.
+	 *
+	 * @return array<string,?string>
+	 */
+	private static function credential_columns( array $fields ): array {
+		if ( ! self::has_credential_columns() ) {
+			return [];
+		}
+		$credential = class_exists( 'IATO_MCP_Auth' ) ? IATO_MCP_Auth::credential() : [];
+		$kind       = $fields['credential_kind'] ?? ( $credential['kind'] ?? null );
+		$client     = $fields['client_id'] ?? ( $credential['client_id'] ?? null );
+		return [
+			'credential_kind' => null !== $kind && '' !== (string) $kind ? substr( (string) $kind, 0, 30 ) : null,
+			'client_id'       => null !== $client && '' !== (string) $client ? substr( (string) $client, 0, 64 ) : null,
+		];
 	}
 
 	/**

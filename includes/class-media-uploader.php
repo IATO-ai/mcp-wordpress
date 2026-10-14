@@ -61,7 +61,7 @@ class IATO_MCP_Media_Uploader {
 		$metadata = wp_generate_attachment_metadata( $attachment_id, $file );
 		wp_update_attachment_metadata( $attachment_id, $metadata );
 		if ( null !== $alt_text && '' !== $alt_text ) {
-			update_post_meta( $attachment_id, '_wp_attachment_image_alt', sanitize_text_field( $alt_text ) );
+			update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( sanitize_text_field( $alt_text ) ) );
 		}
 		$sizes_count = isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ? count( $metadata['sizes'] ) : 0;
 		$duration    = microtime( true ) - $start;
@@ -258,7 +258,8 @@ class IATO_MCP_Media_Uploader {
 			'post_status'    => 'inherit',
 			'post_parent'    => $attach_to_post,
 		];
-		$attachment_id = wp_insert_attachment( $attach_data, $sideloaded['file'], $attach_to_post, true );
+		// Slashed: wp_insert_attachment() unslashes title, description and caption.
+		$attachment_id = wp_insert_attachment( wp_slash( $attach_data ), $sideloaded['file'], $attach_to_post, true );
 		if ( is_wp_error( $attachment_id ) ) {
 			$log( 'rejected_insert', [ 'code' => $attachment_id->get_error_code() ] );
 			// wp_handle_sideload already moved the file into uploads — try to clean it.
@@ -276,7 +277,7 @@ class IATO_MCP_Media_Uploader {
 			// subsizes finish. wp_schedule_single_event is idempotent on
 			// duplicate ($timestamp, $hook, $args) tuples.
 			if ( '' !== $alt_text ) {
-				update_post_meta( $attachment_id, '_wp_attachment_image_alt', sanitize_text_field( $alt_text ) );
+				update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( sanitize_text_field( $alt_text ) ) );
 			}
 			wp_schedule_single_event( time(), 'iato_mcp_generate_subsizes', [ $attachment_id, $alt_text, $req_id ] );
 			$metadata = [];
@@ -295,7 +296,7 @@ class IATO_MCP_Media_Uploader {
 			] );
 
 			if ( '' !== $alt_text ) {
-				update_post_meta( $attachment_id, '_wp_attachment_image_alt', sanitize_text_field( $alt_text ) );
+				update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( sanitize_text_field( $alt_text ) ) );
 			}
 		}
 

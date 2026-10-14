@@ -284,7 +284,7 @@ IATO_MCP_Server::register_tool(
 				'dry_run'          => true,
 				'current_revision' => null,
 				'applied_patch'    => $applied,
-			];
+			] + IATO_MCP_Elementor_Adapter::sanitize_preview( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
@@ -296,13 +296,13 @@ IATO_MCP_Server::register_tool(
 			return $pipeline;
 		}
 
-		$response = IATO_MCP_Elementor_Adapter::sanitize_report( $pipeline ) + [
+		$response = [
 			'post_id'             => $post_id,
 			'current_revision'    => $pipeline['current_revision'],
 			'applied_patch'       => $applied,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
-		];
+		] + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
 		if ( $echo_prev ) {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}
@@ -311,11 +311,13 @@ IATO_MCP_Server::register_tool(
 		// the target since the patch may touch many widgets. Storage rows take
 		// the canonical revision before/after; the API response only echoes the
 		// receipt id + metadata (full applied_patch is already at the top level).
+		// Before: the stored tree as it was, for rollback (1.13.0); after: the
+		// revision hash of what was stored, for the rollback conflict check.
 		$receipt = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'elementor_widget',
 			'elementor:document:patch',
-			$pipeline['previous_revision'],
+			$raw,
 			$pipeline['current_revision']
 		);
 		$response['change_receipt'] = [
@@ -323,6 +325,7 @@ IATO_MCP_Server::register_tool(
 			'target_type' => $receipt['target_type'],
 			'field'       => $receipt['field'],
 			'applied_at'  => $receipt['applied_at'],
+			'actor'       => $receipt['actor'] ?? null,
 		];
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'update_elementor_patch', $key, $args, $response );

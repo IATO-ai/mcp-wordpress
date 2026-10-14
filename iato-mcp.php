@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.12.2
+ * Version:     1.13.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.12.2' );
+define( 'IATO_MCP_VERSION', '1.13.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -57,11 +57,17 @@ require_once IATO_MCP_DIR . 'includes/class-meta-policy.php';
 require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
+require_once IATO_MCP_DIR . 'includes/class-rollback-conflict.php';
+require_once IATO_MCP_DIR . 'includes/class-receipt-retention.php';
+require_once IATO_MCP_DIR . 'includes/class-oauth-store.php';
+require_once IATO_MCP_DIR . 'includes/class-schema.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
+require_once IATO_MCP_DIR . 'includes/tools-selection.php';
 require_once IATO_MCP_DIR . 'includes/class-settings.php';
 require_once IATO_MCP_DIR . 'includes/class-setup-wizard.php';
 require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
+require_once IATO_MCP_DIR . 'includes/class-abilities.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
@@ -92,8 +98,15 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-settings.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-featured-image.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media-upload.php';
 
-// Phase 2 — IATO bridge tools (loaded only when IATO API key is configured)
-if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
+// Phase 2 — IATO bridge tools. Exposed on the MCP endpoint only when an IATO
+// API key is configured (unchanged). When the key is absent but WordPress
+// Abilities exposure is enabled, the same files are loaded in catalog-only
+// mode: IATO_MCP_Server records their definitions and handlers without adding
+// anything to tools/list, so the iato/* abilities can exist and return a clear
+// "not connected" error. See IATO_MCP_Abilities.
+$iato_mcp_connected = get_option( 'iato_mcp_api_key', '' ) !== '';
+if ( $iato_mcp_connected || IATO_MCP_Abilities::is_enabled() ) {
+	IATO_MCP_Server::set_catalog_only( ! $iato_mcp_connected );
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-sitemap.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-nav-audit.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-orphans.php';
@@ -106,7 +119,9 @@ if ( get_option( 'iato_mcp_api_key', '' ) !== '' ) {
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-start-crawl.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-crawl-status.php';
 	require_once IATO_MCP_DIR . 'includes/tools/bridge/tool-list-crawls.php';
+	IATO_MCP_Server::set_catalog_only( false );
 }
+unset( $iato_mcp_connected );
 
 /**
  * Boot the plugin after all plugins are loaded.
@@ -116,11 +131,17 @@ function iato_mcp_init() {
 	IATO_MCP_Settings::init();
 	IATO_MCP_Server::init();
 	IATO_MCP_Rollback::init();
+	IATO_MCP_Receipt_Retention::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
+	IATO_MCP_Abilities::init();
 	iato_mcp_maybe_run_migrations();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
+
+// A deleted administrator's OAuth connections die with the account. (A
+// demoted administrator is caught lazily on the next request or refresh.)
+add_action( 'deleted_user', [ 'IATO_MCP_OAuth', 'on_deleted_user' ], 10, 1 );
 
 // Cron handler for create_media's defer_subsizes path. Generates the
 // intermediate sizes asynchronously so the synchronous MCP response can return
@@ -129,11 +150,12 @@ add_action( 'plugins_loaded', 'iato_mcp_init' );
 add_action( 'iato_mcp_generate_subsizes', [ 'IATO_MCP_Media_Uploader', 'generate_subsizes_async' ], 10, 3 );
 
 /**
- * Run idempotent one-shot migrations gated by stored db_version.
+ * Run idempotent one-shot migrations.
  *
  * Activation hooks don't fire on plugin update, so any post-install
- * data fix-ups have to live here. Each migration block compares against
- * iato_mcp_db_version and bumps the option on success.
+ * data fix-ups have to live here. The tool-list backfill is gated by the
+ * plugin version (iato_mcp_db_version); table changes and data fix-ups by
+ * the schema version (IATO_MCP_Schema), which is independent of it.
  */
 function iato_mcp_maybe_run_migrations() {
 	$db_version = get_option( 'iato_mcp_db_version', '0' );
@@ -162,13 +184,30 @@ function iato_mcp_maybe_run_migrations() {
 		}
 	}
 
+	// Schema migrations (tables and one-shot data fix-ups) are keyed by
+	// IATO_MCP_Schema::VERSION, an integer independent of the plugin version:
+	// a site that ran a pre-release build already stores that build's
+	// db_version, which would make a version_compare gate skip every later
+	// table change. Each step is idempotent; a failing step stops the run and
+	// is retried on the next request. See includes/class-schema.php.
+	IATO_MCP_Schema::run();
+
 	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
-		// Idempotent dbDelta call so upgraded installs (where the activation
-		// hook didn't fire) pick up new tables on first load after update.
-		if ( class_exists( 'IATO_MCP_Media_Phase_Log' ) ) {
-			IATO_MCP_Media_Phase_Log::create_table();
-		}
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
+	}
+
+	// One-shot repair for sites hit by the "bridge tools saved as off" bug: a
+	// non-empty iato_mcp_tools that contains none of the twelve bridge tools is
+	// treated as a save made before an IATO key existed and gets them back.
+	// Runs once (flag option), is idempotent, and leaves any list that already
+	// contains at least one bridge tool alone. See includes/tools-selection.php.
+	if ( ! get_option( 'iato_mcp_bridge_tools_repaired' ) && function_exists( 'iato_mcp_repair_bridge_tools' ) ) {
+		$saved  = get_option( 'iato_mcp_tools', [] );
+		$repair = iato_mcp_repair_bridge_tools( is_array( $saved ) ? $saved : [] );
+		if ( $repair['repaired'] ) {
+			update_option( 'iato_mcp_tools', $repair['tools'] );
+		}
+		update_option( 'iato_mcp_bridge_tools_repaired', '1', false );
 	}
 }
 
@@ -443,10 +482,14 @@ function iato_mcp_page_builder_notice( string $context = 'create' ): ?string {
  * Activation hook — show setup wizard on first run.
  */
 function iato_mcp_activate() {
+	// Generates the site key on first activation and binds it to the activating
+	// administrator (token binding). Keys that already exist are left as they
+	// are: an existing key without an owner stays in legacy mode and the Settings
+	// page / admin notice ask for an owner. Nothing binds automatically on upgrade.
 	IATO_MCP_Auth::maybe_generate_key();
-	IATO_MCP_Change_Receipt::create_table();
-	IATO_MCP_Call_Log::create_table();
-	IATO_MCP_Media_Phase_Log::create_table();
+	// Fresh installs run every schema step (which creates the tables);
+	// reactivations run only the steps the site has not seen.
+	IATO_MCP_Schema::run();
 	update_option( 'iato_mcp_show_wizard', true );
 
 	// Clear stale suggestion generation transients so a fresh install/update
@@ -464,7 +507,8 @@ register_activation_hook( __FILE__, 'iato_mcp_activate' );
  * Options are preserved for reactivation; full cleanup is in uninstall.php.
  */
 function iato_mcp_deactivate() {
-	delete_transient( 'iato_mcp_oauth_pkce' );
 	delete_transient( 'iato_mcp_dashboard_data' );
+	// The daily receipt cleanup; rescheduled on the first request after reactivation.
+	IATO_MCP_Receipt_Retention::unschedule();
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

@@ -15,18 +15,25 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_site_info',
 	[
-		'description' => 'Returns site name, URL, WordPress version, active theme, active plugin count, and the Theme Builder template count. The theme_builder_template_count field (added v1.11.0) counts elementor_library posts that are actually Theme Builder templates (have a non-empty _elementor_template_type meta) — excluding saved sections, reusable blocks, and condition-less popups, since those don\'t shadow URLs. Use list_elementor_templates (manage_options) for the full enumeration once you know templates exist.',
+		'description' => 'Returns site name, URL, WordPress version, active theme, and for administrators (manage_options) the active plugin count and the Theme Builder template count (otherwise listed in restricted_fields). The theme_builder_template_count field (added v1.11.0) counts elementor_library posts that are actually Theme Builder templates (have a non-empty _elementor_template_type meta) — excluding saved sections, reusable blocks, and condition-less popups, since those don\'t shadow URLs. Use list_elementor_templates (manage_options) for the full enumeration once you know templates exist.',
 		'inputSchema' => [ 'type' => 'object', 'properties' => new stdClass(), 'required' => [] ],
 	],
 	function ( array $args ): array|WP_Error {
-		return IATO_MCP_Server::ok( [
-			'name'                          => sanitize_text_field( get_bloginfo( 'name' ) ),
-			'url'                           => site_url(),
-			'wp_version'                    => get_bloginfo( 'version' ),
-			'active_theme'                  => wp_get_theme()->get( 'Name' ),
-			'plugin_count'                  => count( get_option( 'active_plugins', [] ) ),
-			'theme_builder_template_count'  => iato_mcp_count_theme_builder_templates(),
-		] );
+		$info = [
+			'name'         => sanitize_text_field( get_bloginfo( 'name' ) ),
+			'url'          => site_url(),
+			'wp_version'   => get_bloginfo( 'version' ),
+			'active_theme' => wp_get_theme()->get( 'Name' ),
+		];
+		// Site-administration details for administrators only (1.13.0); the
+		// fields above are visible in any page's source.
+		if ( ! is_wp_error( IATO_MCP_Auth::require_cap( 'manage_options' ) ) ) {
+			$info['plugin_count']                 = count( get_option( 'active_plugins', [] ) );
+			$info['theme_builder_template_count'] = iato_mcp_count_theme_builder_templates();
+		} else {
+			$info['restricted_fields'] = [ 'plugin_count', 'theme_builder_template_count' ];
+		}
+		return IATO_MCP_Server::ok( $info );
 	}
 );
 

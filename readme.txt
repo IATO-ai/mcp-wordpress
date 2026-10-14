@@ -2,9 +2,9 @@
 Contributors: iatoai
 Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
-Tested up to: 6.9
+Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.12.2
+Stable tag: 1.13.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -103,7 +103,7 @@ The plugin also implements an OAuth 2.0 authorization server on your WordPress s
 2. Activate the plugin via the Plugins menu in WordPress
 3. Follow the setup wizard that appears — it provides the JSON config for Claude Desktop
 4. In Claude Desktop, either paste the JSON config or use "Add Custom Connector" and enter your site URL
-5. Optionally, go to Settings > IATO MCP to enter your IATO API key for the full analysis pipeline
+5. Optionally, go to Settings > IATO MCP to enter your IATO API key for the full analysis pipeline. Use a separate IATO API key for each client site: a key gives access to every crawl in its IATO account, so a key shared between sites lets one site's administrators see the others' crawl data.
 
 For detailed setup instructions, see the [IATO MCP documentation](https://iato.ai/wordpress-mcp-docs).
 
@@ -111,7 +111,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 40 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
+No. The plugin works standalone for reading and editing WordPress content with 40 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
 
 = Which WordPress version is required? =
 
@@ -127,7 +127,7 @@ Any MCP-enabled client: Claude Desktop, Cursor, VS Code with GitHub Copilot, and
 
 = How does authentication work? =
 
-The plugin generates a secure API key on activation. You can authenticate in two ways: paste the provided Bearer token config into your AI client, or use Claude Desktop's "Add Custom Connector" flow which handles OAuth 2.0 with PKCE automatically.
+The plugin generates a secure API key on activation. You can authenticate in two ways: paste the provided Bearer token config into your AI client, or use Claude's "Add custom connector" flow, which handles OAuth 2.1 with PKCE automatically. Each OAuth connection gets its own expiring token, acts as the administrator who approved it, and can be revoked on its own under Settings > IATO MCP > Connected OAuth clients.
 
 = Why does the plugin support two auth methods? =
 
@@ -157,6 +157,33 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.13.0 =
+* Security: OAuth connections (the Claude connector, Claude Code, Cursor and other MCP clients) now receive their own tokens. The authorization code is random and single use (5 minutes); the access token expires after 1 hour and is renewed with a rotating refresh token (30 days); a connection expires after 180 days unless it is approved again (filter: iato_mcp_oauth_grant_lifetime). Tokens are stored hashed. Before this release the OAuth code and the access token were the site's API key itself.
+* Security: each OAuth connection acts as the administrator who approved it and is re-checked on every request. Deleting or demoting that user revokes the connection. Approving a connection no longer assigns the site's API key to the approving user.
+* New: Settings > IATO MCP lists connected OAuth clients (application, approving user, connected, last used) with a Revoke button per connection and a Disconnect all button, and the plugin serves a token revocation endpoint at /oauth/revoke. Revoking connections does not affect the API key.
+* Security: dynamic client registration accepts https redirect URIs only (plain http only to localhost, 127.0.0.1 or [::1], any port), stores the application name, is rate-limited (10 per IP per 10 minutes, 100 per site per hour; filter: iato_mcp_oauth_registration_limits), and removes registrations that never complete an authorization after 24 hours or have had no live connection for 30 days.
+* Security: PKCE (S256) is required at /oauth/authorize; the resource parameter (RFC 8707) is checked; the authorization response carries iss (RFC 9207); the consent screen shows the application name, the host it will send you back to, and the user the connection will act as, and its approval is bound to that exact request. Logged-in users who are not administrators get a clear "administrators only" page. Follows the MCP authorization specification revision 2026-07-28. Client ID Metadata Documents ("Use Claude's published identity") are not supported yet; Claude falls back to dynamic registration on its own.
+* Fix: database changes are now tracked by a schema version separate from the plugin version, so a site that ran a pre-release build still receives every later table change.
+* Security: update_post_meta and inherit_keys no longer write Elementor builder data. Every _elementor_ key is refused except _elementor_page_settings (whose values are sanitised), _elementor_edit_mode and _elementor_template_type; the error names the Elementor tool to use. Element trees stored as arrays by earlier versions are still read.
+* Security: when Elementor's own save refuses, throws (some addon packs) or Elementor is not loaded, the plugin now sanitises the values the request changed before storing the tree, by field type: URL fields through esc_url_raw, custom_css through sanitize_textarea_field, strings containing markup through wp_kses_post; untouched values, plain text, numbers and booleans are stored verbatim. Elementor's save runs first and the raw tree is never written. Responses carry sanitized: true and the changed setting paths when a value was altered; dry runs report the same.
+* Fix: the 1.12.2 fix (edits change only the values they set) now also holds when Elementor's own save runs, which it does for a key bound to an owner and for OAuth connections; what a person authored elsewhere on the page is stored as it was.
+* Security: content written through MCP with an Application Password is now filtered like a non-administrator's (the same kses rules that already applied to the API key and OAuth), so scripts and embeds in Elementor widgets or post content are stripped even for administrators. A developer who needs raw HTML through MCP can opt out with the iato_mcp_allow_unfiltered_html filter (receives the user ID and the credential kind; honoured only for Application Password users who hold unfiltered_html).
+* Security: every change receipt records who made it: the WordPress user, the credential (site key, OAuth connection or Application Password) and the OAuth application. Only that user or an administrator can roll the change back; changes recorded before 1.13.0 keep the earlier rules. Rollback responses and the Diagnostics call log show who made and who undid each change.
+* New: rollback refuses to overwrite a value that has changed since the change was made (a later edit in WordPress or another change) and shows the current and expected values; pass force: true to roll back anyway, or dry_run: true to check first.
+* Fix: Elementor edits can be rolled back exactly (the receipt now keeps the page as it was before the edit). Elementor receipts from earlier versions held only a revision hash; their rollback now says so instead of failing.
+* New: those page copies are removed automatically after 90 days by a daily task; the receipt stays as a record of who changed what, and older edits are restored from Elementor's revisions instead. Developers can change the period with the iato_mcp_receipt_retention_days filter (0 keeps them). Diagnostics shows when the cleanup last ran.
+* Fix: backslashes are kept. Post and page titles, content and excerpts, post meta (including Elementor page settings such as custom CSS escapes like \201C), SEO titles and descriptions, alt text, media titles and captions, menu item titles and term names and descriptions written through MCP used to lose every backslash, and rollback could not restore them.
+* Fix: rolling back a tag added to a post that had no tags no longer removes the post's categories, and rolling back a term edit restores the term (it did nothing before).
+* Security: the IATO bridge tools (crawls, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy, suggestions, performance, sitemap) now require an administrator (manage_options) through MCP, as they already did as WordPress abilities. They return the IATO account's crawl data, which can include other sites. The iato_mcp_ability_capability filter lowers the requirement for both surfaces.
+* Security: get_media requires upload_files (Author and above), the same as the Media Library.
+* Security: get_comments returns only comments on posts the caller can read (password-protected posts need edit rights), and held, spam or trashed comments require moderate_comments. An unknown status is now an error instead of an empty list.
+* Security: get_menu_items leaves out items that link to posts the caller cannot read, such as drafts and private posts, and reports how many it left out.
+* Security: get_site_info returns the active plugin count and the Theme Builder template count to administrators only; other users see them listed under restricted_fields.
+* Security: resolve_url answers with a 404 for posts the caller cannot read, as WordPress does for visitors.
+* Security: writing _elementor_template_type with update_post_meta requires an administrator; update_elementor_data's inherit step skips it for other users and says why.
+* Security: in array values written to other post meta keys (custom fields, theme and SEO plugin settings), text containing HTML that the write changes is filtered with wp_kses_post, like Elementor values; values already stored are kept as they are.
+* Note on upgrade: OAuth connections made before 1.13.0 keep working (they hold the API key) but cannot be revoked individually. An admin notice explains how to move them to their own tokens (remove and re-add the connector in the AI client) and that regenerating the API key disconnects all of them; Settings and Diagnostics keep pointing this out until the key is regenerated. An authorization that was in progress during the upgrade has to be started again.
 
 = 1.12.2 =
 * Fixed: editing an Elementor page with an IATO site key or OAuth connection removed iframes, scripts and other HTML from widgets the edit didn't change, and turned & into &amp; in text. Edits now change only the values they set. Affects 1.0.0 to 1.12.1. Connections using an Application Password of a user who may publish unfiltered HTML (administrators and editors on a single site, super admins on multisite) were not affected.
@@ -390,6 +417,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.13.0 =
+Security release. OAuth connections now get their own revocable tokens: remove and re-add the Claude connector once. MCP content is filtered for every role, rollbacks record who made each change, and IATO crawl tools need an administrator.
 
 = 1.12.2 =
 Fixes Elementor edits made with an IATO key or OAuth connection removing embeds, scripts and other HTML from other widgets. To repair a page edited before this update, restore an earlier version in Elementor's History panel, under Revisions.

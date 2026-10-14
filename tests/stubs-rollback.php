@@ -12,8 +12,8 @@ final class IATO_Test_Roles {
 		'subscriber'    => [ 'read' ],
 		'contributor'   => [ 'read', 'edit_posts', 'delete_posts' ],
 		'author'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files' ],
-		'editor'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'unfiltered_html' ],
-		'administrator' => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'unfiltered_html', 'manage_options', 'edit_theme_options' ],
+		'editor'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'moderate_comments', 'unfiltered_html' ],
+		'administrator' => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'moderate_comments', 'unfiltered_html', 'manage_options', 'edit_theme_options' ],
 	];
 	/** @var array<int,string> user id => role */
 	public static array $users = [];
@@ -93,7 +93,15 @@ if ( ! function_exists( 'user_can' ) ) {
 }
 if ( ! function_exists( 'get_post' ) ) {
 	function get_post( int $id ): ?object {
-		return isset( IATO_Test_Roles::$posts[ $id ] ) ? (object) ( [ 'ID' => $id ] + IATO_Test_Roles::$posts[ $id ] ) : null;
+		if ( isset( IATO_Test_Roles::$posts[ $id ] ) ) {
+			return (object) ( [ 'ID' => $id ] + IATO_Test_Roles::$posts[ $id ] );
+		}
+		// Posts from the generic test store (ElementorWritePipelineTest), when
+		// this stub happens to load first.
+		if ( class_exists( 'IATO_Test_WP' ) && isset( IATO_Test_WP::$posts[ $id ] ) ) {
+			return (object) ( [ 'ID' => $id ] + IATO_Test_WP::$posts[ $id ] );
+		}
+		return null;
 	}
 }
 if ( ! function_exists( 'get_term' ) ) {

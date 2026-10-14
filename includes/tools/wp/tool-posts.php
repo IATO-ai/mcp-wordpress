@@ -197,11 +197,15 @@ IATO_MCP_Server::register_tool(
 			'post_type'    => $post_type,
 		];
 
-		$post_id = wp_insert_post( $postarr, true );
+		// Slashed: wp_insert_post() unslashes, which would strip every backslash.
+		$post_id = wp_insert_post( wp_slash( $postarr ), true );
 		if ( is_wp_error( $post_id ) ) {
 			return $post_id;
 		}
 
+		// The title as WordPress stored it (kses on save normalises entities),
+		// which is what the rollback conflict check reads back.
+		$created = get_post( $post_id );
 		$receipt = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'post',
@@ -209,7 +213,7 @@ IATO_MCP_Server::register_tool(
 			null,
 			[
 				'post_type' => $post_type,
-				'title'     => $postarr['post_title'],
+				'title'     => $created ? $created->post_title : $postarr['post_title'],
 			]
 		);
 
@@ -311,7 +315,8 @@ IATO_MCP_Server::register_tool(
 			$before['slug']       = $post->post_name;
 		}
 
-		$result = wp_update_post( $postarr, true );
+		// Slashed: wp_update_post() unslashes, which would strip every backslash.
+		$result = wp_update_post( wp_slash( $postarr ), true );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -324,16 +329,20 @@ IATO_MCP_Server::register_tool(
 			'slug'    => 'post_name',
 		];
 
+		// After values as WordPress stored them: wp_update_post() runs the
+		// content filters (kses normalises entities, for one), and the rollback
+		// conflict check compares the stored value with the receipt's.
+		$fresh    = get_post( $post_id );
 		$receipts = [];
 		foreach ( $before as $field => $before_value ) {
-			$after_value = $postarr[ $field_to_postkey[ $field ] ];
+			$postkey     = $field_to_postkey[ $field ];
+			$after_value = $fresh ? $fresh->{$postkey} : $postarr[ $postkey ];
 			if ( $before_value === $after_value ) {
 				continue;
 			}
 			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post', $field, $before_value, $after_value );
 		}
 
-		$fresh = get_post( $post_id );
 		$data  = [
 			'id'       => $post_id,
 			'url'      => get_permalink( $post_id ),

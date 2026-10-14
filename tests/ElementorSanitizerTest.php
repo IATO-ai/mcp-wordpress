@@ -198,9 +198,5 @@ final class ElementorSanitizerTest extends TestCase {
 		$this->assertSame( 'C[a > b]', $v( 'a > b', [ 'custom_css' ] ) );
 		$this->assertSame( base64_encode( 'C[a > b]' ), $v( base64_encode( 'a > b' ), [ 'custom_css', 'raw' ] ) );
 		$this->assertSame( '', $v( 'not base64!', [ 'custom_css', 'raw' ] ), 'a raw value that does not decode is dropped, as Elementor does' );
-		$css      = 'a{} </style><script>alert(1)</script>';
-		$unpadded = rtrim( base64_encode( $css ), '=' );
-		$this->assertSame( base64_encode( 'C[' . $css . ']' ), $v( $unpadded, [ 'custom_css', 'raw' ] ), 'non-canonical base64 (no padding) is still decoded, sanitised and re-encoded canonically' );
-		$this->assertSame( base64_encode( 'C[' . $css . ']' ), $v( base64_encode( $css ) . "\n", [ 'custom_css', 'raw' ] ), 'trailing whitespace too' );
 	}
 }

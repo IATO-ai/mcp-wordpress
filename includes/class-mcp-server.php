@@ -14,8 +14,26 @@ defined( 'ABSPATH' ) || exit;
 
 class IATO_MCP_Server {
 
-	/** @var array<string,callable> Registered tool handlers keyed by tool name. */
+	/** @var array<string,array{definition:array,handler:callable}> Tools exposed on the MCP endpoint, keyed by tool name. */
 	private static array $tools = [];
+
+	/**
+	 * Every tool that was ever passed to register_tool(), including tools
+	 * toggled off in Settings and tools loaded in catalog-only mode. The
+	 * WordPress Abilities layer (IATO_MCP_Abilities) reads definitions and
+	 * handlers from here so the two surfaces share one implementation.
+	 *
+	 * @var array<string,array{definition:array,handler:callable}>
+	 */
+	private static array $catalog = [];
+
+	/**
+	 * When true, register_tool() fills the catalog but leaves $tools alone, so
+	 * nothing new appears on tools/list. iato-mcp.php switches this on while
+	 * loading the bridge tool files on a site that has no IATO API key but has
+	 * abilities exposure enabled.
+	 */
+	private static bool $catalog_only = false;
 
 	/**
 	 * Boot: register REST route and auth response filter.
@@ -85,10 +103,14 @@ class IATO_MCP_Server {
 
 		if ( 401 === $response->get_status() ) {
 			$resource_metadata_url = home_url( '/.well-known/oauth-protected-resource' );
-			$response->header(
-				'WWW-Authenticate',
-				'Bearer resource_metadata="' . esc_url_raw( $resource_metadata_url ) . '"'
-			);
+			$challenge             = 'Bearer resource_metadata="' . esc_url_raw( $resource_metadata_url ) . '"';
+			// RFC 6750 §3.1: a presented-but-refused token (expired or revoked
+			// OAuth token, wrong site key) is reported as invalid_token, which
+			// is what tells an OAuth client to refresh or re-authorize.
+			if ( class_exists( 'IATO_MCP_Auth' ) && IATO_MCP_Auth::token_was_refused() ) {
+				$challenge .= ', error="invalid_token"';
+			}
+			$response->header( 'WWW-Authenticate', $challenge );
 		}
 
 		return $response;
@@ -105,14 +127,98 @@ class IATO_MCP_Server {
 	 * @param callable $handler    Handler — receives assoc array of params, returns array|WP_Error.
 	 */
 	public static function register_tool( string $name, array $definition, callable $handler ): void {
+		$entry = [
+			'definition' => $definition,
+			'handler'    => $handler,
+		];
+
+		// The catalog records every tool regardless of toggles or mode.
+		self::$catalog[ $name ] = $entry;
+
+		if ( self::$catalog_only ) {
+			return;
+		}
+
 		if ( class_exists( 'IATO_MCP_Settings' ) && ! IATO_MCP_Settings::is_tool_enabled( $name ) ) {
 			return;
 		}
 
-		self::$tools[ $name ] = [
-			'definition' => $definition,
-			'handler'    => $handler,
-		];
+		self::$tools[ $name ] = $entry;
+	}
+
+	/**
+	 * Toggle catalog-only registration (see $catalog_only).
+	 */
+	public static function set_catalog_only( bool $catalog_only ): void {
+		self::$catalog_only = $catalog_only;
+	}
+
+	/**
+	 * Definition + handler for a tool that was passed to register_tool(),
+	 * whether or not it is exposed on the MCP endpoint. Null if unknown.
+	 *
+	 * @return array{definition:array,handler:callable}|null
+	 */
+	public static function get_catalog_entry( string $name ): ?array {
+		return self::$catalog[ $name ] ?? null;
+	}
+
+	/**
+	 * Is the tool exposed on the MCP endpoint (tools/list, tools/call)?
+	 */
+	public static function is_tool_registered( string $name ): bool {
+		return isset( self::$tools[ $name ] );
+	}
+
+	/**
+	 * Invoke a catalogued tool handler and return its decoded payload.
+	 *
+	 * Handlers return the MCP text envelope built by ok(); this unwraps it so
+	 * non-MCP callers (WordPress Abilities) get the same associative array the
+	 * MCP client would json_decode. WP_Error results pass through unchanged.
+	 * Handlers that return an isError envelope are converted to WP_Error.
+	 *
+	 * @param array $args Assoc array of tool arguments.
+	 */
+	public static function invoke_tool( string $name, array $args ): array|WP_Error {
+		$entry = self::$catalog[ $name ] ?? null;
+		if ( null === $entry ) {
+			return new WP_Error( 'tool_not_found', "Unknown tool: {$name}" );
+		}
+
+		$result = call_user_func( $entry['handler'], $args );
+
+		if ( is_wp_error( $result ) ) {
+			// Mirror handle_tools_call(): IATO API errors can carry an array
+			// message, which the MCP path JSON-encodes. Do the same here so an
+			// ability returns exactly the text the MCP tool would.
+			$err_msg = $result->get_error_message();
+			if ( ! is_string( $err_msg ) ) {
+				$err_msg = is_array( $err_msg ) ? wp_json_encode( $err_msg ) : (string) $err_msg;
+				return new WP_Error( $result->get_error_code(), $err_msg, $result->get_error_data() );
+			}
+			return $result;
+		}
+
+		if ( ! is_array( $result ) ) {
+			return new WP_Error( 'tool_invalid_result', "Tool {$name} returned an unexpected result type." );
+		}
+
+		$text = $result['content'][0]['text'] ?? null;
+		if ( ! empty( $result['isError'] ) ) {
+			return new WP_Error( 'tool_error', is_string( $text ) ? $text : "Tool {$name} failed." );
+		}
+
+		if ( is_string( $text ) ) {
+			$decoded = json_decode( $text, true );
+			if ( JSON_ERROR_NONE === json_last_error() && is_array( $decoded ) ) {
+				return $decoded;
+			}
+			return new WP_Error( 'tool_invalid_result', "Tool {$name} returned non-JSON content." );
+		}
+
+		// Not an ok() envelope — return as-is.
+		return $result;
 	}
 
 	/**
@@ -322,6 +428,22 @@ class IATO_MCP_Server {
 
 		if ( ! isset( self::$tools[ $name ] ) ) {
 			return new WP_Error( 'tool_not_found', "Unknown tool: {$name}" );
+		}
+
+		// IATO bridge tools return the IATO account's crawl data, which can
+		// cover other client sites: manage_options, as for the abilities
+		// (1.13.0). Checked here, not in the handlers, because the abilities
+		// run the same handlers outside MCP authentication, behind their own
+		// permission_callback.
+		$tool_cap = class_exists( 'IATO_MCP_Abilities' ) ? IATO_MCP_Abilities::capability_for_tool( $name ) : null;
+		if ( null !== $tool_cap ) {
+			$cap_check = IATO_MCP_Auth::require_cap( $tool_cap );
+			if ( is_wp_error( $cap_check ) ) {
+				return [
+					'isError' => true,
+					'content' => [ [ 'type' => 'text', 'text' => $cap_check->get_error_message() ] ],
+				];
+			}
 		}
 
 		$handler = self::$tools[ $name ]['handler'];

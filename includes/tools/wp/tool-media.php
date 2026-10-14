@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_media',
 	[
-		'description' => 'List media library items. Returns ID, URL, alt text, title, and mime type.',
+		'description' => 'List media library items. Returns ID, URL, alt text, title, and mime type. Requires upload_files (Author and above).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -25,6 +25,13 @@ IATO_MCP_Server::register_tool(
 		],
 	],
 	function ( array $args ): array|WP_Error {
+		// The whole image library, including images attached to drafts and
+		// private posts: the same capability the Media Library needs (1.13.0).
+		$cap_check = IATO_MCP_Auth::require_cap( 'upload_files' );
+		if ( is_wp_error( $cap_check ) ) {
+			return $cap_check;
+		}
+
 		$per_page    = min( absint( $args['per_page'] ?? 20 ), 100 );
 		$missing_alt = ! empty( $args['missing_alt'] );
 
@@ -104,9 +111,9 @@ IATO_MCP_Server::register_tool(
 		$before_alt = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
 		$before_alt = '' !== $before_alt ? $before_alt : null;
 
-		update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+		update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( $alt ) ); // update_post_meta() unslashes
 
-		$receipt = IATO_MCP_Change_Receipt::record( $attachment_id, 'image', 'alt_text', $before_alt, $alt );
+		$receipt = IATO_MCP_Change_Receipt::record( $attachment_id, 'image', 'alt_text', $before_alt, get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ) );
 
 		$data = [
 			'id'  => $attachment_id,
