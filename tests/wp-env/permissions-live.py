@@ -182,6 +182,12 @@ ok('contributor rollback via tool of the title edit on own draft', call(c, 'roll
 pub = call(e, 'update_post', {'id': AD, 'status': 'publish'}); ok('editor publishes author draft', pub)
 unpub = call(e, 'update_post', {'id': AD, 'status': 'draft'}); ok('editor unpublishes author post', unpub)
 rid = next((r['change_id'] for r in receipts(unpub) if r.get('field') == 'status'), None)
+# 1.13.0: only the user who made a change or an administrator may roll it back.
+rb = call(a, 'rollback', {'change_id': rid})
+record("author cannot roll back the editor's unpublish of the author's post (1.13.0 actor rule)", bool(rb.get('isError')) and 'rollback_actor_mismatch' in rb.get('text', ''), rb)
+pub = call(a, 'update_post', {'id': AD, 'status': 'publish'}); ok('author republishes own post', pub)
+unpub = call(a, 'update_post', {'id': AD, 'status': 'draft'}); ok('author unpublishes own post', unpub)
+rid = next((r['change_id'] for r in receipts(unpub) if r.get('field') == 'status'), None)
 rb = call(a, 'rollback', {'change_id': rid})
 ok('author rollback re-publishes own post (publish_posts)', rb)
 gp = call('admin', 'get_post', {'id': AD})

@@ -69,7 +69,7 @@ class IATO_MCP_SEO_Adapter {
 		}
 
 		$title = sanitize_text_field( $title );
-		update_post_meta( $post_id, $key, $title );
+		update_post_meta( $post_id, $key, wp_slash( $title ) ); // update_post_meta() unslashes
 
 		return true;
 	}
@@ -91,7 +91,7 @@ class IATO_MCP_SEO_Adapter {
 		}
 
 		$description = sanitize_textarea_field( $description );
-		update_post_meta( $post_id, $key, $description );
+		update_post_meta( $post_id, $key, wp_slash( $description ) );
 
 		return true;
 	}
@@ -154,7 +154,7 @@ class IATO_MCP_SEO_Adapter {
 		}
 
 		$url = esc_url_raw( $url );
-		update_post_meta( $post_id, $key, $url );
+		update_post_meta( $post_id, $key, wp_slash( $url ) );
 
 		return true;
 	}

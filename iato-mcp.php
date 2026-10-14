@@ -57,6 +57,8 @@ require_once IATO_MCP_DIR . 'includes/class-meta-policy.php';
 require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
+require_once IATO_MCP_DIR . 'includes/class-rollback-conflict.php';
+require_once IATO_MCP_DIR . 'includes/class-receipt-retention.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth-store.php';
 require_once IATO_MCP_DIR . 'includes/class-schema.php';
 require_once IATO_MCP_DIR . 'includes/class-oauth.php';
@@ -129,6 +131,7 @@ function iato_mcp_init() {
 	IATO_MCP_Settings::init();
 	IATO_MCP_Server::init();
 	IATO_MCP_Rollback::init();
+	IATO_MCP_Receipt_Retention::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
 	IATO_MCP_Abilities::init();
@@ -505,5 +508,7 @@ register_activation_hook( __FILE__, 'iato_mcp_activate' );
  */
 function iato_mcp_deactivate() {
 	delete_transient( 'iato_mcp_dashboard_data' );
+	// The daily receipt cleanup; rescheduled on the first request after reactivation.
+	IATO_MCP_Receipt_Retention::unschedule();
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

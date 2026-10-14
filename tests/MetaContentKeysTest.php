@@ -117,6 +117,18 @@ final class MetaContentKeysTest extends TestCase {
 		$this->assertSame( [ 'a' => '<b>x</b>' ], IATO_Test_WP::$meta[ self::POST ]['my_public_key'] );
 	}
 
+	public function test_backslashes_survive_meta_writes(): void {
+		$b = chr( 92 );
+		$v = "a{$b}b C:{$b}Users {$b}d+ quote{$b}\" esc{$b}{$b}";
+		$this->call( [ 'key' => 'probe_string', 'value' => $v ] );
+		$this->assertSame( $v, IATO_Test_WP::$meta[ self::POST ]['probe_string'], 'update_post_meta() unslashes: the tool slashes first' );
+		$this->call( [ 'key' => 'probe_array', 'value' => [ 'v' => $v, 'n' => [ 'deep' => $v ] ] ] );
+		$this->assertSame( [ 'v' => $v, 'n' => [ 'deep' => $v ] ], IATO_Test_WP::$meta[ self::POST ]['probe_array'] );
+		$css = ".x:before { content: \"{$b}201C\"; }";
+		$this->call( [ 'key' => '_elementor_page_settings', 'value' => [ 'custom_css' => $css ] ] );
+		$this->assertStringContainsString( "{$b}201C", IATO_Test_WP::$meta[ self::POST ]['_elementor_page_settings']['custom_css'], 'CSS escapes in Elementor page settings survive' );
+	}
+
 	public function test_policy_helper_directly(): void {
 		$this->assertTrue( IATO_MCP_Meta_Policy::check_elementor_meta_write( 'my_key' ) );
 		$this->assertTrue( IATO_MCP_Meta_Policy::check_elementor_meta_write( '_Elementor_Page_Settings' ) );

@@ -4,7 +4,11 @@
  *
  * Reverses a previous write using the change_id returned in a prior tool
  * response's change_receipt. Wraps IATO_MCP_Rollback::rollback_by_id, which
- * handles the receipt lookup, idempotency check, dispatch, and mark-rolled-back.
+ * handles the receipt lookup, idempotency check, conflict check, dispatch,
+ * and mark-rolled-back. Since 1.13.0 only the user who made the change or an
+ * administrator may roll it back, a change that something else has since
+ * overwritten is refused unless `force` is passed, and `dry_run` reports
+ * what would happen.
  *
  * @package IATO_MCP
  */
@@ -14,7 +18,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'rollback',
 	[
-		'description' => 'Reverse a previous write using its change_id. Pass the change_id from a prior tool response\'s change_receipt. Returns the restored value.',
+		'description' => 'Reverse a previous write using its change_id. Pass the change_id from a prior tool response\'s change_receipt. Returns the restored value, who made the change and who rolled it back. Only the user who made the change or an administrator can roll it back. If the value has changed since (a later edit, another rollback), the rollback is refused with rollback_conflict and the current and expected values; roll back the later change first, or pass force: true. Use dry_run: true to check first.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -22,6 +26,14 @@ IATO_MCP_Server::register_tool(
 					'type'        => 'string',
 					'description' => 'The wr_ prefixed change_id from a prior tool response.',
 					'pattern'     => '^wr_[a-f0-9]{16}$',
+				],
+				'force'     => [
+					'type'        => 'boolean',
+					'description' => 'Roll back even though the value has changed since this change was made, overwriting the newer value (default: false).',
+				],
+				'dry_run'   => [
+					'type'        => 'boolean',
+					'description' => 'Report what would be restored and whether the value has changed since, without writing (default: false).',
 				],
 			],
 			'required' => [ 'change_id' ],
@@ -64,14 +76,42 @@ IATO_MCP_Server::register_tool(
 		// IATO_MCP_Rollback::check_permission().
 		$perm = IATO_MCP_Rollback::check_permission( $receipt );
 		if ( is_wp_error( $perm ) ) {
-			return $perm;
+			return iato_mcp_rollback_error( $perm );
 		}
 
-		$result = IATO_MCP_Rollback::rollback_by_id( $change_id );
+		$result = IATO_MCP_Rollback::rollback_by_id( $change_id, [
+			'force'   => ! empty( $args['force'] ),
+			'dry_run' => ! empty( $args['dry_run'] ),
+		] );
 		if ( is_wp_error( $result ) ) {
-			return $result;
+			return iato_mcp_rollback_error( $result );
 		}
 
 		return IATO_MCP_Server::ok( $result );
 	}
 );
+
+/**
+ * MCP clients only see a tool error's text. Refusals that carry details the
+ * client needs to act on (the conflicting values, who made the change) are
+ * returned as a tool error whose text is JSON: { error, message, ... }.
+ * Other errors pass through unchanged.
+ */
+if ( ! function_exists( 'iato_mcp_rollback_error' ) ) :
+function iato_mcp_rollback_error( WP_Error $error ): array|WP_Error {
+	$detailed = [ 'rollback_conflict', 'rollback_actor_mismatch', 'rollback_unavailable', 'already_rolled_back' ];
+	if ( ! in_array( $error->get_error_code(), $detailed, true ) ) {
+		return $error;
+	}
+	$data = $error->get_error_data();
+	$data = is_array( $data ) ? $data : [];
+	unset( $data['status'] );
+	return [
+		'isError' => true,
+		'content' => [ [
+			'type' => 'text',
+			'text' => (string) wp_json_encode( [ 'error' => $error->get_error_code(), 'message' => $error->get_error_message() ] + $data ),
+		] ],
+	];
+}
+endif;

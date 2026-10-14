@@ -62,7 +62,8 @@ IATO_MCP_Server::register_tool(
 			return $result;
 		}
 
-		$receipt = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'canonical_url', $before, $canonical_url );
+		// As stored and read back (the adapter runs esc_url_raw on write).
+		$receipt = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'canonical_url', $before, IATO_MCP_SEO_Adapter::get_canonical( $post_id ) );
 
 		$data = [
 			'post_id'       => $post_id,

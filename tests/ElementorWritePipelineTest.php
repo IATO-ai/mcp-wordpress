@@ -76,7 +76,7 @@ namespace {
 		function get_post_field( string $field, int $id ): string { return (string) ( IATO_Test_WP::$posts[ $id ][ $field ] ?? '' ); }
 	}
 	if ( ! function_exists( 'update_post_meta' ) ) {
-		function update_post_meta( int $id, string $key, mixed $value ): bool { $v = is_string( $value ) ? stripslashes( $value ) : $value; IATO_Test_WP::$meta[ $id ][ $key ] = $v; IATO_Test_WP::$writes[] = [ $id, $key, $v ]; IATO_Test_WP::note_write( $key ); return true; }
+		function update_post_meta( int $id, string $key, mixed $value ): bool { $v = is_string( $value ) ? stripslashes( $value ) : ( is_array( $value ) ? IATO_Test_WP::unslash_deep( $value ) : $value ); IATO_Test_WP::$meta[ $id ][ $key ] = $v; IATO_Test_WP::$writes[] = [ $id, $key, $v ]; IATO_Test_WP::note_write( $key ); return true; }
 	}
 	if ( ! function_exists( 'delete_post_meta' ) ) {
 		function delete_post_meta( int $id, string $key ): bool { unset( IATO_Test_WP::$meta[ $id ][ $key ] ); return true; }
@@ -85,10 +85,10 @@ namespace {
 		function wp_cache_delete( mixed $key, string $group = '' ): bool { return true; }
 	}
 	if ( ! function_exists( 'wp_slash' ) ) {
-		function wp_slash( mixed $v ): mixed { return is_string( $v ) ? addslashes( $v ) : $v; }
+		function wp_slash( mixed $v ): mixed { return is_array( $v ) ? array_map( 'wp_slash', $v ) : ( is_string( $v ) ? addslashes( $v ) : $v ); }
 	}
 	if ( ! function_exists( 'wp_update_post' ) ) {
-		function wp_update_post( array $postarr ): int { IATO_Test_WP::$posts[ $postarr['ID'] ]['post_content'] = $postarr['post_content'] ?? ''; return $postarr['ID']; }
+		function wp_update_post( array $postarr ): int { IATO_Test_WP::$posts[ $postarr['ID'] ]['post_content'] = stripslashes( (string) ( $postarr['post_content'] ?? '' ) ); return $postarr['ID']; } // core unslashes
 	}
 
 	final class ElementorWritePipelineTest extends TestCase {

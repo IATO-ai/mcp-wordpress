@@ -20,8 +20,9 @@
 5. [IATO Bridge Tools](#iato-bridge-tools)
 6. [SEO Plugin Support](#seo-plugin-support)
 7. [Dry-Run Mode](#dry-run-mode)
-8. [Example Prompts](#example-prompts)
-9. [Troubleshooting](#troubleshooting)
+8. [Undoing Changes](#undoing-changes)
+9. [Example Prompts](#example-prompts)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -471,6 +472,17 @@ Write operations that modify external data support `dry_run: true`. When enabled
 | `update_elementor_data` | Whether the supplied JSON is valid and would be written |
 
 Dry-run responses always include `"dry_run": true` and show actions like `"would_update"` instead of executing the write.
+
+---
+
+## Undoing Changes
+
+Every write tool returns a `change_receipt` with a `change_id`. Pass it to the `rollback` tool to put back the value the change replaced. The receipt also says who made the change: the WordPress user, how they connected (site key, OAuth connection or Application Password) and, for OAuth, which application.
+
+- **Who can undo a change.** The user who made it, or an administrator. An Editor cannot undo an Author's change, even on a post the Editor may edit. Changes recorded before version 1.13.0 keep the earlier rule: anyone allowed to edit the object.
+- **Changes that were changed again.** If the value is no longer what the change left behind, because someone edited it afterwards in WordPress or another change came later, `rollback` refuses with `rollback_conflict` and shows the current and expected values. Undo the later change first, or pass `force: true` to overwrite it.
+- **Checking first.** `dry_run: true` reports what would be restored and whether the value has changed since, without writing anything.
+- **Elementor pages.** Elementor edits made with 1.13.0 or later can be undone exactly for 90 days, including content a person added elsewhere on the page. Each receipt keeps a copy of the page as it was, and a daily cleanup removes copies older than 90 days to keep the database small; the receipt itself stays. Older edits, and edits made with versions before 1.13.0, are restored in Elementor under History, then Revisions. Settings > IATO MCP Diagnostics shows when the cleanup last ran. A developer can change the period with the `iato_mcp_receipt_retention_days` filter (0 keeps every copy).
 
 ---
 

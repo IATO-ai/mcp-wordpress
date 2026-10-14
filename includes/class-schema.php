@@ -25,7 +25,7 @@ class IATO_MCP_Schema {
 	public const OPTION = 'iato_mcp_schema_version';
 
 	/** The schema version this code expects. Bump when adding a step. */
-	public const VERSION = 3;
+	public const VERSION = 5;
 
 	/** Last step failure, for diagnostics ("step N: message"). */
 	private static string $last_error = '';
@@ -48,6 +48,8 @@ class IATO_MCP_Schema {
 			1 => [ self::class, 'step_base_tables' ],
 			2 => [ self::class, 'step_oauth_tables' ],
 			3 => [ self::class, 'step_oauth_grants' ],
+			4 => [ self::class, 'step_receipt_actors' ],
+			5 => [ self::class, 'step_receipt_retention' ],
 		];
 	}
 
@@ -147,5 +149,26 @@ class IATO_MCP_Schema {
 		IATO_MCP_OAuth_Store::create_tables();
 		IATO_MCP_OAuth_Store::backfill_grants();
 		delete_option( 'iato_mcp_oauth_grants_backfilled' );
+	}
+
+	/**
+	 * 4 (1.13.0, Part 3): who made each change. Receipts gain the actor
+	 * (WordPress user, credential kind, OAuth client) and who rolled them back;
+	 * the call log gains the credential kind and OAuth client. dbDelta adds the
+	 * columns and the index; existing rows keep NULL, which the rollback rule
+	 * reads as "recorded before actors existed".
+	 */
+	public static function step_receipt_actors(): void {
+		IATO_MCP_Change_Receipt::create_table();
+		IATO_MCP_Call_Log::create_table();
+	}
+
+	/**
+	 * 5 (1.13.0, Part 3): receipt retention. Receipts gain pruned_at (set when
+	 * IATO_MCP_Receipt_Retention clears an old Elementor page copy) and an index
+	 * on (target_type, applied_at) for the cleanup query. dbDelta.
+	 */
+	public static function step_receipt_retention(): void {
+		IATO_MCP_Change_Receipt::create_table();
 	}
 }

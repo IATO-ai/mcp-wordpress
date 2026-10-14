@@ -41,9 +41,9 @@ class IATO_MCP_Rollback {
 		$body = $request->get_json_params();
 
 		$change_id    = sanitize_text_field( $body['change_id'] ?? '' );
-		$target_type  = sanitize_text_field( $body['target_type'] ?? '' );
-		$field        = sanitize_text_field( $body['field'] ?? '' );
 		$before_value = $body['before_value'] ?? null;
+		$force        = ! empty( $body['force'] );
+		$dry_run      = ! empty( $body['dry_run'] );
 
 		if ( empty( $change_id ) ) {
 			return new WP_Error( 'missing_change_id', 'change_id is required.', [ 'status' => 400 ] );
@@ -81,51 +81,30 @@ class IATO_MCP_Rollback {
 		if ( ! empty( $receipt['rolled_back_at'] ) ) {
 			return self::error_response( 'already rolled back', $change_id, 400, [
 				'rolled_back_at' => $receipt['rolled_back_at'],
+				'rolled_back_by' => IATO_MCP_Change_Receipt::describe_actor( IATO_MCP_Change_Receipt::rolled_back_by_of( $receipt ) ),
 			] );
 		}
 
 		// Validate before_value matches stored receipt.
-		$stored_before = $receipt['before_value'];
-		if ( ! self::values_match( $before_value, $stored_before ) ) {
+		if ( ! self::values_match( $before_value, $receipt['before_value'] ) ) {
 			return self::error_response( 'before_value mismatch — rollback rejected', $change_id, 400 );
 		}
 
-		// Dispatch rollback by target_type + field.
-		$post_id     = $receipt['post_id'] ? (int) $receipt['post_id'] : null;
-		$stored_type = $receipt['target_type'];
-		$stored_field = $receipt['field'];
-
-		$result = self::dispatch_rollback( $stored_type, $stored_field, $post_id, $stored_before );
-
-		// Special case: create_term rollback needs after_value from the receipt.
-		if ( is_wp_error( $result ) && '__internal__' === $result->get_error_message() ) {
-			$after_data = json_decode( $receipt['after_value'] ?? '{}', true );
-			if ( is_array( $after_data ) && ! empty( $after_data['term_id'] ) && ! empty( $after_data['taxonomy'] ) ) {
-				$del = wp_delete_term( (int) $after_data['term_id'], $after_data['taxonomy'] );
-				$result = is_wp_error( $del ) ? $del : true;
-			} else {
-				return self::error_response( 'Cannot rollback create_term: missing term data in receipt.', $change_id, 400 );
-			}
-		}
-
+		$result = self::execute( $receipt, [ 'force' => $force, 'dry_run' => $dry_run ] );
 		if ( is_wp_error( $result ) ) {
+			$data = $result->get_error_data();
+			$data = is_array( $data ) ? $data : [];
+			if ( 'rollback_conflict' === $result->get_error_code() ) {
+				unset( $data['status'], $data['change_id'] );
+				return self::error_response( $result->get_error_message(), $change_id, 409, [ 'code' => 'rollback_conflict' ] + $data );
+			}
+			if ( '__internal__' === $result->get_error_code() ) {
+				return self::error_response( $result->get_error_message(), $change_id, 400 );
+			}
 			return $result;
 		}
 
-		// Mark as rolled back.
-		IATO_MCP_Change_Receipt::mark_rolled_back( $change_id );
-
-		$rolled_back_at = gmdate( 'c' );
-
-		return new WP_REST_Response( [
-			'success'        => true,
-			'change_id'      => $change_id,
-			'post_id'        => $post_id,
-			'target_type'    => $stored_type,
-			'field'          => $stored_field,
-			'restored_value' => $stored_before,
-			'rolled_back_at' => $rolled_back_at,
-		], 200 );
+		return new WP_REST_Response( $result, 200 );
 	}
 
 	/**
@@ -149,68 +128,209 @@ class IATO_MCP_Rollback {
 				return $result;
 			}
 		}
+
+		// Who may undo whose change (1.13.0): the user who made it, or an
+		// administrator (manage_options; the unbound site key counts as one, as
+		// it does for every capability). On top of the object-level checks
+		// above, never instead of them. Receipts recorded before 1.13.0 carry no
+		// actor and keep the rules above alone.
+		$actor = IATO_MCP_Change_Receipt::actor_of( $receipt );
+		if ( null !== $actor && ! self::may_undo_for( $actor ) ) {
+			$described = IATO_MCP_Change_Receipt::describe_actor( $actor );
+			$who       = $described['user_login'] ?? null;
+			$who       = null !== $who ? $who : ( 0 === $actor['user_id'] ? 'the site key (no user)' : 'user ' . $actor['user_id'] );
+			return new WP_Error(
+				'rollback_actor_mismatch',
+				sprintf(
+					/* translators: 1: user login or description, 2: credential kind */
+					__( 'This change was made by %1$s (%2$s). Only that user or an administrator can roll it back.', 'iato-mcp' ),
+					$who,
+					$actor['kind']
+				),
+				[ 'status' => 403, 'actor' => $described ]
+			);
+		}
 		return true;
 	}
 
+	/** Is the current request the actor's own user, or an administrator? */
+	private static function may_undo_for( array $actor ): bool {
+		if ( ! is_wp_error( IATO_MCP_Auth::require_cap( 'manage_options' ) ) ) {
+			return true;
+		}
+		$me = IATO_MCP_Change_Receipt::current_actor();
+		return $me['user_id'] > 0 && $me['user_id'] === (int) $actor['user_id'];
+	}
+
 	/**
-	 * Perform a rollback by change_id (for internal use, e.g. AJAX handlers).
+	 * Perform a rollback by change_id. The caller has already run
+	 * check_permission() (the `rollback` tool does).
 	 *
 	 * @param string $change_id The wr_ prefixed change receipt ID.
+	 * @param array  $opts      force (bool): roll back despite a conflict;
+	 *                          dry_run (bool): report, write nothing.
 	 * @return array|WP_Error Success array with rollback details, or WP_Error.
 	 */
-	public static function rollback_by_id( string $change_id ): array|WP_Error {
+	public static function rollback_by_id( string $change_id, array $opts = [] ): array|WP_Error {
 		$receipt = IATO_MCP_Change_Receipt::get( $change_id );
 		if ( ! $receipt ) {
 			return new WP_Error( 'not_found', 'change_id not found.' );
 		}
+		$result = self::execute( $receipt, $opts );
+		if ( is_wp_error( $result ) && '__internal__' === $result->get_error_code() ) {
+			return new WP_Error( 'rollback_failed', $result->get_error_message() );
+		}
+		return $result;
+	}
+
+	/**
+	 * The rollback itself, shared by the REST route and the MCP tool:
+	 * already-rolled-back check, receipts that cannot be rolled back, the
+	 * conflict check (refused unless force), dispatch, and the rolled-back
+	 * mark with who did it.
+	 *
+	 * @return array|WP_Error
+	 */
+	public static function execute( array $receipt, array $opts = [] ): array|WP_Error {
+		$force     = ! empty( $opts['force'] );
+		$dry_run   = ! empty( $opts['dry_run'] );
+		$change_id = (string) ( $receipt['change_id'] ?? '' );
+		$post_id   = ! empty( $receipt['post_id'] ) ? (int) $receipt['post_id'] : null;
+		$before    = $receipt['before_value'] ?? null;
 
 		if ( ! empty( $receipt['rolled_back_at'] ) ) {
-			return new WP_Error( 'already_rolled_back', 'Already rolled back at ' . $receipt['rolled_back_at'] );
+			return new WP_Error(
+				'already_rolled_back',
+				'Already rolled back at ' . $receipt['rolled_back_at'],
+				[
+					'status'         => 409,
+					'rolled_back_at' => $receipt['rolled_back_at'],
+					'rolled_back_by' => IATO_MCP_Change_Receipt::describe_actor( IATO_MCP_Change_Receipt::rolled_back_by_of( $receipt ) ),
+				]
+			);
 		}
 
-		$post_id      = $receipt['post_id'] ? (int) $receipt['post_id'] : null;
-		$before_value = $receipt['before_value'];
+		$unavailable = self::preflight( $receipt );
+		if ( is_wp_error( $unavailable ) ) {
+			return $unavailable;
+		}
 
-		$result = self::dispatch_rollback( $receipt['target_type'], $receipt['field'], $post_id, $before_value );
+		$base = [
+			'change_id'   => $change_id,
+			'post_id'     => $post_id,
+			'target_type' => (string) $receipt['target_type'],
+			'field'       => (string) $receipt['field'],
+			'actor'       => IATO_MCP_Change_Receipt::describe_actor( IATO_MCP_Change_Receipt::actor_of( $receipt ) ),
+		];
+		// An Elementor receipt's before value is the whole stored tree; responses
+		// carry its revision hash instead (the hash get_elementor_data reports).
+		$is_tree = 'elementor_widget' === $receipt['target_type'];
+		$restore = [ 'restored_value' => $before ];
+		if ( $is_tree ) {
+			$restore = null === $before || null !== self::no_elementor_from( $before )
+				? [ 'restored_revision' => null, 'restored' => 'no_elementor_data' ]
+				: [ 'restored_revision' => IATO_MCP_Elementor_Adapter::compute_revision( (string) $before ) ];
+		}
 
-		// Handle create_term special case.
-		if ( is_wp_error( $result ) && '__internal__' === $result->get_error_message() ) {
-			$after_data = json_decode( $receipt['after_value'] ?? '{}', true );
-			if ( is_array( $after_data ) && ! empty( $after_data['term_id'] ) && ! empty( $after_data['taxonomy'] ) ) {
-				$del    = wp_delete_term( (int) $after_data['term_id'], $after_data['taxonomy'] );
-				$result = is_wp_error( $del ) ? $del : true;
-			} else {
-				return new WP_Error( 'rollback_failed', 'Cannot rollback create_term: missing term data.' );
+		$check  = IATO_MCP_Rollback_Conflict::check( $receipt );
+		$report = [ 'status' => $check['status'], 'reason' => $check['reason'] ];
+		if ( 'conflict' === $check['status'] ) {
+			$report['current_value']  = $check['current'] ?? null;
+			$report['expected_value'] = $check['expected'] ?? null;
+			if ( $force ) {
+				$report['forced'] = true;
 			}
 		}
 
+		if ( $dry_run ) {
+			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
+				+ $base
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] : [ 'would_restore' => $before ] )
+				+ [ 'conflict_check' => $report ];
+		}
+
+		if ( 'conflict' === $check['status'] && ! $force ) {
+			return new WP_Error(
+				'rollback_conflict',
+				sprintf( 'Rollback refused: %s. Rolling back would overwrite that newer change. Roll back the later change first, or pass force: true to roll back anyway.', $check['reason'] ),
+				[ 'status' => 409, 'conflict_check' => $report ] + $base
+			);
+		}
+
+		$result = self::dispatch_rollback( $receipt );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
-		IATO_MCP_Change_Receipt::mark_rolled_back( $change_id );
+		$by = IATO_MCP_Change_Receipt::current_actor();
+		IATO_MCP_Change_Receipt::mark_rolled_back( $change_id, $by );
 
-		return [
-			'success'        => true,
-			'change_id'      => $change_id,
-			'post_id'        => $post_id,
-			'target_type'    => $receipt['target_type'],
-			'field'          => $receipt['field'],
-			'restored_value' => $before_value,
-			'rolled_back_at' => gmdate( 'c' ),
-		];
+		return [ 'success' => true ]
+			+ $base
+			+ $restore
+			+ [
+				'rolled_back_at' => gmdate( 'c' ),
+				'rolled_back_by' => IATO_MCP_Change_Receipt::describe_actor( $by ),
+				'conflict_check' => $report,
+			];
+	}
+
+	/**
+	 * Receipts that cannot be rolled back at all, reported before the
+	 * conflict check so the caller learns why.
+	 *
+	 * @return true|WP_Error
+	 */
+	private static function preflight( array $receipt ): bool|WP_Error {
+		$type   = (string) ( $receipt['target_type'] ?? '' );
+		$field  = (string) ( $receipt['field'] ?? '' );
+		$before = $receipt['before_value'] ?? null;
+
+		// The stored copy was removed by the retention cleanup. Checked first: an
+		// emptied before value must never be read as "there was nothing before".
+		if ( ! empty( $receipt['pruned_at'] ) ) {
+			return new WP_Error(
+				'rollback_unavailable',
+				sprintf(
+					'The copy of the page this change replaced was removed on %s, when the receipt became older than the retention period. Restore the page in Elementor under History > Revisions.',
+					(string) $receipt['pruned_at']
+				),
+				[ 'status' => 409, 'pruned_at' => (string) $receipt['pruned_at'] ]
+			);
+		}
+
+		if ( 'elementor_widget' === $type && is_string( $before ) && preg_match( '/^sha256:[a-f0-9]{64}$/', $before ) ) {
+			return new WP_Error(
+				'rollback_unavailable',
+				'This Elementor change was recorded before 1.13.0, which stored only a revision hash, not the page as it was. Restore the page in Elementor under History > Revisions.',
+				[ 'status' => 409 ]
+			);
+		}
+		if ( 'taxonomy' === $type && 'update_term' === $field ) {
+			$snapshot = IATO_MCP_Rollback_Conflict::json_array( $before );
+			if ( (int) ( $snapshot['term_id'] ?? 0 ) <= 0 ) {
+				return new WP_Error(
+					'rollback_unavailable',
+					'This term change was recorded before 1.13.0 without the term ID, so the term to restore cannot be identified. Edit the term under Posts > Categories or Tags.',
+					[ 'status' => 409 ]
+				);
+			}
+		}
+		return true;
 	}
 
 	/**
 	 * Dispatch the rollback action based on target_type and field.
 	 *
-	 * @param string   $target_type
-	 * @param string   $field
-	 * @param int|null $post_id
-	 * @param mixed    $before_value The value to restore.
+	 * @param array $receipt The receipt row (before_value is the value to restore).
 	 * @return true|WP_Error
 	 */
-	private static function dispatch_rollback( string $target_type, string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+	private static function dispatch_rollback( array $receipt ): bool|WP_Error {
+		$target_type  = (string) $receipt['target_type'];
+		$field        = (string) $receipt['field'];
+		$post_id      = ! empty( $receipt['post_id'] ) ? (int) $receipt['post_id'] : null;
+		$before_value = $receipt['before_value'] ?? null;
+
 		switch ( $target_type ) {
 			case 'page':
 				return self::rollback_page( $field, $post_id, $before_value );
@@ -221,16 +341,94 @@ class IATO_MCP_Rollback {
 			case 'menu_item':
 				return self::rollback_menu_item( $field, $post_id, $before_value );
 			case 'taxonomy':
-				return self::rollback_taxonomy( $field, $post_id, $before_value );
+				return self::rollback_taxonomy( $field, $post_id, $before_value, $receipt['after_value'] ?? null );
 			case 'redirect':
 				return self::rollback_redirect( $field, $before_value );
 			case 'post_meta':
 				return self::rollback_post_meta( $field, $post_id, $before_value );
 			case 'attachment':
 				return self::rollback_attachment( $field, $post_id, $before_value );
+			case 'elementor_widget':
+				return self::rollback_elementor( $post_id, $before_value );
 			default:
 				return new WP_Error( 'unsupported_target_type', "Rollback not supported for target_type: {$target_type}" );
 		}
+	}
+
+	/**
+	 * Before value of an Elementor receipt for a post that had no Elementor
+	 * data (update_elementor_data on a plain post): Elementor's save replaced
+	 * post_content with its rendering of the tree, so the receipt keeps the
+	 * original content and builder flag. A JSON object, never mistaken for a
+	 * tree (Elementor data is a JSON array).
+	 */
+	public static function no_elementor_envelope( string $post_content, string $edit_mode ): string {
+		return (string) wp_json_encode( [ 'iato_no_elementor_data' => true, 'post_content' => $post_content, 'edit_mode' => $edit_mode ] );
+	}
+
+	/** The envelope's fields, or null when $before is not one. */
+	public static function no_elementor_from( mixed $before ): ?array {
+		if ( ! is_string( $before ) || ! str_starts_with( ltrim( $before ), '{' ) ) {
+			return null;
+		}
+		$decoded = json_decode( $before, true );
+		return is_array( $decoded ) && ! empty( $decoded['iato_no_elementor_data'] ) ? $decoded : null;
+	}
+
+	/**
+	 * Rollback an Elementor write (1.13.0): the receipt's before value is the
+	 * `_elementor_data` text as it was stored before the write, restored
+	 * verbatim through the post_meta path (kses lock lifted, Elementor's meta
+	 * sanitize callbacks out of the way, caches cleared). For a post that had
+	 * no Elementor data the before value is an envelope: the data is removed,
+	 * the builder flag and the original post_content are put back.
+	 */
+	private static function rollback_elementor( ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( ! $post_id || ! get_post( $post_id ) ) {
+			return new WP_Error( 'post_not_found', 'Post not found.', [ 'status' => 404 ] );
+		}
+		$plain = self::no_elementor_from( $before_value );
+		if ( null === $plain && null !== $before_value ) {
+			return self::rollback_post_meta( '_elementor_data', $post_id, $before_value );
+		}
+
+		$result = self::rollback_post_meta( '_elementor_data', $post_id, null );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$mode = null === $plain ? '' : (string) ( $plain['edit_mode'] ?? '' );
+		if ( '' === $mode ) {
+			delete_post_meta( $post_id, '_elementor_edit_mode' );
+		} else {
+			update_post_meta( $post_id, '_elementor_edit_mode', wp_slash( $mode ) );
+		}
+		if ( null !== $plain && isset( $plain['post_content'] ) ) {
+			return self::restore_post_content( $post_id, (string) $plain['post_content'] );
+		}
+		return true;
+	}
+
+	/**
+	 * Put a post's content back exactly as it was stored (a value read from the
+	 * database when the receipt was recorded). WordPress' kses content filters
+	 * are on for every MCP request (the 1.13.0 lock); they would filter the
+	 * restored content again and strip what a person with unfiltered_html had
+	 * stored, so they are removed for this one write and put back afterwards,
+	 * also when it fails. The value is slashed because wp_update_post() unslashes.
+	 */
+	private static function restore_post_content( int $post_id, string $content ): bool|WP_Error {
+		$kses_on = function_exists( 'kses_remove_filters' ) && false !== has_filter( 'content_save_pre', 'wp_filter_post_kses' );
+		if ( $kses_on ) {
+			kses_remove_filters();
+		}
+		try {
+			$result = IATO_MCP_Auth::write_unlocked( fn() => wp_update_post( wp_slash( [ 'ID' => $post_id, 'post_content' => $content ] ), true ) );
+		} finally {
+			if ( $kses_on ) {
+				kses_init_filters();
+			}
+		}
+		return is_wp_error( $result ) ? $result : true;
 	}
 
 	/**
@@ -274,7 +472,8 @@ class IATO_MCP_Rollback {
 			// change; for Elementor keys the kses lock is lifted and Elementor's
 			// REST sanitize_callback removed, so nothing re-filters it on the way
 			// back.
-			$value = is_string( $restore ) ? wp_slash( $restore ) : $restore;
+			// Slashed, arrays included: update_post_meta() unslashes both.
+			$value = wp_slash( $restore );
 			if ( 0 === stripos( $field, '_elementor_' ) && class_exists( 'IATO_MCP_Elementor_Adapter' ) ) {
 				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $field, $value ) );
 			} else {
@@ -361,10 +560,12 @@ class IATO_MCP_Rollback {
 			return new WP_Error( 'unsupported_field', "Rollback not supported for post field: {$field}" );
 		}
 
-		$result = wp_update_post( [
+		// Slashed: wp_update_post() unslashes, which would strip the restored
+		// value's backslashes.
+		$result = wp_update_post( wp_slash( [
 			'ID'      => $post_id,
 			$post_key => $before_value,
-		], true );
+		] ), true );
 
 		return is_wp_error( $result ) ? $result : true;
 	}
@@ -429,7 +630,7 @@ class IATO_MCP_Rollback {
 		if ( null === $before_value ) {
 			delete_post_meta( $post_id, '_wp_attachment_image_alt' );
 		} else {
-			update_post_meta( $post_id, '_wp_attachment_image_alt', sanitize_text_field( $before_value ) );
+			update_post_meta( $post_id, '_wp_attachment_image_alt', wp_slash( sanitize_text_field( $before_value ) ) );
 		}
 
 		return true;
@@ -466,7 +667,7 @@ class IATO_MCP_Rollback {
 					'menu-item-status'    => 'publish',
 				];
 
-				$result = wp_update_nav_menu_item( (int) $snapshot['menu_id'], 0, $item_data );
+				$result = wp_update_nav_menu_item( (int) $snapshot['menu_id'], 0, wp_slash( $item_data ) );
 				return is_wp_error( $result ) ? $result : true;
 
 			case 'details':
@@ -502,7 +703,7 @@ class IATO_MCP_Rollback {
 					'menu-item-parent-id' => $before_vals['parent_id'] ?? get_post_meta( $post_id, '_menu_item_menu_item_parent', true ),
 				];
 
-				$result = wp_update_nav_menu_item( $menu_id, $post_id, $item_data );
+				$result = wp_update_nav_menu_item( $menu_id, $post_id, wp_slash( $item_data ) );
 				return is_wp_error( $result ) ? $result : true;
 
 			default:
@@ -513,7 +714,7 @@ class IATO_MCP_Rollback {
 	/**
 	 * Rollback taxonomy changes.
 	 */
-	private static function rollback_taxonomy( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+	private static function rollback_taxonomy( string $field, ?int $post_id, mixed $before_value, mixed $after_value = null ): bool|WP_Error {
 		switch ( $field ) {
 			case 'assign':
 			case 'terms':
@@ -521,53 +722,53 @@ class IATO_MCP_Rollback {
 				if ( ! $post_id ) {
 					return new WP_Error( 'missing_post_id', 'post_id required for taxonomy rollback.' );
 				}
-				$before_ids = json_decode( $before_value, true );
-				if ( ! is_array( $before_ids ) ) {
-					$before_ids = [];
-				}
-				// Determine taxonomy from current assignments or default to category.
-				$cats = wp_get_post_terms( $post_id, 'category', [ 'fields' => 'ids' ] );
-				$tags = wp_get_post_terms( $post_id, 'post_tag', [ 'fields' => 'ids' ] );
-
-				// Try to figure out taxonomy: if before_ids overlaps with categories or tags.
-				$taxonomy = 'category';
-				if ( ! empty( $before_ids ) ) {
-					$term = get_term( $before_ids[0] );
-					if ( $term && ! is_wp_error( $term ) ) {
-						$taxonomy = $term->taxonomy;
+				$before_ids = IATO_MCP_Rollback_Conflict::json_array( $before_value );
+				$after_ids  = IATO_MCP_Rollback_Conflict::json_array( $after_value );
+				// The receipt stores IDs only. The taxonomy is that of any term in
+				// the receipt, after IDs included: with an empty before list (a post
+				// that had no tags, say) the old guess fell back to `category` and
+				// emptied the post's categories instead of removing the tag.
+				$taxonomy = IATO_MCP_Rollback_Conflict::taxonomy_of_ids( array_merge( $before_ids, $after_ids ) );
+				if ( null === $taxonomy ) {
+					if ( empty( $before_ids ) && empty( $after_ids ) ) {
+						return true; // the receipt changed nothing
 					}
+					return new WP_Error( 'rollback_failed', 'Cannot determine the taxonomy: none of the terms in the receipt exist any more.' );
 				}
 
-				$result = wp_set_post_terms( $post_id, $before_ids, $taxonomy, false );
+				$result = wp_set_post_terms( $post_id, array_map( 'intval', $before_ids ), $taxonomy, false );
 				return is_wp_error( $result ) ? $result : true;
 
 			case 'create_term':
-				// before_value is null for creates; we need after_value from the receipt
-				// to know which term to delete. The handle() method passes stored before_value
-				// but we can look up the receipt again since we have the change_id in context.
-				// However, for simplicity, we handle this in the dispatch_rollback caller.
-				// The receipt's after_value contains the created term JSON.
-				return new WP_Error( 'create_term_needs_after', '__internal__' );
+				// Reverse: delete the created term, named by the receipt's after value.
+				$after_data = IATO_MCP_Rollback_Conflict::json_array( $after_value );
+				if ( empty( $after_data['term_id'] ) || empty( $after_data['taxonomy'] ) ) {
+					return new WP_Error( '__internal__', 'Cannot rollback create_term: missing term data in receipt.' );
+				}
+				$term = get_term( (int) $after_data['term_id'], (string) $after_data['taxonomy'] );
+				if ( ! $term || is_wp_error( $term ) ) {
+					return true; // already gone
+				}
+				$deleted = wp_delete_term( (int) $after_data['term_id'], (string) $after_data['taxonomy'] );
+				return is_wp_error( $deleted ) ? $deleted : true;
 
 			case 'update_term':
-				// Restore term to previous values.
-				$before_data = json_decode( $before_value, true );
-				if ( ! is_array( $before_data ) || empty( $before_data['taxonomy'] ) ) {
+				// Restore term to previous values. preflight() refuses receipts
+				// without a term ID (recorded before 1.13.0).
+				$before_data = IATO_MCP_Rollback_Conflict::json_array( $before_value );
+				if ( empty( $before_data['taxonomy'] ) || (int) ( $before_data['term_id'] ?? 0 ) <= 0 ) {
 					return new WP_Error( 'invalid_before', 'Cannot restore term: invalid before_value.' );
 				}
-				$term_id  = $before_data['term_id'] ?? 0;
-				$taxonomy = $before_data['taxonomy'];
+				$term_id  = (int) $before_data['term_id'];
+				$taxonomy = (string) $before_data['taxonomy'];
 				$update_args = [];
 				if ( isset( $before_data['name'] ) ) $update_args['name'] = $before_data['name'];
 				if ( isset( $before_data['slug'] ) ) $update_args['slug'] = $before_data['slug'];
 				if ( isset( $before_data['description'] ) ) $update_args['description'] = $before_data['description'];
-				if ( isset( $before_data['parent'] ) ) $update_args['parent'] = $before_data['parent'];
+				if ( isset( $before_data['parent'] ) ) $update_args['parent'] = (int) $before_data['parent'];
 
-				if ( $term_id && ! empty( $update_args ) ) {
-					$result = wp_update_term( $term_id, $taxonomy, $update_args );
-					return is_wp_error( $result ) ? $result : true;
-				}
-				return true;
+				$result = wp_update_term( $term_id, $taxonomy, wp_slash( $update_args ) );
+				return is_wp_error( $result ) ? $result : true;
 
 			case 'delete_term':
 				// Reverse: re-create the deleted term.
@@ -580,7 +781,7 @@ class IATO_MCP_Rollback {
 				if ( ! empty( $term_data['description'] ) ) $insert_args['description'] = $term_data['description'];
 				if ( isset( $term_data['parent'] ) ) $insert_args['parent'] = (int) $term_data['parent'];
 
-				$result = wp_insert_term( $term_data['name'], $term_data['taxonomy'], $insert_args );
+				$result = wp_insert_term( wp_slash( $term_data['name'] ), $term_data['taxonomy'], wp_slash( $insert_args ) );
 				return is_wp_error( $result ) ? $result : true;
 
 			default:

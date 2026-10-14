@@ -240,7 +240,7 @@ set_opt('iato_mcp_test_force_save_fail', '1')
 cid_fb = 'wr_' + os.urandom(8).hex()
 wp('db', 'query', f"INSERT INTO {PREFIX}iato_change_receipts (change_id, post_id, target_type, field, before_value, after_value, applied_at) VALUES ('{cid_fb}', {PAGE}, 'post_meta', '_elementor_data', '{PRISTINE.replace(chr(92), chr(92)*2).replace(chr(39), chr(39)*2)}', 'sanitize-live-seed', NOW())")
 call('key', 'set_widget_setting', {'id': PAGE, 'widget_id': H, 'key': 'title', 'value': 'before rollback (fallback)'})
-r = call('key', 'rollback', {'change_id': cid_fb})
+r = call('key', 'rollback', {'change_id': cid_fb, 'force': True})  # seeded row: its after value is a placeholder
 record('fallback path: rollback restores the human page byte for byte, iframe and script included', not r.get('isError') and meta_text() == PRISTINE, (r, meta_text()[:120]))
 del_opt('iato_mcp_test_force_save_fail')
 r = call('key', 'rollback', {'change_id': PS_RECEIPT2})
@@ -252,7 +252,7 @@ record('a rollback cannot be rolled back again', r.get('isError') and 'already' 
 cid = 'wr_' + os.urandom(8).hex()
 before_sql = PRISTINE.replace('\\', '\\\\').replace("'", "''")
 wp('db', 'query', f"INSERT INTO {PREFIX}iato_change_receipts (change_id, post_id, target_type, field, before_value, after_value, applied_at) VALUES ('{cid}', {PAGE}, 'post_meta', '_elementor_data', '{before_sql}', 'sanitize-live-seed', NOW())")
-r = call('key', 'rollback', {'change_id': cid})
+r = call('key', 'rollback', {'change_id': cid, 'force': True})  # seeded row: its after value is a placeholder
 record('old post_meta receipt for _elementor_data still rolls back', not r.get('isError'), r)
 record('and restores the before value verbatim, iframe and script included', meta_text() == PRISTINE, (meta_text()[:120], PRISTINE[:120]))
 
@@ -276,7 +276,7 @@ record('success path: lock lifted only during the save (admin holds the capabili
 # rollback restores the HTML widget byte for byte on the success path too
 cid_ok = 'wr_' + os.urandom(8).hex()
 wp('db', 'query', f"INSERT INTO {PREFIX}iato_change_receipts (change_id, post_id, target_type, field, before_value, after_value, applied_at) VALUES ('{cid_ok}', {PAGE}, 'post_meta', '_elementor_data', '{PRISTINE.replace(chr(92), chr(92)*2).replace(chr(39), chr(39)*2)}', 'sanitize-live-seed', NOW())")
-r = call('key', 'rollback', {'change_id': cid_ok})
+r = call('key', 'rollback', {'change_id': cid_ok, 'force': True})  # seeded row: its after value is a placeholder
 record('success path: rollback restores the human page byte for byte, iframe and script included', not r.get('isError') and meta_text() == PRISTINE, (r, meta_text()[:120]))
 # reseed state for the Application Password checks that follow
 r = call('key', 'set_widget_setting', {'id': PAGE, 'widget_id': H, 'key': 'title', 'value': PAYLOAD})
@@ -307,7 +307,7 @@ try:
     # reseed the human page so the untouched-widget check is byte for byte
     cid_lg = 'wr_' + os.urandom(8).hex()
     wp('db', 'query', f"INSERT INTO {PREFIX}iato_change_receipts (change_id, post_id, target_type, field, before_value, after_value, applied_at) VALUES ('{cid_lg}', {PAGE}, 'post_meta', '_elementor_data', '{PRISTINE.replace(chr(92), chr(92)*2).replace(chr(39), chr(39)*2)}', 'sanitize-live-seed', NOW())")
-    r = call('key', 'rollback', {'change_id': cid_lg})
+    r = call('key', 'rollback', {'change_id': cid_lg, 'force': True})  # seeded row: its after value is a placeholder
     record('legacy key: rollback restores the human page byte for byte', not r.get('isError') and meta_text() == PRISTINE, (r, meta_text()[:120]))
     clear_probe()
     r = call('key', 'set_widget_setting', {'id': PAGE, 'widget_id': H, 'key': 'title', 'value': PAYLOAD})

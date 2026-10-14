@@ -138,9 +138,9 @@ IATO_MCP_Server::register_tool(
 			if ( null === $after || '' === $after ) {
 				delete_post_meta( $post_id, $key );
 			} elseif ( 0 === stripos( $key, '_elementor_' ) ) {
-				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, $after ) );
+				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, wp_slash( $after ) ) );
 			} else {
-				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after ) );
+				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, wp_slash( $after ) ) ); // slashed: update_post_meta() unslashes
 			}
 
 			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );

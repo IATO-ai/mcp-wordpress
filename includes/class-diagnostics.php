@@ -122,6 +122,10 @@ CSS;
 						</td>
 					</tr>
 					<tr>
+						<td><?php esc_html_e( 'Receipt cleanup', 'iato-mcp' ); ?></td>
+						<td><?php echo esc_html( self::describe_retention() ); ?></td>
+					</tr>
+					<tr>
 						<td><?php esc_html_e( 'IATO API key', 'iato-mcp' ); ?></td>
 						<td>
 							<?php if ( '' === $api_key ) : ?>
@@ -325,6 +329,7 @@ CSS;
 							<th><?php esc_html_e( 'When', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Method', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Tool', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Who', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Duration', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Error', 'iato-mcp' ); ?></th>
@@ -339,11 +344,13 @@ CSS;
 							$err_code = (string) ( $r['error_code'] ?? '' );
 							$err_msg  = (string) ( $r['error_message'] ?? '' );
 							$created  = (string) ( $r['created_at'] ?? '' );
+							$who      = self::describe_caller( $r );
 							?>
 							<tr>
 								<td><?php echo esc_html( $created ); ?></td>
 								<td><code><?php echo esc_html( $method ); ?></code></td>
 								<td><?php echo $tool !== '' ? '<code>' . esc_html( $tool ) . '</code>' : '<span style="color:#9ca3af">—</span>'; ?></td>
+								<td><?php echo '' !== $who ? esc_html( $who ) : '<span style="color:#9ca3af">—</span>'; ?></td>
 								<td>
 									<span class="badge <?php echo esc_attr( $status ); ?>">
 										<?php echo esc_html( $status ?: 'unknown' ); ?>
@@ -368,6 +375,59 @@ CSS;
 			<?php endif; ?>
 		</div>
 		<?php
+	}
+
+	/** One line on the receipt retention job: period, last run, next run. */
+	private static function describe_retention(): string {
+		if ( ! class_exists( 'IATO_MCP_Receipt_Retention' ) ) {
+			return '';
+		}
+		$days  = IATO_MCP_Receipt_Retention::days();
+		$parts = [ $days > 0
+			/* translators: %d: number of days */
+			? sprintf( __( 'Elementor page copies in change receipts are cleared after %d days.', 'iato-mcp' ), $days )
+			: __( 'Disabled: Elementor page copies are kept.', 'iato-mcp' ) ];
+		$last = IATO_MCP_Receipt_Retention::last_run();
+		if ( null !== $last ) {
+			/* translators: 1: UTC date and time, 2: number of receipts */
+			$parts[] = sprintf( __( 'Last run %1$s UTC, %2$d cleared.', 'iato-mcp' ), $last['at'], (int) $last['pruned'] );
+		}
+		$next = wp_next_scheduled( IATO_MCP_Receipt_Retention::HOOK );
+		$parts[] = false === $next
+			? __( 'Not scheduled yet.', 'iato-mcp' )
+			/* translators: %s: UTC date and time */
+			: sprintf( __( 'Next run %s UTC.', 'iato-mcp' ), gmdate( 'Y-m-d H:i', (int) $next ) );
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * "user · credential · client" for a call log row (1.13.0 columns; rows
+	 * logged before then show the user only).
+	 */
+	private static function describe_caller( array $row ): string {
+		$user_id = (int) ( $row['auth_user_id'] ?? 0 );
+		$kind    = (string) ( $row['credential_kind'] ?? '' );
+		$client  = (string) ( $row['client_id'] ?? '' );
+		$parts   = [];
+		if ( $user_id > 0 ) {
+			$user    = get_userdata( $user_id );
+			$parts[] = $user ? $user->user_login : '#' . $user_id;
+		} elseif ( 'site_key' === $kind ) {
+			$parts[] = __( 'no user', 'iato-mcp' );
+		}
+		$labels = [
+			'site_key'             => __( 'site key', 'iato-mcp' ),
+			'oauth'                => __( 'OAuth', 'iato-mcp' ),
+			'application_password' => __( 'Application Password', 'iato-mcp' ),
+		];
+		if ( '' !== $kind ) {
+			$parts[] = $labels[ $kind ] ?? $kind;
+		}
+		if ( '' !== $client ) {
+			$name    = class_exists( 'IATO_MCP_Change_Receipt' ) ? IATO_MCP_Change_Receipt::client_name( $client ) : null;
+			$parts[] = null !== $name ? $name : $client;
+		}
+		return implode( ' · ', $parts );
 	}
 
 	/**

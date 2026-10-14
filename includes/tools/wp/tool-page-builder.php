@@ -273,6 +273,13 @@ IATO_MCP_Server::register_tool(
 		$stored_raw      = get_post_meta( $post_id, '_elementor_data', true );
 		$stored_raw      = is_array( $stored_raw ) ? (string) wp_json_encode( $stored_raw ) : (string) $stored_raw;
 		$previous_revision = IATO_MCP_Elementor_Adapter::compute_revision( $stored_raw );
+		// What a rollback must put back when the post had no Elementor data:
+		// Elementor's save replaces post_content with its rendering of the tree,
+		// so the receipt keeps the original content and builder flag (1.13.0).
+		$receipt_before = '' !== $stored_raw ? $stored_raw : IATO_MCP_Rollback::no_elementor_envelope(
+			(string) get_post_field( 'post_content', $post_id ),
+			(string) get_post_meta( $post_id, '_elementor_edit_mode', true )
+		);
 
 		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
 		// surfaces them, and apply them after the main Elementor write succeeds.
@@ -384,12 +391,15 @@ IATO_MCP_Server::register_tool(
 		}
 		$meta_persisted = (bool) $pipeline['meta_persisted'];
 
-		// One receipt for the whole document, like update_elementor_patch.
+		// One receipt for the whole document, like update_elementor_patch. Before:
+		// the stored tree as it was, or, when the post had none, the original
+		// post content and builder flag (IATO_MCP_Rollback::no_elementor_envelope());
+		// after: the revision hash of what was stored.
 		$receipt = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'elementor_widget',
 			'elementor:document:replace',
-			$pipeline['previous_revision'],
+			$receipt_before,
 			$pipeline['current_revision']
 		);
 
@@ -402,10 +412,10 @@ IATO_MCP_Server::register_tool(
 				$before = $step['before'];
 				$after  = $step['after'];
 				if ( 0 === stripos( $key, '_elementor_' ) ) {
-					IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, $after ) );
+					IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, wp_slash( $after ) ) );
 					$touched_elementor_meta = true;
 				} else {
-					IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after ) );
+					IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, wp_slash( $after ) ) ); // slashed: update_post_meta() unslashes
 				}
 				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
 			}
@@ -434,6 +444,7 @@ IATO_MCP_Server::register_tool(
 			'target_type' => $receipt['target_type'],
 			'field'       => $receipt['field'],
 			'applied_at'  => $receipt['applied_at'],
+			'actor'       => $receipt['actor'] ?? null,
 		];
 		$inherit_sanitized = array_merge( ...array_map( fn( $st ) => $st['sanitized_paths'] ?? [], $inherit_plan ?: [ [] ] ) );
 		if ( ! empty( $inherit_sanitized ) ) {

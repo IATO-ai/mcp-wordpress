@@ -156,7 +156,7 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		$result = wp_update_nav_menu_item( $menu_id, 0, $item_data );
+		$result = wp_update_nav_menu_item( $menu_id, 0, wp_slash( $item_data ) ); // it saves through wp_insert_post(), which unslashes
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -270,7 +270,7 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		$result = wp_update_nav_menu_item( $menu_id, 0, $item_data );
+		$result = wp_update_nav_menu_item( $menu_id, 0, wp_slash( $item_data ) ); // it saves through wp_insert_post(), which unslashes
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -475,17 +475,21 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		$result = wp_update_nav_menu_item( $menu_id, $menu_item_id, $item_data );
+		$result = wp_update_nav_menu_item( $menu_id, $menu_item_id, wp_slash( $item_data ) ); // it saves through wp_update_post(), which unslashes
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
-		// Build before/after from the tracked changes.
+		// Build before/after from the tracked changes. After values are read
+		// back as stored (WordPress filters titles on save and stores an empty
+		// title when it equals the linked object's), the form the rollback
+		// conflict check compares.
 		$before_vals = [];
 		$after_vals  = [];
+		$stored_item = get_post( $menu_item_id );
 		foreach ( $changes as $key => $change ) {
 			$before_vals[ $key ] = $change['from'];
-			$after_vals[ $key ]  = $change['to'];
+			$after_vals[ $key ]  = $stored_item ? IATO_MCP_Rollback_Conflict::menu_item_value( $stored_item, (string) $key ) : $change['to'];
 		}
 
 		$receipt = IATO_MCP_Change_Receipt::record(

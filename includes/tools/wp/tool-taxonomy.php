@@ -184,7 +184,8 @@ IATO_MCP_Server::register_tool(
 			$term_args['parent'] = absint( $args['parent'] );
 		}
 
-		$result = wp_insert_term( $name, $taxonomy, $term_args );
+		// Slashed: wp_insert_term() unslashes the name and description.
+		$result = wp_insert_term( wp_slash( $name ), $taxonomy, wp_slash( $term_args ) );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -273,16 +274,20 @@ IATO_MCP_Server::register_tool(
 		}
 
 		// Snapshot before state.
-		$before_snapshot = wp_json_encode( [ 'name' => $term->name, 'slug' => $term->slug, 'description' => $term->description, 'parent' => (int) $term->parent, 'taxonomy' => $taxonomy ] );
+		// term_id in both snapshots (1.13.0): rollback restores that term, and the
+		// conflict check reads it back. Earlier receipts lacked it, so their
+		// rollback never found the term.
+		$before_snapshot = wp_json_encode( [ 'term_id' => (int) $term->term_id, 'name' => $term->name, 'slug' => $term->slug, 'description' => $term->description, 'parent' => (int) $term->parent, 'taxonomy' => $taxonomy ] );
 
-		$result = wp_update_term( $term_id, $taxonomy, $term_args );
+		// Slashed: wp_update_term() unslashes the name and description.
+		$result = wp_update_term( $term_id, $taxonomy, wp_slash( $term_args ) );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
 		$updated = get_term( $result['term_id'], $taxonomy );
 
-		$after_snapshot = wp_json_encode( [ 'name' => $updated->name, 'slug' => $updated->slug, 'description' => $updated->description, 'parent' => (int) $updated->parent, 'taxonomy' => $taxonomy ] );
+		$after_snapshot = wp_json_encode( [ 'term_id' => (int) $updated->term_id, 'name' => $updated->name, 'slug' => $updated->slug, 'description' => $updated->description, 'parent' => (int) $updated->parent, 'taxonomy' => $taxonomy ] );
 
 		$receipt = IATO_MCP_Change_Receipt::record( null, 'taxonomy', 'update_term', $before_snapshot, $after_snapshot );
 

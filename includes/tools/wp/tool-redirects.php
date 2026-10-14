@@ -143,20 +143,20 @@ function iato_mcp_write_redirect( string $from_url, string $to_url, int $type, s
 		case 'safe_redirect_manager':
 			$existing = iato_mcp_get_existing_redirect( $from_url, $handler );
 			if ( $existing && ! empty( $existing['_post_id'] ) ) {
-				update_post_meta( $existing['_post_id'], '_redirect_rule_to', esc_url_raw( $to_url ) );
+				update_post_meta( $existing['_post_id'], '_redirect_rule_to', wp_slash( esc_url_raw( $to_url ) ) );
 				update_post_meta( $existing['_post_id'], '_redirect_rule_status_code', $type );
 				return true;
 			}
-			$post_id = wp_insert_post( [
+			$post_id = wp_insert_post( wp_slash( [
 				'post_type'   => 'redirect_rule',
 				'post_status' => 'publish',
 				'post_title'  => sanitize_text_field( $from_path . ' → ' . $to_url ),
-			] );
+			] ) );
 			if ( is_wp_error( $post_id ) ) {
 				return $post_id;
 			}
-			update_post_meta( $post_id, '_redirect_rule_from', $from_path );
-			update_post_meta( $post_id, '_redirect_rule_to', esc_url_raw( $to_url ) );
+			update_post_meta( $post_id, '_redirect_rule_from', wp_slash( $from_path ) );
+			update_post_meta( $post_id, '_redirect_rule_to', wp_slash( esc_url_raw( $to_url ) ) );
 			update_post_meta( $post_id, '_redirect_rule_status_code', $type );
 			return true;
 

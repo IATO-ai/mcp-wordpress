@@ -93,6 +93,10 @@ final class IATO_Test_WP {
 		sort( $out );
 		return $out;
 	}
+	/** wp_unslash() on arrays, as update_metadata() applies it. */
+	public static function unslash_deep( array $value ): array {
+		return array_map( fn( $v ) => is_array( $v ) ? self::unslash_deep( $v ) : ( is_string( $v ) ? stripslashes( $v ) : $v ), $value );
+	}
 	public static function note_write( string $key ): void {
 		self::$hooks_at_write[] = [ $key, count( self::live_elementor_hooks() ) ];
 	}

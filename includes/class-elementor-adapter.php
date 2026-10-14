@@ -25,6 +25,19 @@ class IATO_MCP_Elementor_Adapter {
 	}
 
 	/**
+	 * The stored `_elementor_data` as text, the form compute_revision() hashes:
+	 * a tree stored as an array (pre-1.13.0 update_post_meta writes) is
+	 * JSON-encoded, as decode_data() does; '' when there is none.
+	 */
+	public static function stored_raw( int $post_id ): string {
+		$raw = get_post_meta( $post_id, '_elementor_data', true );
+		if ( is_array( $raw ) ) {
+			return (string) wp_json_encode( $raw );
+		}
+		return is_string( $raw ) ? $raw : '';
+	}
+
+	/**
 	 * Read _elementor_data and return a decoded array of top-level elements.
 	 *
 	 * Returns WP_Error('not_elementor', ...) when meta is absent or the post
@@ -1047,10 +1060,10 @@ class IATO_MCP_Elementor_Adapter {
 			if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
 				$rendered = $frontend->get_builder_content( $post_id, true );
 				if ( ! empty( $rendered ) && $rendered !== $old_content ) {
-					wp_update_post( [
+					wp_update_post( wp_slash( [ // wp_update_post() unslashes
 						'ID'           => $post_id,
 						'post_content' => $rendered,
-					] );
+					] ) );
 					$new_content     = $rendered;
 					$content_updated = true;
 				}
@@ -1274,12 +1287,15 @@ class IATO_MCP_Elementor_Adapter {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}
 
+		// Before value: the stored tree as it was (1.13.0), so the change can be
+		// rolled back; after value: the revision hash of what the write stored,
+		// which the rollback conflict check compares with the page's current one.
 		$receipt_field = 'elementor:' . $widget_id . ':' . self::truncate_pointer( $widget_path . '/settings' );
 		$receipt       = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'elementor_widget',
 			$receipt_field,
-			$pipeline['previous_revision'],
+			$raw,
 			$pipeline['current_revision']
 		);
 		// Slim receipt for the API response — client already has applied_patch
@@ -1290,6 +1306,7 @@ class IATO_MCP_Elementor_Adapter {
 			'target_type' => $receipt['target_type'],
 			'field'       => $receipt['field'],
 			'applied_at'  => $receipt['applied_at'],
+			'actor'       => $receipt['actor'] ?? null,
 		];
 
 		return $response;

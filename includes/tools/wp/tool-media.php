@@ -104,9 +104,9 @@ IATO_MCP_Server::register_tool(
 		$before_alt = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
 		$before_alt = '' !== $before_alt ? $before_alt : null;
 
-		update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+		update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( $alt ) ); // update_post_meta() unslashes
 
-		$receipt = IATO_MCP_Change_Receipt::record( $attachment_id, 'image', 'alt_text', $before_alt, $alt );
+		$receipt = IATO_MCP_Change_Receipt::record( $attachment_id, 'image', 'alt_text', $before_alt, get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ) );
 
 		$data = [
 			'id'  => $attachment_id,

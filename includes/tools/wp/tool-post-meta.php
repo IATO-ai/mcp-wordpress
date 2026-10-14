@@ -213,10 +213,11 @@ IATO_MCP_Server::register_tool(
 			// Sanitised above (strings; Elementor arrays by shape). Elementor keys
 			// are written with the kses lock lifted and Elementor's REST
 			// sanitize_callback removed, so untouched values are not re-filtered.
+			// Slashed: update_post_meta() unslashes strings and arrays.
 			if ( 0 === stripos( $key, '_elementor_' ) ) {
-				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, $after_val ) );
+				IATO_MCP_Elementor_Adapter::write_elementor_meta( fn() => update_post_meta( $post_id, $key, wp_slash( $after_val ) ) );
 			} else {
-				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, $after_val ) );
+				IATO_MCP_Auth::write_unlocked( fn() => update_post_meta( $post_id, $key, wp_slash( $after_val ) ) );
 			}
 			$after_stored = $after_val;
 		}

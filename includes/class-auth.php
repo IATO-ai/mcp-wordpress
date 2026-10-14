@@ -278,6 +278,9 @@ class IATO_MCP_Auth {
 			'error_message'   => $message,
 			'duration_ms'     => 0,
 			'auth_user_id'    => $owner_id,
+			// No credential is set for a rejected request; name the one presented.
+			'credential_kind' => isset( $args['client_id'] ) ? 'oauth' : 'site_key',
+			'client_id'       => $args['client_id'] ?? null,
 		] );
 	}
 

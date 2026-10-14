@@ -17,8 +17,15 @@ if ( ! class_exists( '\Elementor\Plugin' ) ) {
 // `wp eval-file ... author` (run with --user=author): a plain post the author
 // owns (Authors cannot edit pages), for the Application Password checks of a
 // user without unfiltered_html.
+// `wp eval-file ... rollback` (--user=admin): the admin page again under its
+// own slug, for tests/wp-env/rollback-actor-live.sh.
 $variant   = isset( $args[0] ) ? (string) $args[0] : 'admin';
-$slug      = 'author' === $variant ? 'iato-sanitize-fixture-author' : 'iato-sanitize-fixture';
+$slug      = match ( $variant ) {
+	'author'   => 'iato-sanitize-fixture-author',
+	'rollback'  => 'iato-rollback-fixture',
+	'retention' => 'iato-retention-fixture',
+	default    => 'iato-sanitize-fixture',
+};
 $post_type = 'author' === $variant ? 'post' : 'page';
 if ( 'author' !== $variant && ! current_user_can( 'unfiltered_html' ) ) {
 	WP_CLI::error( 'Run with --user=admin (needs unfiltered_html).' );
