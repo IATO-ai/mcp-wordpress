@@ -84,6 +84,48 @@ CSS;
 						<td><code><?php echo esc_html( IATO_MCP_VERSION ); ?></code></td>
 					</tr>
 					<tr>
+						<td><?php esc_html_e( 'MCP key owner', 'iato-mcp' ); ?></td>
+						<td>
+							<?php
+							$owner_id = IATO_MCP_Auth::key_owner_id();
+							$owner    = $owner_id > 0 ? get_user_by( 'id', $owner_id ) : null;
+							if ( 0 === $owner_id ) :
+								?>
+								<span class="badge"><?php esc_html_e( 'Unassigned (legacy mode: requests run as user 0)', 'iato-mcp' ); ?></span>
+							<?php elseif ( ! $owner || ! $owner->exists() ) : ?>
+								<span class="badge error"><?php printf( /* translators: %d: user ID */ esc_html__( 'User ID %d missing; key rejected', 'iato-mcp' ), (int) $owner_id ); ?></span>
+							<?php elseif ( ! user_can( $owner, IATO_MCP_Auth::OWNER_CAP ) ) : ?>
+								<span class="badge error"><?php echo esc_html( $owner->user_login ); ?> <?php esc_html_e( '(demoted; key rejected)', 'iato-mcp' ); ?></span>
+							<?php else : ?>
+								<span class="badge success"><?php echo esc_html( $owner->user_login ); ?> (ID <?php echo (int) $owner->ID; ?>)</span>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<td><?php esc_html_e( 'OAuth connections', 'iato-mcp' ); ?></td>
+						<td>
+							<?php
+							$oauth_store = IATO_MCP_OAuth_Store::instance();
+							$oauth_live  = $oauth_store->count_active_grants( gmdate( 'Y-m-d H:i:s' ) );
+							$oauth_pend  = $oauth_store->count_pending_clients();
+							printf(
+								/* translators: 1: live connections, 2: registered clients that never completed an authorization */
+								esc_html__( '%1$d connected, %2$d registered but never approved', 'iato-mcp' ),
+								(int) $oauth_live,
+								(int) $oauth_pend
+							);
+							?>
+							&nbsp;<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp#iato-oauth-clients' ) ); ?>"><?php esc_html_e( 'Manage', 'iato-mcp' ); ?></a>
+							<?php if ( get_option( 'iato_mcp_oauth_legacy_key', false ) ) : ?>
+								<br><span class="badge unauthorized"><?php esc_html_e( 'pre-1.13.0 OAuth connections hold the site key', 'iato-mcp' ); ?></span>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<td><?php esc_html_e( 'Receipt cleanup', 'iato-mcp' ); ?></td>
+						<td><?php echo esc_html( self::describe_retention() ); ?></td>
+					</tr>
+					<tr>
 						<td><?php esc_html_e( 'IATO API key', 'iato-mcp' ); ?></td>
 						<td>
 							<?php if ( '' === $api_key ) : ?>
@@ -287,6 +329,7 @@ CSS;
 							<th><?php esc_html_e( 'When', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Method', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Tool', 'iato-mcp' ); ?></th>
+							<th><?php esc_html_e( 'Who', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Duration', 'iato-mcp' ); ?></th>
 							<th><?php esc_html_e( 'Error', 'iato-mcp' ); ?></th>
@@ -301,11 +344,13 @@ CSS;
 							$err_code = (string) ( $r['error_code'] ?? '' );
 							$err_msg  = (string) ( $r['error_message'] ?? '' );
 							$created  = (string) ( $r['created_at'] ?? '' );
+							$who      = self::describe_caller( $r );
 							?>
 							<tr>
 								<td><?php echo esc_html( $created ); ?></td>
 								<td><code><?php echo esc_html( $method ); ?></code></td>
 								<td><?php echo $tool !== '' ? '<code>' . esc_html( $tool ) . '</code>' : '<span style="color:#9ca3af">—</span>'; ?></td>
+								<td><?php echo '' !== $who ? esc_html( $who ) : '<span style="color:#9ca3af">—</span>'; ?></td>
 								<td>
 									<span class="badge <?php echo esc_attr( $status ); ?>">
 										<?php echo esc_html( $status ?: 'unknown' ); ?>
@@ -330,6 +375,59 @@ CSS;
 			<?php endif; ?>
 		</div>
 		<?php
+	}
+
+	/** One line on the receipt retention job: period, last run, next run. */
+	private static function describe_retention(): string {
+		if ( ! class_exists( 'IATO_MCP_Receipt_Retention' ) ) {
+			return '';
+		}
+		$days  = IATO_MCP_Receipt_Retention::days();
+		$parts = [ $days > 0
+			/* translators: %d: number of days */
+			? sprintf( __( 'Elementor page copies in change receipts are cleared after %d days.', 'iato-mcp' ), $days )
+			: __( 'Disabled: Elementor page copies are kept.', 'iato-mcp' ) ];
+		$last = IATO_MCP_Receipt_Retention::last_run();
+		if ( null !== $last ) {
+			/* translators: 1: UTC date and time, 2: number of receipts */
+			$parts[] = sprintf( __( 'Last run %1$s UTC, %2$d cleared.', 'iato-mcp' ), $last['at'], (int) $last['pruned'] );
+		}
+		$next = wp_next_scheduled( IATO_MCP_Receipt_Retention::HOOK );
+		$parts[] = false === $next
+			? __( 'Not scheduled yet.', 'iato-mcp' )
+			/* translators: %s: UTC date and time */
+			: sprintf( __( 'Next run %s UTC.', 'iato-mcp' ), gmdate( 'Y-m-d H:i', (int) $next ) );
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * "user · credential · client" for a call log row (1.13.0 columns; rows
+	 * logged before then show the user only).
+	 */
+	private static function describe_caller( array $row ): string {
+		$user_id = (int) ( $row['auth_user_id'] ?? 0 );
+		$kind    = (string) ( $row['credential_kind'] ?? '' );
+		$client  = (string) ( $row['client_id'] ?? '' );
+		$parts   = [];
+		if ( $user_id > 0 ) {
+			$user    = get_userdata( $user_id );
+			$parts[] = $user ? $user->user_login : '#' . $user_id;
+		} elseif ( 'site_key' === $kind ) {
+			$parts[] = __( 'no user', 'iato-mcp' );
+		}
+		$labels = [
+			'site_key'             => __( 'site key', 'iato-mcp' ),
+			'oauth'                => __( 'OAuth', 'iato-mcp' ),
+			'application_password' => __( 'Application Password', 'iato-mcp' ),
+		];
+		if ( '' !== $kind ) {
+			$parts[] = $labels[ $kind ] ?? $kind;
+		}
+		if ( '' !== $client ) {
+			$name    = class_exists( 'IATO_MCP_Change_Receipt' ) ? IATO_MCP_Change_Receipt::client_name( $client ) : null;
+			$parts[] = null !== $name ? $name : $client;
+		}
+		return implode( ' · ', $parts );
 	}
 
 	/**

@@ -27,3 +27,4 @@ iato-mcp-iato-mcp-php-*.md
 # wp-env local override (machine-specific plugin paths)
 .wp-env.override.json
 .phpunit.result.cache
+__pycache__/

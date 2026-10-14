@@ -46,14 +46,137 @@ class IATO_MCP_Change_Receipt {
 			after_value LONGTEXT DEFAULT NULL,
 			applied_at DATETIME NOT NULL,
 			rolled_back_at DATETIME DEFAULT NULL,
-			PRIMARY KEY (id),
+			actor_user_id BIGINT UNSIGNED DEFAULT NULL,
+			actor_kind VARCHAR(30) DEFAULT NULL,
+			actor_client_id VARCHAR(64) DEFAULT NULL,
+			rolled_back_by_user_id BIGINT UNSIGNED DEFAULT NULL,
+			rolled_back_by_kind VARCHAR(30) DEFAULT NULL,
+			rolled_back_by_client_id VARCHAR(64) DEFAULT NULL,
+			pruned_at DATETIME DEFAULT NULL,
+			PRIMARY KEY  (id),
 			UNIQUE KEY change_id (change_id),
 			KEY post_id (post_id),
-			KEY target_type (target_type)
+			KEY target_type (target_type),
+			KEY actor_user_id (actor_user_id),
+			KEY target_applied (target_type, applied_at)
 		) {$charset};";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+	}
+
+	/** Schema version that added the actor columns (IATO_MCP_Schema step 4). */
+	public const ACTOR_SCHEMA = 4;
+
+	/**
+	 * Do the actor columns exist yet? False only between an upgrade and its
+	 * schema step 4 (or while that step keeps failing); receipts are then
+	 * written without an actor, exactly as before 1.13.0, rather than lost.
+	 */
+	public static function has_actor_columns(): bool {
+		return ! class_exists( 'IATO_MCP_Schema' ) || IATO_MCP_Schema::current() >= self::ACTOR_SCHEMA;
+	}
+
+	/**
+	 * Who is making the current request: the MCP credential when one
+	 * authenticated it (IATO_MCP_Auth::credential()), otherwise the logged-in
+	 * WordPress user with kind `wordpress` (code paths outside the MCP
+	 * endpoints).
+	 *
+	 * @return array{user_id:int,kind:string,client_id:?string}
+	 */
+	public static function current_actor(): array {
+		$credential = class_exists( 'IATO_MCP_Auth' ) ? IATO_MCP_Auth::credential() : [];
+		if ( ! empty( $credential['kind'] ) ) {
+			return [
+				'user_id'   => (int) ( $credential['user_id'] ?? 0 ),
+				'kind'      => (string) $credential['kind'],
+				'client_id' => isset( $credential['client_id'] ) && '' !== (string) $credential['client_id'] ? (string) $credential['client_id'] : null,
+			];
+		}
+		return [
+			'user_id'   => function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0,
+			'kind'      => 'wordpress',
+			'client_id' => null,
+		];
+	}
+
+	/**
+	 * The actor stored on a receipt row, or null for a receipt recorded
+	 * before 1.13.0 (no actor columns, or columns left NULL). Receipts
+	 * without an actor keep the rollback rules they had.
+	 *
+	 * @return array{user_id:int,kind:string,client_id:?string}|null
+	 */
+	public static function actor_of( array $receipt ): ?array {
+		$kind = $receipt['actor_kind'] ?? null;
+		if ( null === $kind || '' === (string) $kind ) {
+			return null;
+		}
+		$client = $receipt['actor_client_id'] ?? null;
+		return [
+			'user_id'   => (int) ( $receipt['actor_user_id'] ?? 0 ),
+			'kind'      => (string) $kind,
+			'client_id' => null !== $client && '' !== (string) $client ? (string) $client : null,
+		];
+	}
+
+	/** Who rolled the receipt back, or null (not rolled back, or rolled back before 1.13.0). */
+	public static function rolled_back_by_of( array $receipt ): ?array {
+		return self::actor_of( [
+			'actor_user_id'   => $receipt['rolled_back_by_user_id'] ?? null,
+			'actor_kind'      => $receipt['rolled_back_by_kind'] ?? null,
+			'actor_client_id' => $receipt['rolled_back_by_client_id'] ?? null,
+		] );
+	}
+
+	/**
+	 * An actor for responses: user id, login (null for the unbound site key,
+	 * user 0, or a deleted user), credential kind, and for OAuth the client
+	 * id and, when the client is still registered, its name.
+	 *
+	 * @param array{user_id:int,kind:string,client_id:?string}|null $actor
+	 */
+	public static function describe_actor( ?array $actor ): ?array {
+		if ( null === $actor ) {
+			return null;
+		}
+		$login = null;
+		if ( $actor['user_id'] > 0 && function_exists( 'get_userdata' ) ) {
+			$user  = get_userdata( $actor['user_id'] );
+			$login = $user ? (string) $user->user_login : null;
+		}
+		$out = [
+			'user_id'    => $actor['user_id'],
+			'user_login' => $login,
+			'kind'       => $actor['kind'],
+		];
+		if ( null !== $actor['client_id'] ) {
+			$out['client_id'] = $actor['client_id'];
+			$name             = self::client_name( $actor['client_id'] );
+			if ( null !== $name ) {
+				$out['client_name'] = $name;
+			}
+		}
+		return $out;
+	}
+
+	/** @var array<string,?string> client_id => name, per request */
+	private static array $client_names = [];
+
+	/** A registered OAuth client's name (memoised per request), or null. */
+	public static function client_name( string $client_id ): ?string {
+		if ( ! array_key_exists( $client_id, self::$client_names ) ) {
+			$name = null;
+			if ( class_exists( 'IATO_MCP_OAuth_Store' ) ) {
+				$client = IATO_MCP_OAuth_Store::instance()->find_client( $client_id );
+				if ( is_array( $client ) && '' !== (string) ( $client['client_name'] ?? '' ) ) {
+					$name = (string) $client['client_name'];
+				}
+			}
+			self::$client_names[ $client_id ] = $name;
+		}
+		return self::$client_names[ $client_id ];
 	}
 
 	/**
@@ -283,21 +406,36 @@ class IATO_MCP_Change_Receipt {
 
 		$change_id  = self::generate_id();
 		$applied_at = current_time( 'mysql', true ); // UTC.
+		$actor      = self::current_actor();
+
+		$row    = [
+			'change_id'    => $change_id,
+			'post_id'      => $post_id,
+			'target_type'  => $target_type,
+			'field'        => $field,
+			'before_value' => $before_stored,
+			'after_value'  => $after_stored,
+			'applied_at'   => $applied_at,
+		];
+		$format = [ '%s', '%d', '%s', '%s', '%s', '%s', '%s' ];
+		if ( self::has_actor_columns() ) {
+			// Who made the change (1.13.0): the WordPress user the request ran
+			// as, the credential kind, and the OAuth client. The rollback rule
+			// (same user or an administrator) reads these.
+			$row['actor_user_id']   = $actor['user_id'];
+			$row['actor_kind']      = $actor['kind'];
+			$row['actor_client_id'] = $actor['client_id'];
+			array_push( $format, '%d', '%s', '%s' );
+		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate, insert is the canonical source of truth.
-		$wpdb->insert(
-			self::table_name(),
-			[
-				'change_id'    => $change_id,
-				'post_id'      => $post_id,
-				'target_type'  => $target_type,
-				'field'        => $field,
-				'before_value' => $before_stored,
-				'after_value'  => $after_stored,
-				'applied_at'   => $applied_at,
-			],
-			[ '%s', '%d', '%s', '%s', '%s', '%s', '%s' ]
-		);
+		$wpdb->insert( self::table_name(), $row, $format );
+
+		// Retention: if the daily cleanup of old Elementor page copies is overdue
+		// (WP-Cron not running), run one batch at the end of this request.
+		if ( class_exists( 'IATO_MCP_Receipt_Retention' ) ) {
+			IATO_MCP_Receipt_Retention::maybe_run_overdue();
+		}
 
 		return [
 			'change_id'    => $change_id,
@@ -307,6 +445,7 @@ class IATO_MCP_Change_Receipt {
 			'before_value' => $before,
 			'after_value'  => $after,
 			'applied_at'   => gmdate( 'c', strtotime( $applied_at ) ),
+			'actor'        => self::describe_actor( $actor ),
 		];
 	}
 
@@ -329,20 +468,31 @@ class IATO_MCP_Change_Receipt {
 	}
 
 	/**
-	 * Mark a receipt as rolled back.
+	 * Mark a receipt as rolled back, and by whom (1.13.0).
 	 *
-	 * @param string $change_id The wr_ prefixed ID.
+	 * @param string     $change_id The wr_ prefixed ID.
+	 * @param array|null $by        Actor (current_actor() shape); defaults to the current request's.
 	 * @return bool True on success.
 	 */
-	public static function mark_rolled_back( string $change_id ): bool {
+	public static function mark_rolled_back( string $change_id, ?array $by = null ): bool {
 		global $wpdb;
+
+		$data   = [ 'rolled_back_at' => current_time( 'mysql', true ) ];
+		$format = [ '%s' ];
+		if ( self::has_actor_columns() ) {
+			$by = $by ?? self::current_actor();
+			$data['rolled_back_by_user_id']   = (int) $by['user_id'];
+			$data['rolled_back_by_kind']      = (string) $by['kind'];
+			$data['rolled_back_by_client_id'] = $by['client_id'];
+			array_push( $format, '%d', '%s', '%s' );
+		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
 		$updated = $wpdb->update(
 			self::table_name(),
-			[ 'rolled_back_at' => current_time( 'mysql', true ) ],
+			$data,
 			[ 'change_id' => $change_id ],
-			[ '%s' ],
+			$format,
 			[ '%s' ]
 		);
 

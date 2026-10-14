@@ -71,8 +71,17 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'not_found', 'Menu not found.' );
 		}
 
-		$result = [];
+		// Items that point at a post the caller may not read (a draft, a private
+		// post) are left out, with their count, so unpublished titles and URLs
+		// are not listed; custom links and archive items are public (1.13.0).
+		$result  = [];
+		$omitted = 0;
 		foreach ( $items as $item ) {
+			if ( 'post_type' === ( $item->type ?? '' ) && (int) $item->object_id > 0
+				&& is_wp_error( IATO_MCP_Auth::require_cap( 'read_post', (int) $item->object_id ) ) ) {
+				++$omitted;
+				continue;
+			}
 			$result[] = [
 				'id'         => (int) $item->ID,
 				'title'      => $item->title,
@@ -84,7 +93,11 @@ IATO_MCP_Server::register_tool(
 			];
 		}
 
-		return IATO_MCP_Server::ok( [ 'items' => $result ] );
+		$data = [ 'items' => $result ];
+		if ( $omitted > 0 ) {
+			$data['omitted_items'] = $omitted;
+		}
+		return IATO_MCP_Server::ok( $data );
 	}
 );
 
@@ -156,7 +169,7 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		$result = wp_update_nav_menu_item( $menu_id, 0, $item_data );
+		$result = wp_update_nav_menu_item( $menu_id, 0, wp_slash( $item_data ) ); // it saves through wp_insert_post(), which unslashes
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -270,7 +283,7 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		$result = wp_update_nav_menu_item( $menu_id, 0, $item_data );
+		$result = wp_update_nav_menu_item( $menu_id, 0, wp_slash( $item_data ) ); // it saves through wp_insert_post(), which unslashes
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -475,17 +488,21 @@ IATO_MCP_Server::register_tool(
 			] );
 		}
 
-		$result = wp_update_nav_menu_item( $menu_id, $menu_item_id, $item_data );
+		$result = wp_update_nav_menu_item( $menu_id, $menu_item_id, wp_slash( $item_data ) ); // it saves through wp_update_post(), which unslashes
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
-		// Build before/after from the tracked changes.
+		// Build before/after from the tracked changes. After values are read
+		// back as stored (WordPress filters titles on save and stores an empty
+		// title when it equals the linked object's), the form the rollback
+		// conflict check compares.
 		$before_vals = [];
 		$after_vals  = [];
+		$stored_item = get_post( $menu_item_id );
 		foreach ( $changes as $key => $change ) {
 			$before_vals[ $key ] = $change['from'];
-			$after_vals[ $key ]  = $change['to'];
+			$after_vals[ $key ]  = $stored_item ? IATO_MCP_Rollback_Conflict::menu_item_value( $stored_item, (string) $key ) : $change['to'];
 		}
 
 		$receipt = IATO_MCP_Change_Receipt::record(

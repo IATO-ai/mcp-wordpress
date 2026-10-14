@@ -103,7 +103,8 @@ IATO_MCP_Server::register_tool(
 				return $result;
 			}
 			$updated[]  = 'title';
-			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'title', $before['title'], $new_title );
+			// As stored and read back (the adapter sanitises on write).
+			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'title', $before['title'], IATO_MCP_SEO_Adapter::get_meta( $post_id )['title'] );
 		}
 
 		if ( null !== $new_desc ) {
@@ -112,7 +113,7 @@ IATO_MCP_Server::register_tool(
 				return $result;
 			}
 			$updated[]  = 'description';
-			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'meta_description', $before['description'], $new_desc );
+			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'page', 'meta_description', $before['description'], IATO_MCP_SEO_Adapter::get_meta( $post_id )['description'] );
 		}
 
 		$meta = IATO_MCP_SEO_Adapter::get_meta( $post_id );

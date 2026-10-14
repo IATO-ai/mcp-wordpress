@@ -1,6 +1,6 @@
 <?php
 /**
- * Seed the Elementor sanitising fixture page through Elementor's own save path,
+ * Seed the Part 2 sanitising fixture page through Elementor's own save path,
  * as an administrator who holds unfiltered_html, so the page carries
  * human-authored raw HTML (an iframe and a script in an HTML widget) exactly
  * as a site editor would have left it.
@@ -14,34 +14,50 @@
 if ( ! class_exists( '\Elementor\Plugin' ) ) {
 	WP_CLI::error( 'Elementor is not active.' );
 }
-if ( ! current_user_can( 'unfiltered_html' ) ) {
+// `wp eval-file ... author` (run with --user=author): a plain post the author
+// owns (Authors cannot edit pages), for the Application Password checks of a
+// user without unfiltered_html.
+// `wp eval-file ... rollback` (--user=admin): the admin page again under its
+// own slug, for tests/wp-env/rollback-actor-live.sh.
+$variant   = isset( $args[0] ) ? (string) $args[0] : 'admin';
+$slug      = match ( $variant ) {
+	'author'   => 'iato-sanitize-fixture-author',
+	'rollback'  => 'iato-rollback-fixture',
+	'retention' => 'iato-retention-fixture',
+	default    => 'iato-sanitize-fixture',
+};
+$post_type = 'author' === $variant ? 'post' : 'page';
+if ( 'author' !== $variant && ! current_user_can( 'unfiltered_html' ) ) {
 	WP_CLI::error( 'Run with --user=admin (needs unfiltered_html).' );
 }
 
-$existing = get_posts( [ 'post_type' => 'page', 'name' => 'iato-sanitize-fixture', 'post_status' => 'any', 'numberposts' => 1, 'fields' => 'ids' ] );
+$existing = get_posts( [ 'post_type' => $post_type, 'name' => $slug, 'post_status' => 'any', 'numberposts' => 1, 'fields' => 'ids' ] );
 foreach ( $existing as $old ) {
 	wp_delete_post( (int) $old, true );
 }
 
 $page_id = wp_insert_post( [
-	'post_type'   => 'page',
+	'post_type'   => $post_type,
 	'post_status' => 'publish',
-	'post_title'  => 'IATO sanitize fixture',
-	'post_name'   => 'iato-sanitize-fixture',
+	'post_title'  => 'IATO sanitize fixture' . ( 'author' === $variant ? ' (author)' : '' ),
+	'post_name'   => $slug,
 	'post_author' => get_current_user_id(),
 ] );
 update_post_meta( $page_id, '_elementor_edit_mode', 'builder' );
-update_post_meta( $page_id, '_elementor_template_type', 'wp-page' );
+update_post_meta( $page_id, '_elementor_template_type', 'page' === $post_type ? 'wp-page' : 'wp-post' );
 
 $ids = [ 'container' => 'c0ntain', 'heading' => 'headng1', 'html' => 'htmlwdg', 'editor' => 'textedi', 'button' => 'buttonw' ];
 
+$html = 'author' === $variant
+	? '<p>Author page, plain content.</p>'
+	: '<iframe src="https://maps.example.com/embed?q=b2l&z=12" width="300" height="200"></iframe><script>var humanAuthored = 1;</script>';
 $elements = [ [
 	'id'       => $ids['container'],
 	'elType'   => 'container',
 	'settings' => [],
 	'elements' => [
 		[ 'id' => $ids['heading'], 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => [ 'title' => 'Human heading', 'header_size' => 'h2' ], 'elements' => [] ],
-		[ 'id' => $ids['html'], 'elType' => 'widget', 'widgetType' => 'html', 'settings' => [ 'html' => '<iframe src="https://maps.example.com/embed?q=b2l&z=12" width="300" height="200"></iframe><script>var humanAuthored = 1;</script>' ], 'elements' => [] ],
+		[ 'id' => $ids['html'], 'elType' => 'widget', 'widgetType' => 'html', 'settings' => [ 'html' => $html ], 'elements' => [] ],
 		[ 'id' => $ids['editor'], 'elType' => 'widget', 'widgetType' => 'text-editor', 'settings' => [ 'editor' => '<p>Tom &amp; Jerry, by a human.</p>' ], 'elements' => [] ],
 		[ 'id' => $ids['button'], 'elType' => 'widget', 'widgetType' => 'button', 'settings' => [ 'text' => 'Human button', 'link' => [ 'url' => 'https://example.com/?a=1&b=2', 'is_external' => '', 'nofollow' => '' ] ], 'elements' => [] ],
 	],

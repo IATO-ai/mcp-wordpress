@@ -2,10 +2,13 @@
 /**
  * Sanitising pass for Elementor element trees written by the plugin.
  *
- * Elementor filters a page it saves for a user without unfiltered_html by
- * running wp_kses_post over every string in the document (Document::save(),
- * Utils::kses_post_deep). This pass, run on the plugin's own writes, is
- * narrower on purpose:
+ * Applied to every tree the plugin writes or hands to Elementor's
+ * Document::save() (IATO_MCP_Elementor_Adapter::write_pipeline()), and to
+ * `_elementor_page_settings` writes. Elementor's own save runs wp_kses_post
+ * over every string in the document when the user lacks unfiltered_html
+ * (Utils::kses_post_deep); the plugin lifts its kses lock around that save,
+ * so for classic widgets this pass is the sanitiser on both paths. It is
+ * narrower than Elementor's on purpose:
  *
  *   - only values the request changed are touched: each leaf is compared with
  *     the stored tree at the same path (element id + setting path) and kept
