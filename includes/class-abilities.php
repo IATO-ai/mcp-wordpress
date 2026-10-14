@@ -251,6 +251,22 @@ class IATO_MCP_Abilities {
 	}
 
 	/**
+	 * Capability an MCP call of this tool needs (1.13.0), or null when the tool
+	 * is not one of the IATO bridge tools exposed as abilities. Resolved by
+	 * capability_for(), so the iato_mcp_ability_capability filter governs the
+	 * MCP surface and the abilities alike. start_iato_crawl is not an ability
+	 * and checks manage_options itself.
+	 */
+	public static function capability_for_tool( string $tool ): ?string {
+		foreach ( self::ABILITIES as $slug => $entry ) {
+			if ( ( $entry['tool'] ?? '' ) === $tool ) {
+				return self::capability_for( $slug );
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Ability input schema derived from the MCP tool's inputSchema.
 	 * Ensures type:object and a top-level default so a null input (REST GET
 	 * without ?input=) normalises to an empty object instead of failing.

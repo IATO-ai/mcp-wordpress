@@ -103,7 +103,7 @@ The plugin also implements an OAuth 2.0 authorization server on your WordPress s
 2. Activate the plugin via the Plugins menu in WordPress
 3. Follow the setup wizard that appears — it provides the JSON config for Claude Desktop
 4. In Claude Desktop, either paste the JSON config or use "Add Custom Connector" and enter your site URL
-5. Optionally, go to Settings > IATO MCP to enter your IATO API key for the full analysis pipeline
+5. Optionally, go to Settings > IATO MCP to enter your IATO API key for the full analysis pipeline. Use a separate IATO API key for each client site: a key gives access to every crawl in its IATO account, so a key shared between sites lets one site's administrators see the others' crawl data.
 
 For detailed setup instructions, see the [IATO MCP documentation](https://iato.ai/wordpress-mcp-docs).
 
@@ -111,7 +111,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 40 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports.
+No. The plugin works standalone for reading and editing WordPress content with 40 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
 
 = Which WordPress version is required? =
 
@@ -175,6 +175,14 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * New: those page copies are removed automatically after 90 days by a daily task; the receipt stays as a record of who changed what, and older edits are restored from Elementor's revisions instead. Developers can change the period with the iato_mcp_receipt_retention_days filter (0 keeps them). Diagnostics shows when the cleanup last ran.
 * Fix: backslashes are kept. Post and page titles, content and excerpts, post meta (including Elementor page settings such as custom CSS escapes like \201C), SEO titles and descriptions, alt text, media titles and captions, menu item titles and term names and descriptions written through MCP used to lose every backslash, and rollback could not restore them.
 * Fix: rolling back a tag added to a post that had no tags no longer removes the post's categories, and rolling back a term edit restores the term (it did nothing before).
+* Security: the IATO bridge tools (crawls, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy, suggestions, performance, sitemap) now require an administrator (manage_options) through MCP, as they already did as WordPress abilities. They return the IATO account's crawl data, which can include other sites. The iato_mcp_ability_capability filter lowers the requirement for both surfaces.
+* Security: get_media requires upload_files (Author and above), the same as the Media Library.
+* Security: get_comments returns only comments on posts the caller can read (password-protected posts need edit rights), and held, spam or trashed comments require moderate_comments. An unknown status is now an error instead of an empty list.
+* Security: get_menu_items leaves out items that link to posts the caller cannot read, such as drafts and private posts, and reports how many it left out.
+* Security: get_site_info returns the active plugin count and the Theme Builder template count to administrators only; other users see them listed under restricted_fields.
+* Security: resolve_url answers with a 404 for posts the caller cannot read, as WordPress does for visitors.
+* Security: writing _elementor_template_type with update_post_meta requires an administrator; update_elementor_data's inherit step skips it for other users and says why.
+* Security: in array values written to other post meta keys (custom fields, theme and SEO plugin settings), text containing HTML that the write changes is filtered with wp_kses_post, like Elementor values; values already stored are kept as they are.
 * Note on upgrade: OAuth connections made before 1.13.0 keep working (they hold the API key) but cannot be revoked individually. An admin notice explains how to move them to their own tokens (remove and re-add the connector in the AI client) and that regenerating the API key disconnects all of them; Settings and Diagnostics keep pointing this out until the key is regenerated. An authorization that was in progress during the upgrade has to be started again.
 
 = 1.12.2 =

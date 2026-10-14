@@ -119,7 +119,7 @@ Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` 
 
 | Tool name | File | Capability |
 |---|---|---|
-| `get_site_info` | tools/wp/tool-site.php | read |
+| `get_site_info` | tools/wp/tool-site.php | read; `plugin_count` and `theme_builder_template_count` only with manage_options, else `restricted_fields` (1.13.0) |
 | `get_site_settings` | tools/wp/tool-site.php | manage_options |
 | `get_posts` | tools/wp/tool-posts.php | read |
 | `get_post` | tools/wp/tool-posts.php | read |
@@ -128,11 +128,11 @@ Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` 
 | `search_posts` | tools/wp/tool-posts.php | read |
 | `get_seo_data` | tools/wp/tool-seo.php | read |
 | `update_seo_data` | tools/wp/tool-seo.php | edit_posts |
-| `get_media` | tools/wp/tool-media.php | read |
+| `get_media` | tools/wp/tool-media.php | upload_files (1.13.0) |
 | `update_alt_text` | tools/wp/tool-media.php | edit_posts |
-| `get_comments` | tools/wp/tool-comments.php | read |
+| `get_comments` | tools/wp/tool-comments.php | read; moderate_comments for hold/spam/trash/all; comments only on posts the caller may read (1.13.0) |
 | `get_menus` | tools/wp/tool-menus.php | read |
-| `get_menu_items` | tools/wp/tool-menus.php | read |
+| `get_menu_items` | tools/wp/tool-menus.php | read; items targeting posts that fail read_post are left out and counted in `omitted_items` (1.13.0) |
 | `update_menu_item` / `create_menu_item` / `delete_menu_item` / `update_menu_item_details` | tools/wp/tool-menus.php | manage_options |
 | `get_terms` | tools/wp/tool-taxonomy.php | read |
 | `assign_term` / `create_term` / `update_term` / `delete_term` / `update_taxonomy` | tools/wp/tool-taxonomy.php | edit_posts |
@@ -145,7 +145,7 @@ Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` 
 | `update_elementor_widgets_bulk` | tools/wp/tool-elementor-bulk.php | edit_posts |
 | `find_elementor_widgets` | tools/wp/tool-elementor-bulk.php | read |
 | `set_heading_level` / `set_widget_setting` | tools/wp/tool-elementor-helpers.php | edit_posts |
-| `resolve_url` | tools/wp/tool-resolve-url.php | read |
+| `resolve_url` | tools/wp/tool-resolve-url.php | read; posts that fail read_post answer as a 404 (1.13.0) |
 | `rollback` | tools/wp/tool-rollback.php | edit_posts + the receipt's object cap; since 1.13.0 also the user who made the change or manage_options |
 | `get_post_meta` | tools/wp/tool-post-meta.php | edit_posts |
 | `update_post_meta` | tools/wp/tool-post-meta.php | edit_posts |
@@ -173,7 +173,7 @@ The `initialize` response advertises `capabilities.elementor.v2: true` when Elem
 
 ### IATO Bridge Tools (require IATO API key)
 
-All bridge tools return `WP_Error` if the API key is missing. Each resolves IATO URLs to WordPress post IDs and slugs before returning.
+All bridge tools return `WP_Error` if the API key is missing. Each resolves IATO URLs to WordPress post IDs and slugs before returning. Since 1.13.0 they need `manage_options` on the MCP surface: `IATO_MCP_Server::handle_tools_call()` checks `IATO_MCP_Abilities::capability_for_tool()` before the handler runs (the same resolver and `iato_mcp_ability_capability` filter as the abilities; `start_iato_crawl`, not an ability, checks `manage_options` itself). The check lives in the dispatch, not in the handlers, because the abilities run the same handlers outside MCP authentication behind their own `permission_callback`. The account behind an IATO key can hold other client sites' crawls, so the readme tells users to use one key per client site.
 
 | Tool name | File | IATO endpoint |
 |---|---|---|
@@ -358,7 +358,9 @@ Two layers:
 1. **Denylist** (hard-reject even with `force=true`): keys matching credential / auth / capability patterns — `*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, `wp_capabilities`, `wp_user_level`, `wp_user_roles`, `session_tokens`, `wp_2fa_*`. Case-insensitive substring match.
 2. **Allowlist** (writable without `force=true`): public custom meta (any key not starting with `_`) plus known-safe prefixes — `site-`, `ast-`, `footer-sml-`, `_elementor_`, `_wp_page_template`, `_thumbnail_id`, `_yoast_`, `_genesis_`, `_kadence_`, `_generate_`, `rank_math_`, `_seopress_`.
 
-Anything not in the denylist and not in the allowlist requires `force=true` on writes and returns `meta_requires_force`. `get_post_meta` redacts denylist hits unconditionally and filters out underscore-prefixed keys outside the allowlist unless `include_protected=true`.
+Anything not in the denylist and not in the allowlist requires `force=true` on writes and returns `meta_requires_force`.
+
+Since 1.13.0: `IATO_MCP_Meta_Policy::capability_for_key()` names keys that need an administrator beyond `edit_post` (`ADMIN_ONLY_KEYS`: `_elementor_template_type`); `update_post_meta` refuses them, and `update_elementor_data`'s inherit step skips them for other users (`inherited_skipped` reason `requires_manage_options`). Array values under non-Elementor keys go through `sanitize_array_value()` in `update_post_meta`, `set_page_settings` and inherit: strings containing `<` that the write changes are filtered with `wp_kses_post` (the sanitizer's markup rule), values equal to the stored ones are kept verbatim, paths reported in `sanitized_paths`; skipped when unfiltered HTML is allowed. `get_post_meta` redacts denylist hits unconditionally and filters out underscore-prefixed keys outside the allowlist unless `include_protected=true`.
 
 ---
 

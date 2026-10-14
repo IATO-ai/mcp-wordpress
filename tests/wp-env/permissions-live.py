@@ -291,6 +291,75 @@ for who in ('admin', 'key'):
     fw = call(who, 'find_elementor_widgets', {'post_ids': [], 'include_templates': True, 'filter': {'type': wtype}})
     record(f'{who} find_elementor_widgets include_templates scan, nothing counted', isinstance(fw, dict) and not fw.get('isError') and 'skipped_unreadable_count' not in fw, {k: v for k, v in fw.items() if k != 'matches'} if isinstance(fw, dict) else fw)
 
+# ── Part 4 (1.13.0): read tools and the bridge tools ──────────────────────
+print('# Part 4: read permissions and the bridge tools')
+P4 = {k: int(os.environ[k]) for k in ['C_PUBLIC', 'C_HELD', 'C_SPAM', 'C_DRAFT', 'C_PRIVATE', 'C_PASSWORD', 'SP_MENU', 'MI_CUSTOM', 'MI_PAGE', 'MI_DRAFT', 'MI_PRIVATE']}
+ADRAFT, APRIV, PWPAGE = IDS['ADMIN_DRAFT'], IDS['ADMIN_PRIVATE'], IDS['PASSWORD_PAGE']
+
+def err_text(r):
+    return r.get('text', '') if isinstance(r, dict) else ''
+
+def comment_ids(r):
+    return {x['id'] for x in r.get('comments', [])} if isinstance(r, dict) else set()
+
+forbidden('contributor get_media (upload_files)', call(c, 'get_media', {}), 'upload_files')
+for who in (a, e, 'admin', 'key'):
+    ok(f'{who} get_media', call(who, 'get_media', {'per_page': 5}))
+
+forbidden('contributor get_comments status=hold', call(c, 'get_comments', {'status': 'hold'}), 'moderate_comments')
+forbidden('author get_comments status=spam', call(a, 'get_comments', {'status': 'spam'}), 'moderate_comments')
+r = call(a, 'get_comments', {'status': 'nonsense'})
+record('get_comments unknown status is an error', bool(r.get('isError')) and 'status must be one of' in err_text(r), r)
+ids = comment_ids(call(a, 'get_comments', {'per_page': 100}))
+record('author get_comments: public comment listed; draft, private and password-protected posts left out', P4['C_PUBLIC'] in ids and not ({P4['C_DRAFT'], P4['C_PRIVATE'], P4['C_PASSWORD']} & ids), sorted(ids))
+forbidden('author get_comments on the password-protected page (edit_post)', call(a, 'get_comments', {'post_id': PWPAGE}), 'edit_post')
+record('author get_comments on the public page', P4['C_PUBLIC'] in comment_ids(call(a, 'get_comments', {'post_id': P})), None)
+ids = comment_ids(call(e, 'get_comments', {'per_page': 100}))
+record('editor get_comments: drafts, private and password-protected posts are readable to an Editor', {P4['C_PUBLIC'], P4['C_DRAFT'], P4['C_PRIVATE'], P4['C_PASSWORD']} <= ids, sorted(ids))
+record('editor get_comments status=hold (moderate_comments)', P4['C_HELD'] in comment_ids(call(e, 'get_comments', {'status': 'hold', 'per_page': 100})), None)
+record('site key get_comments status=all', {P4['C_HELD'], P4['C_PUBLIC']} <= comment_ids(call('key', 'get_comments', {'status': 'all', 'per_page': 100})), None)
+
+for who in (c, a):
+    r = call(who, 'get_menu_items', {'menu_id': P4['SP_MENU']})
+    got = {x['id'] for x in r.get('items', [])} if isinstance(r, dict) else set()
+    record(f'{who} get_menu_items: custom link and published page listed; draft and private targets left out and counted',
+           {P4['MI_CUSTOM'], P4['MI_PAGE']} <= got and not ({P4['MI_DRAFT'], P4['MI_PRIVATE']} & got) and r.get('omitted_items') == 2, r)
+r = call(e, 'get_menu_items', {'menu_id': P4['SP_MENU']})
+got = {x['id'] for x in r.get('items', [])} if isinstance(r, dict) else set()
+record('editor get_menu_items: every item, nothing omitted', {P4['MI_CUSTOM'], P4['MI_PAGE'], P4['MI_DRAFT'], P4['MI_PRIVATE']} <= got and 'omitted_items' not in r, r)
+
+r = call(e, 'get_site_info', {})
+record('editor get_site_info: plugin and template counts restricted', 'plugin_count' not in r and r.get('restricted_fields') == ['plugin_count', 'theme_builder_template_count'] and r.get('active_theme'), r)
+for who in ('admin', 'key'):
+    r = call(who, 'get_site_info', {})
+    record(f'{who} get_site_info: plugin and template counts present', 'plugin_count' in r and 'theme_builder_template_count' in r and 'restricted_fields' not in r, r)
+
+def route(who, url):
+    r = call(who, 'resolve_url', {'url': url})
+    return (r.get('route_type'), r.get('rendering_post_id')) if isinstance(r, dict) else (None, None)
+record('author resolve_url of a draft by ID: 404', route(a, f'/?page_id={ADRAFT}') == ('404', None), route(a, f'/?page_id={ADRAFT}'))
+record('admin resolve_url of the same draft resolves', route('admin', f'/?page_id={ADRAFT}')[1] == ADRAFT, route('admin', f'/?page_id={ADRAFT}'))
+record('author resolve_url of a private post: 404', route(a, f'/?p={APRIV}') == ('404', None), route(a, f'/?p={APRIV}'))
+record('editor resolve_url of the private post resolves (read_private_posts)', route(e, f'/?p={APRIV}')[1] == APRIV, route(e, f'/?p={APRIV}'))
+record('author resolve_url of a published page resolves', route(a, f'/?page_id={P}')[1] == P, route(a, f'/?page_id={P}'))
+
+BRIDGE = ['get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report', 'get_iato_crawl_status', 'list_iato_crawls', 'start_iato_crawl']
+for tool in BRIDGE:
+    for who in (c, e):
+        forbidden(f'{who} {tool} (manage_options)', call(who, tool, {}), 'manage_options')
+r = call('admin', 'list_iato_crawls', {})
+record('admin list_iato_crawls passes the capability check', 'required capability' not in err_text(r), r)
+
+r = call(e, 'update_post_meta', {'id': EP, 'key': '_elementor_template_type', 'value': os.environ['EP_TEMPLATE_TYPE']})
+forbidden('editor update_post_meta _elementor_template_type (manage_options)', r, 'manage_options')
+ok('admin update_post_meta _elementor_template_type (unchanged value)', call('admin', 'update_post_meta', {'id': EP, 'key': '_elementor_template_type', 'value': os.environ['EP_TEMPLATE_TYPE']}))
+r = call(e, 'update_elementor_data', {'id': EP, 'elementor_data': '[]', 'dry_run': True, 'inherit_settings_from': P, 'inherit_keys': ['_elementor_template_type']})
+record('editor update_elementor_data inherit: template type skipped with the reason', any(x.get('key') == '_elementor_template_type' and x.get('reason') == 'requires_manage_options' for x in r.get('inherited_skipped', [])), r)
+
+r = call(e, 'update_post_meta', {'id': P, 'key': 'secpatch_array', 'value': {'keep': 'plain & simple', 'html': '<b>x</b><script>alert(1)</script>'}})
+record('editor update_post_meta array: markup filtered in the changed string and reported, plain text kept',
+       r.get('sanitized_paths') == ['secpatch_array/html'] and '<script' not in json.dumps(r.get('after_value')) and (r.get('after_value') or {}).get('keep') == 'plain & simple', r)
+
 print(f'# {passes} passed, {len(fails)} failed')
 for f in fails:
     print('   -', f)

@@ -16,6 +16,7 @@ if [ "${1:-}" = "--cleanup" ]; then
 	for id in $(W wp post list --user=admin --post_type=post,page,attachment,elementor_library,revision --post_status=any --s=secpatch --format=ids | tr ' ' '\n'); do W wp post delete "$id" --force; done
 	for id in $(W wp post list --post_type=attachment --post_status=inherit --s=wordpress-logo --format=ids | tr ' ' '\n'); do W wp post delete "$id" --force; done
 	W wp term update category 1 --description='' >/dev/null
+	W wp menu delete "secpatch menu" >/dev/null
 	for u in contributor author; do W wp user get "$u" --field=ID >/dev/null 2>&1 && W wp user delete "$u" --yes; done
 	for u in admin editor; do
 		W wp user application-password list "$u" --fields=uuid,name --format=csv | tail -n +2 > /tmp/iato-ap.csv
@@ -55,5 +56,20 @@ export REV_TEMPLATE=$(W wp post create --post_type=revision --post_status=inheri
 export ELEMENTOR_PAGE="${ELEMENTOR_PAGE:-10}"
 # A dangerous value stored before the fix: the render-time encoding must neutralise it.
 W wp post meta update "$ADMIN_PAGE" _iato_mcp_structured_data '{"@type":"Article","name":"x</script><script>alert(1)</script>"}' >/dev/null
+# Part 4 (1.13.0) read fixtures: comments in each status and on unreadable
+# posts, and a menu linking to a draft and a private post.
+export C_PUBLIC=$(W wp comment create --comment_post_ID="$ADMIN_PAGE" --comment_content="secpatch public comment" --comment_approved=1 --porcelain)
+export C_HELD=$(W wp comment create --comment_post_ID="$ADMIN_PAGE" --comment_content="secpatch held comment" --comment_approved=0 --porcelain)
+export C_SPAM=$(W wp comment create --comment_post_ID="$ADMIN_PAGE" --comment_content="secpatch spam comment" --comment_approved=spam --porcelain)
+export C_DRAFT=$(W wp comment create --comment_post_ID="$ADMIN_DRAFT" --comment_content="secpatch draft comment" --comment_approved=1 --porcelain)
+export C_PRIVATE=$(W wp comment create --comment_post_ID="$ADMIN_PRIVATE" --comment_content="secpatch private comment" --comment_approved=1 --porcelain)
+export C_PASSWORD=$(W wp comment create --comment_post_ID="$PASSWORD_PAGE" --comment_content="secpatch password comment" --comment_approved=1 --porcelain)
+W wp menu delete "secpatch menu" >/dev/null 2>&1 || true
+export SP_MENU=$(W wp menu create "secpatch menu" --porcelain)
+export MI_CUSTOM=$(W wp menu item add-custom "$SP_MENU" "secpatch custom" https://example.com/custom --porcelain)
+export MI_PAGE=$(W wp menu item add-post "$SP_MENU" "$ADMIN_PAGE" --porcelain)
+export MI_DRAFT=$(W wp menu item add-post "$SP_MENU" "$ADMIN_DRAFT" --porcelain)
+export MI_PRIVATE=$(W wp menu item add-post "$SP_MENU" "$ADMIN_PRIVATE" --porcelain)
+export EP_TEMPLATE_TYPE=$(W wp post meta get "$ELEMENTOR_PAGE" _elementor_template_type || echo wp-page)
 echo "fixtures: page=$ADMIN_PAGE contrib=$CONTRIB_DRAFT,$CONTRIB_DRAFT2 author=$AUTHOR_DRAFT attachment=$ATTACHMENT elementor=$ELEMENTOR_PAGE"
 python3 -I tests/wp-env/permissions-live.py

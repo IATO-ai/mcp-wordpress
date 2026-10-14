@@ -167,6 +167,15 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $elementor_policy ) ) {
 			return $elementor_policy;
 		}
+		// Keys that change site structure (Elementor's template type) need an
+		// administrator, beyond edit_post on the post (1.13.0).
+		$key_cap = IATO_MCP_Meta_Policy::capability_for_key( $key );
+		if ( null !== $key_cap ) {
+			$key_check = IATO_MCP_Auth::require_cap( $key_cap );
+			if ( is_wp_error( $key_check ) ) {
+				return $key_check;
+			}
+		}
 
 		// Capture before-value. Empty strings normalise to null per the receipt spec.
 		$before = get_post_meta( $post_id, $key, true );
@@ -184,8 +193,12 @@ IATO_MCP_Server::register_tool(
 			$after_val = sanitize_text_field( $after_raw );
 		} elseif ( is_array( $after_raw ) || is_object( $after_raw ) ) {
 			$after_val = $after_raw;
-			if ( IATO_MCP_Meta_Policy::is_elementor_key( $key ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
-				$s               = IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after_raw, $before );
+			if ( ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+				// Elementor keys by value shape; other keys: markup in the strings
+				// this write changes goes through wp_kses_post (1.13.0).
+				$s               = IATO_MCP_Meta_Policy::is_elementor_key( $key )
+					? IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after_raw, $before )
+					: IATO_MCP_Meta_Policy::sanitize_array_value( $key, $after_raw, $before );
 				$after_val       = $s['value'];
 				$sanitized_paths = $s['changed'];
 			}

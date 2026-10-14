@@ -119,6 +119,69 @@ class IATO_MCP_Meta_Policy {
 	}
 
 	/**
+	 * Keys an administrator alone may write (1.13.0): `_elementor_template_type`
+	 * decides how Elementor treats a post (page, header, footer, single,
+	 * archive, popup...), which is a site-structure change, not an edit.
+	 */
+	public const ADMIN_ONLY_KEYS = [ '_elementor_template_type' ];
+
+	/** Capability a write of this key needs beyond edit_post, or null. */
+	public static function capability_for_key( string $key ): ?string {
+		return in_array( strtolower( $key ), self::ADMIN_ONLY_KEYS, true ) ? 'manage_options' : null;
+	}
+
+	/**
+	 * Sanitise an array/object value written under a key that is not an
+	 * Elementor key (public custom meta, theme and SEO plugin keys) (1.13.0):
+	 * strings containing markup that this write changes go through
+	 * wp_kses_post, the same rule as for Elementor values; values equal to the
+	 * stored ones at the same path are kept verbatim, so markup a person put
+	 * there is not altered. Plain string values are not handled here (the meta
+	 * tools run sanitize_text_field on them).
+	 *
+	 * @return array{value:mixed,changed:string[]}
+	 */
+	public static function sanitize_array_value( string $key, mixed $value, mixed $stored ): array {
+		if ( ( ! is_array( $value ) && ! is_object( $value ) ) || ! class_exists( 'IATO_MCP_Elementor_Sanitizer' ) ) {
+			return [ 'value' => $value, 'changed' => [] ];
+		}
+		$value  = json_decode( (string) wp_json_encode( $value ), true );
+		$stored = is_array( $stored ) ? $stored : ( is_object( $stored ) ? json_decode( (string) wp_json_encode( $stored ), true ) : null );
+		if ( ! is_array( $value ) ) {
+			return [ 'value' => $value, 'changed' => [] ];
+		}
+		$changed = [];
+		$value   = self::filter_changed_markup( $value, is_array( $stored ) ? $stored : null, [ $key ], $changed );
+		if ( count( $changed ) > IATO_MCP_Elementor_Sanitizer::MAX_PATHS ) {
+			$more    = count( $changed ) - IATO_MCP_Elementor_Sanitizer::MAX_PATHS;
+			$changed = array_merge( array_slice( $changed, 0, IATO_MCP_Elementor_Sanitizer::MAX_PATHS ), [ '… and ' . $more . ' more' ] );
+		}
+		return [ 'value' => $value, 'changed' => $changed ];
+	}
+
+	/** @param string[] $changed */
+	private static function filter_changed_markup( array $new, ?array $stored, array $path, array &$changed ): array {
+		foreach ( $new as $k => $v ) {
+			$old  = ( null !== $stored && array_key_exists( $k, $stored ) ) ? $stored[ $k ] : null;
+			$here = array_merge( $path, [ (string) $k ] );
+			if ( is_array( $v ) ) {
+				$new[ $k ] = self::filter_changed_markup( $v, is_array( $old ) ? $old : null, $here, $changed );
+				continue;
+			}
+			if ( ! is_string( $v ) || $v === $old || ! str_contains( $v, '<' ) ) {
+				continue;
+			}
+			// A neutral path: only the markup rule applies (no URL or CSS rule by key name).
+			$clean = (string) IATO_MCP_Elementor_Sanitizer::sanitize_value( $v, [ '_' ] );
+			if ( $clean !== $v ) {
+				$new[ $k ]  = $clean;
+				$changed[] = implode( '/', $here );
+			}
+		}
+		return $new;
+	}
+
+	/**
 	 * True if the key matches a denylist pattern. Case-insensitive.
 	 */
 	public static function is_denied( string $key ): bool {

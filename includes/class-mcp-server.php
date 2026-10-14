@@ -430,6 +430,22 @@ class IATO_MCP_Server {
 			return new WP_Error( 'tool_not_found', "Unknown tool: {$name}" );
 		}
 
+		// IATO bridge tools return the IATO account's crawl data, which can
+		// cover other client sites: manage_options, as for the abilities
+		// (1.13.0). Checked here, not in the handlers, because the abilities
+		// run the same handlers outside MCP authentication, behind their own
+		// permission_callback.
+		$tool_cap = class_exists( 'IATO_MCP_Abilities' ) ? IATO_MCP_Abilities::capability_for_tool( $name ) : null;
+		if ( null !== $tool_cap ) {
+			$cap_check = IATO_MCP_Auth::require_cap( $tool_cap );
+			if ( is_wp_error( $cap_check ) ) {
+				return [
+					'isError' => true,
+					'content' => [ [ 'type' => 'text', 'text' => $cap_check->get_error_message() ] ],
+				];
+			}
+		}
+
 		$handler = self::$tools[ $name ]['handler'];
 		$result  = call_user_func( $handler, $arguments );
 

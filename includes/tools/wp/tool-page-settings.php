@@ -107,6 +107,15 @@ IATO_MCP_Server::register_tool(
 				$before = get_post_meta( $post_id, $key, true );
 				$before = ( '' === $before ) ? null : $before;
 				$after  = is_string( $raw_value ) ? sanitize_text_field( $raw_value ) : $raw_value;
+				// Array values: markup in the strings this write changes goes
+				// through wp_kses_post (1.13.0).
+				if ( ( is_array( $after ) || is_object( $after ) ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+					$s     = IATO_MCP_Meta_Policy::sanitize_array_value( $key, $after, $before );
+					$after = $s['value'];
+					if ( ! empty( $s['changed'] ) ) {
+						$sanitized_paths = array_merge( $sanitized_paths, $s['changed'] );
+					}
+				}
 			}
 
 			$planned[] = [

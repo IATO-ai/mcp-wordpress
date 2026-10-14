@@ -346,6 +346,13 @@ IATO_MCP_Server::register_tool(
 				if ( is_wp_error( $elementor_policy ) ) {
 					return $elementor_policy;
 				}
+				// Administrator-only keys (Elementor's template type) are skipped
+				// for other users rather than failing the whole call (1.13.0).
+				$key_cap = IATO_MCP_Meta_Policy::capability_for_key( $key );
+				if ( null !== $key_cap && is_wp_error( IATO_MCP_Auth::require_cap( $key_cap ) ) ) {
+					$inherit_skipped[] = [ 'key' => $key, 'reason' => 'requires_' . $key_cap ];
+					continue;
+				}
 				$source_value = get_post_meta( $inherit_source, $key, true );
 				$target_value = get_post_meta( $post_id, $key, true );
 
@@ -360,8 +367,12 @@ IATO_MCP_Server::register_tool(
 				$before = ( '' === $target_value ) ? null : $target_value;
 				$after  = $source_value;
 				$entry  = [ 'key' => $key, 'before' => $before, 'after' => $after ];
-				if ( IATO_MCP_Meta_Policy::is_elementor_key( $key ) && ( is_array( $after ) || is_object( $after ) ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
-					$s              = IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after, is_array( $target_value ) ? $target_value : null );
+				if ( ( is_array( $after ) || is_object( $after ) ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+					// Elementor keys by value shape; other keys: markup in the
+					// strings that differ from the target's goes through wp_kses_post.
+					$s              = IATO_MCP_Meta_Policy::is_elementor_key( $key )
+						? IATO_MCP_Meta_Policy::sanitize_elementor_value( $key, $after, is_array( $target_value ) ? $target_value : null )
+						: IATO_MCP_Meta_Policy::sanitize_array_value( $key, $after, is_array( $target_value ) ? $target_value : null );
 					$entry['after'] = $s['value'];
 					if ( ! empty( $s['changed'] ) ) {
 						$entry['sanitized_paths'] = $s['changed'];

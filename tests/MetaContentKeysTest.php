@@ -111,10 +111,38 @@ final class MetaContentKeysTest extends TestCase {
 		$this->assertSame( '<i>x</i>', IATO_Test_WP::$meta[ self::POST ]['_elementor_page_settings']['note'] );
 	}
 
-	public function test_non_elementor_keys_are_unchanged_by_this_part(): void {
-		$r = $this->call( [ 'key' => 'my_public_key', 'value' => [ 'a' => '<b>x</b>' ] ] );
+	public function test_markup_in_changed_strings_of_non_elementor_arrays_is_sanitised(): void {
+		// Stored by a person: markup in one field, plain text in another.
+		IATO_Test_WP::$meta[ self::POST ]['my_public_key'] = [ 'human' => '<iframe src="x"></iframe>', 'plain' => 'a & b' ];
+		$r = $this->call( [ 'key' => 'my_public_key', 'value' => [ 'human' => '<iframe src="x"></iframe>', 'plain' => 'a & b', 'new' => '<b>x</b><script>y</script>', 'deep' => [ 'n' => '<i>z</i>' ], 'text' => 'no markup' ] ] );
+		$this->assertSame( [ 'my_public_key/new', 'my_public_key/deep/n' ], $r['sanitized_paths'] );
+		$stored = IATO_Test_WP::$meta[ self::POST ]['my_public_key'];
+		$this->assertSame( '<iframe src="x"></iframe>', $stored['human'], 'unchanged values are kept verbatim' );
+		$this->assertSame( 'K[xy]', $stored['new'] );
+		$this->assertSame( 'K[z]', $stored['deep']['n'] );
+		$this->assertSame( [ 'a & b', 'no markup' ], [ $stored['plain'], $stored['text'] ], 'strings without markup are untouched' );
+
+		$ref = new ReflectionClass( IATO_MCP_Auth::class );
+		$ref->getProperty( 'unfiltered_html_allowed' )->setValue( null, true );
+		$r = $this->call( [ 'key' => 'my_public_key', 'value' => [ 'new' => '<b>raw</b>' ] ] );
+		$ref->getProperty( 'unfiltered_html_allowed' )->setValue( null, false );
 		$this->assertArrayNotHasKey( 'sanitized', $r );
-		$this->assertSame( [ 'a' => '<b>x</b>' ], IATO_Test_WP::$meta[ self::POST ]['my_public_key'] );
+		$this->assertSame( [ 'new' => '<b>raw</b>' ], IATO_Test_WP::$meta[ self::POST ]['my_public_key'], 'raw when unfiltered HTML is allowed' );
+	}
+
+	public function test_template_type_needs_an_administrator(): void {
+		$ref = new ReflectionClass( IATO_MCP_Auth::class );
+		$ref->getProperty( 'site_key_full_access' )->setValue( null, false );
+		$ref->getProperty( 'authenticated_user' )->setValue( null, new WP_User( 9 ) );
+		IATO_Test_Roles::$users[9] = 'editor';
+		IATO_Test_Roles::$posts[ self::POST ] = [ 'post_type' => 'page', 'post_author' => 9, 'post_status' => 'publish' ];
+		$r = $this->call( [ 'key' => '_elementor_template_type', 'value' => 'header' ] );
+		$this->assertSame( 'iato_mcp_forbidden', $r['error'] ?? null, 'an Editor may edit the page but not change its template type' );
+		$this->assertArrayNotHasKey( '_elementor_template_type', IATO_Test_WP::$meta[ self::POST ] );
+		IATO_Test_Roles::$users[1] = 'administrator';
+		$ref->getProperty( 'authenticated_user' )->setValue( null, new WP_User( 1 ) );
+		$r = $this->call( [ 'key' => '_elementor_template_type', 'value' => 'wp-page' ] );
+		$this->assertSame( 'wp-page', IATO_Test_WP::$meta[ self::POST ]['_elementor_template_type'] ?? null, $r['message'] ?? '' );
 	}
 
 	public function test_backslashes_survive_meta_writes(): void {
