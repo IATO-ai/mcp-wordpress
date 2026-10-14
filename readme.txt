@@ -2,7 +2,7 @@
 Contributors: iatoai
 Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
-Tested up to: 6.9
+Tested up to: 7.1
 Requires PHP: 8.0
 Stable tag: 1.13.0
 License: GPL-2.0-or-later
@@ -417,6 +417,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.13.0 =
+Security release. OAuth connections now get their own revocable tokens: remove and re-add the Claude connector once. MCP content is filtered for every role, rollbacks record who made each change, and IATO crawl tools need an administrator.
 
 = 1.12.2 =
 Fixes Elementor edits made with an IATO key or OAuth connection removing embeds, scripts and other HTML from other widgets. To repair a page edited before this update, restore an earlier version in Elementor's History panel, under Revisions.
