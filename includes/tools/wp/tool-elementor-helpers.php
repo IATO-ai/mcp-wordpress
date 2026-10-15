@@ -71,10 +71,12 @@ IATO_MCP_Server::register_tool(
 		}
 		$widget_type = (string) ( $found['element']['widgetType'] ?? '' );
 		if ( 'heading' !== $widget_type ) {
-			return new WP_Error(
-				'invalid_widget_type',
-				"set_heading_level only operates on heading widgets; got '{$widget_type}'."
-			);
+			$message = "set_heading_level only operates on heading widgets; got '{$widget_type}'.";
+			if ( 'e-heading' === $widget_type ) {
+				// 1.13.1: point atomic headings at the typed-value form.
+				$message .= ' For an Elementor Atomic (V4) heading, set its tag with update_elementor_widget as a typed value, for example settings_patch {"tag": {"$$type": "string", "value": "' . $level . '"}}. Plain values for atomic elements come in a later IATO release.';
+			}
+			return new WP_Error( 'invalid_widget_type', $message );
 		}
 
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;
@@ -111,7 +113,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'set_widget_setting',
 	[
-		'description' => 'Set a single key on a widget\'s settings. Convenience wrapper over update_elementor_widget for the common single-field case. Same dry_run, if_revision, idempotency_key semantics.',
+		'description' => 'Set a single key on a widget\'s settings. Convenience wrapper over update_elementor_widget for the common single-field case. Same dry_run, if_revision, idempotency_key semantics. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -178,7 +180,7 @@ IATO_MCP_Server::register_tool(
 
 		$result = IATO_MCP_Elementor_Adapter::do_update_widget( $delegated_args );
 		if ( is_wp_error( $result ) ) {
-			return $result;
+			return IATO_MCP_Elementor_Adapter::tool_error( $result );
 		}
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'set_widget_setting', $idem, $args, $result );

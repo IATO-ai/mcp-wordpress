@@ -131,7 +131,12 @@ IATO_MCP_Server::register_tool(
 			$response['tag']            = $normalized['tag'] ?? null;
 			$response['settings_plain'] = $plain['settings'];
 			$response['defaulted_keys'] = $plain['defaulted_keys'];
-			unset( $normalized['schema'], $normalized['tag'] );
+			// 1.13.1: a setting stored without its envelope is flagged on the element.
+			if ( ! empty( $normalized['stored_value_invalid'] ) ) {
+				$response['stored_value_invalid'] = true;
+				$response['invalid_keys']         = $normalized['invalid_keys'];
+			}
+			unset( $normalized['schema'], $normalized['tag'], $normalized['stored_value_invalid'], $normalized['invalid_keys'] );
 			if ( ! empty( $normalized ) ) {
 				$response['peek'] = $normalized;
 			}
@@ -146,7 +151,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_elementor_widget',
 	[
-		'description' => 'Patch a single Elementor widget\'s settings. Pass settings_patch as a flat object — null values remove keys, arrays REPLACE existing arrays (use update_elementor_patch for surgical array edits). Supports dry_run, if_revision (optimistic concurrency), and idempotency_key (60s replay window). Requires edit_posts.',
+		'description' => 'Patch a single Elementor widget\'s settings. Pass settings_patch as a flat object — null values remove keys, arrays REPLACE existing arrays (use update_elementor_patch for surgical array edits). Supports dry_run, if_revision (optimistic concurrency), and idempotency_key (60s replay window). Requires edit_posts. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -190,7 +195,7 @@ IATO_MCP_Server::register_tool(
 
 		$result = IATO_MCP_Elementor_Adapter::do_update_widget( $args );
 		if ( is_wp_error( $result ) ) {
-			return $result;
+			return IATO_MCP_Elementor_Adapter::tool_error( $result );
 		}
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'update_elementor_widget', $key, $args, $result );
@@ -203,7 +208,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_elementor_patch',
 	[
-		'description' => 'Apply an RFC 6902 JSON Patch to the entire Elementor document. Use this for surgical array entry edits (repeater rows, indexed inserts) where update_elementor_widget\'s replace-only array semantics are too coarse. Each op may include op, path, value, from. Supports dry_run, if_revision, idempotency_key. Requires edit_posts.',
+		'description' => 'Apply an RFC 6902 JSON Patch to the entire Elementor document. Use this for surgical array entry edits (repeater rows, indexed inserts) where update_elementor_widget\'s replace-only array semantics are too coarse. Each op may include op, path, value, from. Supports dry_run, if_revision, idempotency_key. Requires edit_posts. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -274,26 +279,46 @@ IATO_MCP_Server::register_tool(
 			return $applied;
 		}
 
+		// 1.13.1: refuse ops that would leave an Elementor Atomic (V4) element
+		// with a setting that is not a typed envelope, or a key the element does
+		// not have (dry runs included). Ops on a path inside an envelope's value
+		// keep it an envelope and pass; removing a key passes.
+		$atomic_check = IATO_MCP_Elementor_Adapter::check_atomic_tree( $stored_elements, $elements );
+		if ( null !== $atomic_check['error'] ) {
+			return IATO_MCP_Elementor_Adapter::tool_error( $atomic_check['error'] );
+		}
+
 		// previous_revision echoed only when the caller passed if_revision (they
 		// already had it; adds ~75B per response otherwise).
 		$echo_prev = ( null !== $if_revision && '' !== $if_revision );
 
 		if ( $dry_run ) {
+			// 1.13.1: the per-element validation the write would run.
+			$refusal = IATO_MCP_Elementor_Adapter::dry_run_validation_error( $post_id, $elements, $stored_elements, $atomic_check['changed_ids'] );
+			if ( null !== $refusal ) {
+				return IATO_MCP_Elementor_Adapter::tool_error( $refusal );
+			}
 			$preview = [
 				'post_id'          => $post_id,
 				'dry_run'          => true,
 				'current_revision' => null,
 				'applied_patch'    => $applied,
-			] + IATO_MCP_Elementor_Adapter::sanitize_preview( $elements, $stored_elements );
+			] + IATO_MCP_Elementor_Adapter::preview_report( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
 			return IATO_MCP_Server::ok( $preview );
 		}
 
-		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $elements, $previous_revision, $stored_elements );
+		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline(
+			$post_id,
+			$elements,
+			$previous_revision,
+			$stored_elements,
+			[ 'atomic_ids' => $atomic_check['changed_ids'] ]
+		);
 		if ( is_wp_error( $pipeline ) ) {
-			return $pipeline;
+			return IATO_MCP_Elementor_Adapter::tool_error( $pipeline );
 		}
 
 		$response = [

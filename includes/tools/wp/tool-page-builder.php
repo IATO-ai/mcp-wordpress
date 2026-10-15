@@ -151,42 +151,54 @@ IATO_MCP_Server::register_tool(
 
 		$revision = IATO_MCP_Elementor_Adapter::compute_revision( (string) $data );
 
+		// 1.13.1: atomic elements whose stored settings hold a value without its
+		// envelope (left by IATO 1.12.x / 1.13.0), listed at the top level in
+		// every format, because the raw and compact data are returned as
+		// stored; summary nodes also carry the flag. Absent for valid pages.
+		$decoded          = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
+		$invalid_elements = is_wp_error( $decoded ) ? [] : IATO_MCP_Elementor_Adapter::invalid_elements( $decoded[0] );
+		$with_flags       = function ( array $response ) use ( $invalid_elements ): array {
+			if ( ! empty( $invalid_elements ) ) {
+				$response['invalid_elements'] = $invalid_elements;
+			}
+			return $response;
+		};
+
 		if ( 'raw' === $format ) {
-			return IATO_MCP_Server::ok( [
+			return IATO_MCP_Server::ok( $with_flags( [
 				'post_id'        => $post_id,
 				'revision'       => $revision,
 				'format'         => 'raw',
 				'elementor_data' => $data,
 				'edit_mode'      => $edit_mode,
-			] );
+			] ) );
 		}
 
 		// Compact / summary need a decoded tree.
-		$decoded = IATO_MCP_Elementor_Adapter::decode_data( $post_id );
 		if ( is_wp_error( $decoded ) ) {
 			return $decoded;
 		}
 		[ $elements, ] = $decoded;
 
 		if ( 'summary' === $format ) {
-			return IATO_MCP_Server::ok( [
+			return IATO_MCP_Server::ok( $with_flags( [
 				'post_id'   => $post_id,
 				'revision'  => $revision,
 				'format'    => 'summary',
 				'edit_mode' => $edit_mode,
 				'tree'      => IATO_MCP_Elementor_Adapter::flatten_widgets( $elements, 'tree' ),
-			] );
+			] ) );
 		}
 
 		// Compact: walk the decoded tree, strip defaults per widget.
 		$compact_tree = iato_mcp_apply_compact_recursive( $elements );
-		return IATO_MCP_Server::ok( [
+		return IATO_MCP_Server::ok( $with_flags( [
 			'post_id'        => $post_id,
 			'revision'       => $revision,
 			'format'         => 'compact',
 			'edit_mode'      => $edit_mode,
 			'elementor_data' => wp_json_encode( $compact_tree ),
-		] );
+		] ) );
 	}
 );
 
@@ -216,7 +228,7 @@ function iato_mcp_apply_compact_recursive( array $elements ): array {
 IATO_MCP_Server::register_tool(
 	'update_elementor_data',
 	[
-		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Optional inherit_settings_from copies a curated set of theme + Elementor page-level meta keys from a source post in the same call (one change_receipt per inherited key). Requires edit_posts capability.',
+		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Optional inherit_settings_from copies a curated set of theme + Elementor page-level meta keys from a source post in the same call (one change_receipt per inherited key). Requires edit_posts capability. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -280,6 +292,15 @@ IATO_MCP_Server::register_tool(
 			(string) get_post_field( 'post_content', $post_id ),
 			(string) get_post_meta( $post_id, '_elementor_edit_mode', true )
 		);
+
+		// 1.13.1: refuse values an Elementor Atomic (V4) element cannot store
+		// (settings that are not typed envelopes, keys the element does not
+		// have), dry runs included; the ids of the atomic elements this tree
+		// changes go to the pipeline's no-fallback rule.
+		$atomic_check = IATO_MCP_Elementor_Adapter::check_atomic_tree( $stored_elements, $decoded );
+		if ( null !== $atomic_check['error'] ) {
+			return IATO_MCP_Elementor_Adapter::tool_error( $atomic_check['error'] );
+		}
 
 		// Resolve inherit_settings_from inputs — plan the meta writes now so dry_run
 		// surfaces them, and apply them after the main Elementor write succeeds.
@@ -383,6 +404,11 @@ IATO_MCP_Server::register_tool(
 		}
 
 		if ( $dry_run ) {
+			// 1.13.1: the per-element validation the write would run.
+			$refusal = IATO_MCP_Elementor_Adapter::dry_run_validation_error( $post_id, $decoded, $stored_elements, $atomic_check['changed_ids'] );
+			if ( null !== $refusal ) {
+				return IATO_MCP_Elementor_Adapter::tool_error( $refusal );
+			}
 			return IATO_MCP_Server::ok( [
 				'dry_run'           => true,
 				'post_id'           => $post_id,
@@ -390,15 +416,15 @@ IATO_MCP_Server::register_tool(
 				'json_valid'        => true,
 				'inherit_planned'   => $inherit_plan,
 				'inherited_skipped' => $inherit_skipped,
-			] + IATO_MCP_Elementor_Adapter::sanitize_preview( $decoded, $stored_elements ) );
+			] + IATO_MCP_Elementor_Adapter::preview_report( $decoded, $stored_elements ) );
 		}
 
 		// The shared pipeline (IATO_MCP_Elementor_Adapter::write_pipeline): sanitise
 		// what changed, Elementor's own save first, the plugin's write only when
 		// Elementor did not store the tree, frontend fallback, persistence check.
-		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $decoded, $previous_revision, $stored_elements );
+		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $decoded, $previous_revision, $stored_elements, [ 'atomic_ids' => $atomic_check['changed_ids'] ] );
 		if ( is_wp_error( $pipeline ) ) {
-			return $pipeline;
+			return IATO_MCP_Elementor_Adapter::tool_error( $pipeline );
 		}
 		$meta_persisted = (bool) $pipeline['meta_persisted'];
 
