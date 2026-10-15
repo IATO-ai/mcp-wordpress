@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.13.0
+Stable tag: 1.13.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -141,6 +141,14 @@ WordPress content (post titles, meta descriptions, etc.) is never sent to IATO. 
 
 Open the page in Elementor, go to History, then Revisions, and apply the last revision saved by a person before the first IATO edit. Then re-apply the IATO changes you want to keep. If revisions are disabled on the site, there is no earlier copy to restore.
 
+= A page edited with IATO shows a missing link or image, or Elementor will not save it =
+
+IATO 1.13.0 and earlier could store a plain value on an Elementor Atomic Editor (V4) element, such as a heading, paragraph, image or button built with the Atomic Editor, where Elementor expects a typed value. Elementor then drops a link or image it cannot read, and saving the page in Elementor fails with "Settings validation failed".
+
+To find the affected elements, read the page with get_elementor_data, get_elementor_widget, list_elementor_widgets or find_elementor_widgets. Since 1.13.1 they flag the element with stored_value_invalid: true, and invalid_keys names the settings to repair; get_elementor_data also lists them under invalid_elements.
+
+To repair an element in 1.13.1, send each listed setting again as a typed value with update_elementor_widget, in the shape get_elementor_widget shows under settings for the element, for example {"tag": {"$$type": "string", "value": "h2"}}. From 1.14.0, sending the plain value again also works. When several elements on a page are affected, repair them one at a time; Elementor saves the page normally again once the last one is repaired. A damaged element cannot be copied (update_elementor_patch refuses the copy): repair the source first, then copy it. You can also restore a revision saved before the IATO edit, under History, then Revisions, in Elementor.
+
 = Can I control which tools are available? =
 
 Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can turn off any tool you don't want AI clients to access.
@@ -157,6 +165,12 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.13.1 =
+* Fix: plain values sent to Elementor Atomic Editor (V4) elements are now refused instead of being stored in a form that could remove links or images and block later saves.
+* Fix: IATO no longer stores new settings for an Atomic Editor (V4) element that Elementor's own validation rejects, whichever credential is used, and dry runs report the same refusal. Settings an atomic element does not have (such as header_size on an atomic heading) are refused instead of being reported as applied.
+* Fix: editing a page that contains elements from a deactivated addon, or atomic elements while the Atomic Editor is off, no longer removes those elements.
+* New: the Elementor read tools (get_elementor_data, get_elementor_widget, list_elementor_widgets, find_elementor_widgets) flag an atomic element whose stored settings Elementor cannot read with stored_value_invalid and invalid_keys, and show those values as stored. See the FAQ for how to repair such an element.
 
 = 1.13.0 =
 * Security: OAuth connections (the Claude connector, Claude Code, Cursor and other MCP clients) now receive their own tokens. The authorization code is random and single use (5 minutes); the access token expires after 1 hour and is renewed with a rotating refresh token (30 days); a connection expires after 180 days unless it is approved again (filter: iato_mcp_oauth_grant_lifetime). Tokens are stored hashed. Before this release the OAuth code and the access token were the site's API key itself.
@@ -417,6 +431,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.13.1 =
+Stops plain values from breaking Elementor Atomic Editor (V4) elements. Pages edited with earlier versions may have broken atomic elements (a missing link or image, or a page Elementor will not save); the FAQ explains how to find and repair them.
 
 = 1.13.0 =
 Security release. OAuth connections now get their own revocable tokens: remove and re-add the Claude connector once. MCP content is filtered for every role, rollbacks record who made each change, and IATO crawl tools need an administrator.

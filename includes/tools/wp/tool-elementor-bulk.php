@@ -19,7 +19,7 @@ const IATO_MCP_FIND_POST_CAP = 500;
 IATO_MCP_Server::register_tool(
 	'update_elementor_widgets_bulk',
 	[
-		'description' => 'Apply a batch of widget patches across many posts in one call. Each update is independent — partial success is the expected mode (decode/find/revision errors per update don\'t block siblings). Optional outer idempotency_key covers the entire batch (single 60s window). Requires edit_posts.',
+		'description' => 'Apply a batch of widget patches across many posts in one call. Each update is independent — partial success is the expected mode (decode/find/revision errors per update don\'t block siblings). Optional outer idempotency_key covers the entire batch (single 60s window). Requires edit_posts. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [

@@ -15,10 +15,11 @@
  * classic reader already emits (title, header_size, text, editor, link) so
  * downstream clients keep one code path.
  *
- * It never calls Elementor code. The only WordPress calls (attachment alt /
- * URL, permalink for post-ID links) go through an injectable resolver so the
- * class is unit-testable without a WordPress bootstrap and so reads keep
- * working with Elementor deactivated.
+ * It reads stored data only. The WordPress calls (attachment alt / URL,
+ * permalink for post-ID links) and the one Elementor lookup (an element type's
+ * registered props schema, 1.13.1, guarded and cached) go through an
+ * injectable resolver so the class is unit-testable without a WordPress
+ * bootstrap and so reads keep working with Elementor deactivated.
  *
  * @package IATO_MCP
  */
@@ -73,6 +74,17 @@ class IATO_MCP_Elementor_Atomic {
 	/** @var array<string,array>|null */
 	private static ?array $defaults = null;
 
+	/** @var array<string,array|null> registered props schema per elType|widgetType, for the request */
+	private static array $schema_cache = [];
+
+	/** Elementor prop-type base classes, for the shape of a schema entry. */
+	private const PROP_KINDS = [
+		'union'  => '\Elementor\Modules\AtomicWidgets\PropTypes\Union_Prop_Type',
+		'object' => '\Elementor\Modules\AtomicWidgets\PropTypes\Base\Object_Prop_Type',
+		'array'  => '\Elementor\Modules\AtomicWidgets\PropTypes\Base\Array_Prop_Type',
+		'plain'  => '\Elementor\Modules\AtomicWidgets\PropTypes\Base\Plain_Prop_Type',
+	];
+
 	// ── Detection ─────────────────────────────────────────────────────────
 
 	/**
@@ -99,23 +111,26 @@ class IATO_MCP_Elementor_Atomic {
 	 * has-atomic-base.php:247-250), never a literal 4.
 	 *
 	 * Secondary rule: any top-level setting that is a typed envelope. Catches
-	 * a future atomic type without the prefix; classic widgets never store
-	 * `$$type`.
+	 * a future atomic type without the prefix.
+	 *
+	 * Since 1.13.1 a type Elementor has registered with a classic class (no
+	 * props schema) is classic, so the read tools' `schema` marker and peek
+	 * fields agree with the write guard (has_atomic_type()).
 	 */
 	public static function is_atomic( array $node ): bool {
-		$type = self::type_of( $node );
-		if ( str_starts_with( $type, 'e-' ) ) {
-			return true;
+		if ( ! str_starts_with( self::type_of( $node ), 'e-' ) && ! self::has_envelope_setting( $node ) ) {
+			return false;
 		}
-		$settings = $node['settings'] ?? null;
-		if ( is_array( $settings ) ) {
-			foreach ( $settings as $value ) {
-				if ( self::is_envelope( $value ) ) {
-					return true;
-				}
-			}
+		// 1.13.1: when Elementor's registry knows the type and its class has no
+		// props schema, the element is classic whatever it is called (e-addons
+		// registers classic widgets named e-iframe and the like). Only `e-` and
+		// envelope-shaped elements reach the registry, so classic pages never
+		// start it.
+		$info = self::type_info( $node );
+		if ( null !== $info && ! empty( $info['registered'] ) && null === ( $info['schema'] ?? null ) ) {
+			return false;
 		}
-		return false;
+		return true;
 	}
 
 	public static function schema_of( array $node ): string {
@@ -168,6 +183,294 @@ class IATO_MCP_Elementor_Atomic {
 			&& is_string( $value['$$type'] )
 			&& '' !== $value['$$type']
 			&& array_key_exists( 'value', $value );
+	}
+
+	// ── Stored-value check and write guard (1.13.1) ───────────────────────
+
+	/**
+	 * Atomic detection for the write guard and the stored-value check.
+	 *
+	 *   - When Elementor knows the element type, its class decides: atomic only
+	 *     if it declares a props schema. A classic addon widget whose name
+	 *     starts with `e-` (e-addons' `e-iframe`) stays classic.
+	 *   - When Elementor cannot say (the type is not registered: Atomic Editor
+	 *     off, addon deactivated, Elementor inactive), an element is atomic only
+	 *     if its type has the `e-` prefix and its settings hold a typed envelope.
+	 *
+	 * The registry is consulted only for `e-` types and elements whose settings
+	 * hold an envelope; any other element is classic without a lookup, so reads
+	 * of classic pages never start Elementor's widget registry.
+	 */
+	public static function has_atomic_type( array $node ): bool {
+		$prefixed  = str_starts_with( self::type_of( $node ), 'e-' );
+		$enveloped = self::has_envelope_setting( $node );
+		if ( ! $prefixed && ! $enveloped ) {
+			return false;
+		}
+		$info = self::type_info( $node );
+		if ( null !== $info && ! empty( $info['registered'] ) ) {
+			return null !== ( $info['schema'] ?? null );
+		}
+		return $prefixed && $enveloped;
+	}
+
+	/** Does any top-level setting of the node hold a typed envelope? */
+	private static function has_envelope_setting( array $node ): bool {
+		$settings = $node['settings'] ?? null;
+		if ( ! is_array( $settings ) ) {
+			return false;
+		}
+		foreach ( $settings as $value ) {
+			if ( self::is_envelope( $value ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * What Elementor's registry says about the node's type:
+	 * { registered: bool, schema: array|null } (schema as in schema_props()),
+	 * or null when the registry cannot be asked (Elementor not loaded).
+	 */
+	private static function type_info( array $node ): ?array {
+		$info = self::resolve( 'type_info', (string) ( $node['elType'] ?? '' ), (string) ( $node['widgetType'] ?? '' ) );
+		return is_array( $info ) ? $info : null;
+	}
+
+	/**
+	 * The node type's registered props schema as key → { type: $$type key,
+	 * kind: plain|object|array|union|other }, or null when Elementor is not
+	 * loaded, the type is not registered, or its class has no props schema
+	 * (every classic widget).
+	 *
+	 * @return array<string,array{type:string,kind:string}>|null
+	 */
+	public static function schema_props( array $node ): ?array {
+		$info = self::type_info( $node );
+		return ( null !== $info && ! empty( $info['registered'] ) && is_array( $info['schema'] ?? null ) ) ? $info['schema'] : null;
+	}
+
+	/**
+	 * Keys of an atomic node whose stored value is not a typed envelope where
+	 * Elementor expects one. IATO 1.12.x and 1.13.0 could store a plain value
+	 * over an envelope; Elementor then drops links and images it cannot read and
+	 * refuses to save the page. With the registered schema only schema keys are
+	 * checked. Without it (Elementor inactive, type not registered) every
+	 * top-level setting is: Elementor 4.x stores each atomic setting as an
+	 * envelope (every prop type's validate() requires one,
+	 * elementor/modules/atomic-widgets/prop-types/base/*.php, and its save keeps
+	 * schema keys only). Empty for classic and valid nodes.
+	 *
+	 * @return string[]
+	 */
+	public static function invalid_keys( array $node ): array {
+		// Missing or null settings: Elementor reads both as no settings.
+		if ( ! isset( $node['settings'] ) || ! self::has_atomic_type( $node ) ) {
+			return [];
+		}
+		if ( ! is_array( $node['settings'] ) ) {
+			return [ 'settings' ];
+		}
+		$schema  = self::schema_props( $node );
+		$invalid = [];
+		foreach ( $node['settings'] as $key => $value ) {
+			$key = (string) $key;
+			if ( null === $value || self::is_envelope( $value ) ) {
+				continue;
+			}
+			if ( null !== $schema && ! array_key_exists( $key, $schema ) ) {
+				continue;
+			}
+			$invalid[] = $key;
+		}
+		return $invalid;
+	}
+
+	/**
+	 * What a settings patch would store on an atomic node that Elementor does
+	 * not accept: values that are not typed envelopes (null, a key removal,
+	 * included) and keys that are not settings of the element, when its schema
+	 * is known. The 1.13.1 write guard refuses both.
+	 *
+	 * @return array{plain_keys:string[],unknown_keys:string[]}
+	 */
+	public static function patch_problems( array $node, array $patch ): array {
+		$schema  = self::schema_props( $node );
+		$plain   = [];
+		$unknown = [];
+		foreach ( $patch as $key => $value ) {
+			$key = (string) $key;
+			if ( null !== $schema && ! array_key_exists( $key, $schema ) ) {
+				$unknown[] = $key;
+			} elseif ( ! self::is_envelope( $value ) ) {
+				$plain[] = $key;
+			}
+		}
+		return [ 'plain_keys' => $plain, 'unknown_keys' => $unknown ];
+	}
+
+	/**
+	 * Compare a changed tree (update_elementor_patch) with the stored one by
+	 * element id. For every atomic node: `changed_ids` lists the nodes whose
+	 * settings differ, `problems` the nodes that would store a value Elementor
+	 * does not accept (patch_problems() over the settings that changed or are
+	 * new). Unchanged stored values are not reported, so an element damaged
+	 * earlier does not block other edits; removed keys are not values.
+	 *
+	 * @return array{changed_ids:string[],problems:array<int,array{element_id:string,type:string,plain_keys:string[],unknown_keys:string[]}>}
+	 */
+	public static function tree_changes( array $stored, array $new ): array {
+		$by_id        = [];
+		$stored_count = [];
+		$new_count    = [];
+		self::index_by_id( $stored, $by_id, $stored_count );
+		$ignored = [];
+		self::index_by_id( $new, $ignored, $new_count );
+		// An id that appears more often than on the stored page (an RFC 6902
+		// copy keeps the id of its source) marks every element carrying it as
+		// new, so a copy of an element is checked like any new element.
+		$duplicated = [];
+		foreach ( $new_count as $id => $count ) {
+			if ( $count > ( $stored_count[ $id ] ?? 0 ) ) {
+				$duplicated[ (string) $id ] = true;
+			}
+		}
+		$report = [ 'changed_ids' => [], 'problems' => [] ];
+		self::collect_tree_changes( $new, $by_id, $report, $duplicated );
+		$report['changed_ids'] = array_values( array_unique( $report['changed_ids'] ) );
+		return $report;
+	}
+
+	private static function index_by_id( array $elements, array &$by_id, array &$count ): void {
+		foreach ( $elements as $element ) {
+			if ( ! is_array( $element ) ) {
+				continue;
+			}
+			$id           = isset( $element['id'] ) ? (string) $element['id'] : '';
+			$count[ $id ] = ( $count[ $id ] ?? 0 ) + 1;
+			if ( isset( $element['id'] ) ) {
+				$by_id[ $id ] = $element;
+			}
+			if ( ! empty( $element['elements'] ) && is_array( $element['elements'] ) ) {
+				self::index_by_id( $element['elements'], $by_id, $count );
+			}
+		}
+	}
+
+	private static function collect_tree_changes( array $elements, array $stored_by_id, array &$report, array $duplicated = [] ): void {
+		foreach ( $elements as $element ) {
+			if ( ! is_array( $element ) ) {
+				continue;
+			}
+			$id         = isset( $element['id'] ) ? (string) $element['id'] : '';
+			$stored     = $stored_by_id[ $id ] ?? null;
+			$same_type  = is_array( $stored )
+				&& ( $stored['elType'] ?? '' ) === ( $element['elType'] ?? '' )
+				&& self::type_of( $stored ) === self::type_of( $element );
+			// Atomic when the element as changed is, or when the stored element of
+			// the same id and type is: replacing every setting of an atomic element
+			// with plain values leaves no envelope to recognise it by when
+			// Elementor cannot say.
+			if ( self::has_atomic_type( $element ) || ( $same_type && self::has_atomic_type( $stored ) ) ) {
+				// An element whose id the change duplicates (an RFC 6902 copy keeps
+				// the id of its source) is checked like the read flag checks a
+				// stored element: values stored without their typed wrapper are
+				// refused, so a damaged element cannot be copied. Null values and
+				// keys outside the schema, which Elementor ignores, pass. Every
+				// node with the id is checked, so a damaged source must be
+				// repaired before it is copied.
+				if ( isset( $duplicated[ $id ] ) ) {
+					$report['changed_ids'][] = $id;
+					$plain = self::plain_value_keys( $element );
+					if ( ! empty( $plain ) ) {
+						$report['problems'][] = [ 'element_id' => $id, 'type' => self::type_of( $element ), 'plain_keys' => $plain, 'unknown_keys' => [] ];
+					}
+					if ( ! empty( $element['elements'] ) && is_array( $element['elements'] ) ) {
+						self::collect_tree_changes( $element['elements'], $stored_by_id, $report, $duplicated );
+					}
+					continue;
+				}
+				// An element whose type the change sets or changes (a classic
+				// heading turned into e-heading by its widgetType) is new: every
+				// setting it carries is checked, not only the ones that differ.
+				$same_kind = $same_type;
+				$before = $same_kind ? ( $stored['settings'] ?? [] ) : [];
+				$before = is_array( $before ) ? $before : [];
+				$settings = $element['settings'] ?? [];
+				if ( ! is_array( $settings ) ) {
+					$report['changed_ids'][] = $id;
+					$report['problems'][]    = [ 'element_id' => $id, 'type' => self::type_of( $element ), 'plain_keys' => [ 'settings' ], 'unknown_keys' => [] ];
+				} else {
+					$changed = [];
+					foreach ( $settings as $key => $value ) {
+						$key = (string) $key;
+						if ( ! array_key_exists( $key, $before ) || $before[ $key ] !== $value ) {
+							$changed[ $key ] = $value;
+						}
+					}
+					if ( ! empty( $changed ) || array_diff_key( $before, $settings ) || ! $same_kind ) {
+						$report['changed_ids'][] = $id;
+					}
+					if ( ! empty( $changed ) ) {
+						$problems = self::patch_problems( $element, $changed );
+						if ( $problems['plain_keys'] || $problems['unknown_keys'] ) {
+							$report['problems'][] = [ 'element_id' => $id, 'type' => self::type_of( $element ) ] + $problems;
+						}
+					}
+				}
+			}
+			if ( ! empty( $element['elements'] ) && is_array( $element['elements'] ) ) {
+				self::collect_tree_changes( $element['elements'], $stored_by_id, $report, $duplicated );
+			}
+		}
+	}
+
+	/**
+	 * Keys of a node (treated as atomic by the caller) whose value is stored
+	 * without its typed wrapper: invalid_keys(), or, when detection cannot
+	 * recognise the node any more (every setting plain while Elementor cannot
+	 * say), every non-null top-level value that is not an envelope.
+	 *
+	 * @return string[]
+	 */
+	private static function plain_value_keys( array $node ): array {
+		$plain = self::invalid_keys( $node );
+		if ( ! empty( $plain ) || self::has_atomic_type( $node ) ) {
+			return $plain;
+		}
+		if ( isset( $node['settings'] ) && ! is_array( $node['settings'] ) ) {
+			return [ 'settings' ];
+		}
+		foreach ( (array) ( $node['settings'] ?? [] ) as $key => $value ) {
+			if ( null !== $value && ! self::is_envelope( $value ) ) {
+				$plain[] = (string) $key;
+			}
+		}
+		return $plain;
+	}
+
+	/**
+	 * A typed value to show in a refusal, so the caller can resend the change in
+	 * the shape Elementor stores. Built from the value stored on the element (its
+	 * $$type, with the scalar the caller sent), or from the registered schema for
+	 * a plain prop type. For object props the stored envelope itself is the
+	 * template. Null when no shape is known. Only ever shown in error messages,
+	 * never written.
+	 */
+	public static function envelope_example( array $node, string $key, mixed $sent ): ?array {
+		$stored = is_array( $node['settings'] ?? null ) ? ( $node['settings'][ $key ] ?? null ) : null;
+		if ( self::is_envelope( $stored ) ) {
+			if ( is_scalar( $sent ) && ( null === $stored['value'] || is_scalar( $stored['value'] ) ) ) {
+				return [ '$$type' => $stored['$$type'], 'value' => $sent ];
+			}
+			return $stored;
+		}
+		$schema = self::schema_props( $node );
+		if ( null !== $schema && isset( $schema[ $key ] ) && 'plain' === $schema[ $key ]['kind'] && '' !== $schema[ $key ]['type'] && is_scalar( $sent ) ) {
+			return [ '$$type' => $schema[ $key ]['type'], 'value' => $sent ];
+		}
+		return null;
 	}
 
 	// ── Unwrapping ────────────────────────────────────────────────────────
@@ -311,9 +614,13 @@ class IATO_MCP_Elementor_Atomic {
 	 */
 	public static function plain_settings( array $node ): array {
 		$raw      = is_array( $node['settings'] ?? null ) ? $node['settings'] : [];
+		$invalid  = self::invalid_keys( $node );
 		$settings = [];
 		foreach ( $raw as $key => $value ) {
-			$settings[ (string) $key ] = self::unwrap( $value );
+			$key = (string) $key;
+			// A value stored without its envelope is shown as stored, not
+			// interpreted as if Elementor could read it (1.13.1).
+			$settings[ $key ] = in_array( $key, $invalid, true ) ? $value : self::unwrap( $value );
 		}
 
 		$defaulted = [];
@@ -341,20 +648,23 @@ class IATO_MCP_Elementor_Atomic {
 		$plain = self::plain_settings( $node )['settings'];
 		$type  = self::type_of( $node );
 
-		if ( 'e-heading' === $type && isset( $plain['tag'] ) ) {
-			$plain['header_size'] = $plain['tag'];
+		// Nothing is derived from a value stored without its envelope (1.13.1).
+		$source = array_diff_key( $plain, array_flip( self::invalid_keys( $node ) ) );
+
+		if ( 'e-heading' === $type && isset( $source['tag'] ) ) {
+			$plain['header_size'] = $source['tag'];
 		}
-		if ( 'e-paragraph' === $type && isset( $plain['paragraph'] ) ) {
-			$plain['editor'] = $plain['paragraph'];
+		if ( 'e-paragraph' === $type && isset( $source['paragraph'] ) ) {
+			$plain['editor'] = $source['paragraph'];
 		}
 
-		$link = self::link_view( $plain['link'] ?? null );
+		$link = self::link_view( $source['link'] ?? null );
 		if ( $link ) {
 			$plain['link_url'] = $link['url'];
 		}
 
 		if ( 'e-image' === $type ) {
-			$image = self::image_view( $plain['image'] ?? null );
+			$image = self::image_view( $source['image'] ?? null );
 			if ( $image ) {
 				$plain['image_url'] = $image['url'];
 				$plain['image_id']  = $image['id'];
@@ -384,14 +694,20 @@ class IATO_MCP_Elementor_Atomic {
 	 *   link_post_id      int, for post-reference (query) links
 	 *   image_url / image_id / image_alt / image_alt_source ('attachment'|'element')
 	 *   <field>_dynamic   dynamic-tag name when a text field is bound to a dynamic tag
+	 *   stored_value_invalid / invalid_keys   (1.13.1) settings stored without
+	 *                     their envelope (invalid_keys()); no peek field is
+	 *                     derived from them, since Elementor cannot read them
+	 *                     either (it renders such a link as a plain button and
+	 *                     such an image not at all)
 	 */
 	public static function normalize( array $node ): array {
-		$type  = self::type_of( $node );
-		$plain = self::plain_settings( $node )['settings'];
+		$type    = self::type_of( $node );
+		$invalid = self::invalid_keys( $node );
+		$plain   = array_diff_key( self::plain_settings( $node )['settings'], array_flip( $invalid ) );
 
 		$out = [ 'schema' => self::SCHEMA_ATOMIC ];
 
-		$tag = self::compute_tag( $type, $plain );
+		$tag = in_array( 'tag', $invalid, true ) ? null : self::compute_tag( $type, $plain );
 		if ( null !== $tag ) {
 			$out['tag'] = $tag;
 		}
@@ -442,6 +758,11 @@ class IATO_MCP_Elementor_Atomic {
 			if ( null !== $link['post_id'] ) {
 				$out['link_post_id'] = $link['post_id'];
 			}
+		}
+
+		if ( ! empty( $invalid ) ) {
+			$out['stored_value_invalid'] = true;
+			$out['invalid_keys']         = $invalid;
 		}
 
 		return $out;
@@ -594,11 +915,80 @@ class IATO_MCP_Elementor_Atomic {
 
 	/**
 	 * Inject a resolver for tests. Signature: function(string $op, mixed ...$args): mixed
-	 * Ops: attachment_alt(int $id), attachment_url(int $id, string $size), permalink(int $post_id).
+	 * Ops: attachment_alt(int $id), attachment_url(int $id, string $size), permalink(int $post_id),
+	 * type_info(string $el_type, string $widget_type) ({registered: bool, schema: array|null} or null when
+	 * Elementor cannot be asked; see has_atomic_type() and schema_props()).
 	 * Pass null to restore the WordPress-backed default.
 	 */
 	public static function set_resolver( ?callable $resolver ): void {
-		self::$resolver = $resolver;
+		self::$resolver     = $resolver;
+		self::$schema_cache = [];
+	}
+
+	/**
+	 * What Elementor's registry says about an element type: whether it is
+	 * registered right now and, if so, its props schema (Elementor 4.0+:
+	 * Has_Atomic_Base::get_props_schema(),
+	 * elementor/modules/atomic-widgets/elements/base/has-atomic-base.php:403;
+	 * null for classic classes). Null when the registry cannot be asked
+	 * (Elementor missing) or throws while it loads; detection then falls back
+	 * to the stored data. Cached per type for the request.
+	 */
+	private static function registered_type_info( string $el_type, string $widget_type ): ?array {
+		$cache_key = $el_type . '|' . $widget_type;
+		if ( array_key_exists( $cache_key, self::$schema_cache ) ) {
+			return self::$schema_cache[ $cache_key ];
+		}
+		self::$schema_cache[ $cache_key ] = null;
+		if ( ! class_exists( '\Elementor\Plugin' ) || ! isset( \Elementor\Plugin::$instance ) ) {
+			return null;
+		}
+		try {
+			$plugin   = \Elementor\Plugin::$instance;
+			$instance = null;
+			$asked    = false;
+			if ( 'widget' === $el_type ) {
+				$manager = isset( $plugin->widgets_manager ) ? $plugin->widgets_manager : null;
+				if ( is_object( $manager ) && method_exists( $manager, 'get_widget_types' ) ) {
+					$asked    = true;
+					$instance = '' !== $widget_type ? $manager->get_widget_types( $widget_type ) : null;
+				}
+			} else {
+				$manager = isset( $plugin->elements_manager ) ? $plugin->elements_manager : null;
+				if ( is_object( $manager ) && method_exists( $manager, 'get_element_types' ) ) {
+					$asked    = true;
+					$instance = '' !== $el_type ? $manager->get_element_types( $el_type ) : null;
+				}
+			}
+			if ( ! $asked ) {
+				return null; // the registry cannot be asked: Elementor cannot say
+			}
+			if ( ! is_object( $instance ) ) {
+				return self::$schema_cache[ $cache_key ] = [ 'registered' => false, 'schema' => null ];
+			}
+			$schema = method_exists( $instance, 'get_props_schema' ) ? $instance::get_props_schema() : null;
+			$props  = null;
+			if ( is_array( $schema ) ) {
+				$props = [];
+				foreach ( $schema as $key => $prop_type ) {
+					$kind = 'other';
+					foreach ( self::PROP_KINDS as $name => $class ) {
+						if ( class_exists( $class ) && $prop_type instanceof $class ) {
+							$kind = $name;
+							break;
+						}
+					}
+					$props[ (string) $key ] = [
+						'type' => is_object( $prop_type ) && method_exists( $prop_type, 'get_key' ) ? (string) $prop_type::get_key() : '',
+						'kind' => $kind,
+					];
+				}
+			}
+			self::$schema_cache[ $cache_key ] = [ 'registered' => true, 'schema' => $props ];
+		} catch ( \Throwable $e ) {
+			self::$schema_cache[ $cache_key ] = null; // Elementor cannot say
+		}
+		return self::$schema_cache[ $cache_key ];
 	}
 
 	private static function resolve( string $op, mixed ...$args ): mixed {
@@ -624,6 +1014,8 @@ class IATO_MCP_Elementor_Atomic {
 					return is_string( $url ) ? $url : null;
 				}
 				return null;
+			case 'type_info':
+				return self::registered_type_info( (string) $args[0], (string) $args[1] );
 		}
 		return null;
 	}

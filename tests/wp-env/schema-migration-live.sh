@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Live checks for the schema-version migrations on the wp-env dev site:
-# a site that ran the first 1.13.0 build (db_version already 1.13.0, OAuth
+# a site that ran a pre-release build (db_version already the plugin version, OAuth
 # tables but no grants table, no schema option) gets the grants table and the
 # backfill; replaying all steps is a no-op for the data; the pre-1.13.0 path
 # still carries the client option over; a site at schema 3 gets the receipt
@@ -35,8 +35,8 @@ TOKENS_BEFORE=$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_tokens")
 CLIENTS_BEFORE=$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_clients")
 GRANT_IDS=$(Q "SELECT COUNT(DISTINCT grant_id) FROM ${P}iato_mcp_oauth_tokens")
 
-echo "# A. site that ran the first 1.13.0 build: db_version 1.13.0, no grants table, no schema option"
-setopt_ iato_mcp_db_version 1.13.0
+echo "# A. site that ran a pre-release build: db_version already $PLUGIN_VERSION, no grants table, no schema option"
+setopt_ iato_mcp_db_version "$PLUGIN_VERSION"
 delopt iato_mcp_schema_version
 delopt iato_mcp_oauth_grants_backfilled
 X "DROP TABLE IF EXISTS ${P}iato_mcp_oauth_grants"
@@ -48,7 +48,7 @@ check "grants table created" "$(Q "SHOW TABLES LIKE '${P}iato_mcp_oauth_grants'"
 check "one grant row per grant_id in the token table" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_grants")" "$GRANT_IDS"
 check "seeded grant backfilled with its client and user" "$(Q "SELECT CONCAT(client_id,':',user_id,':',IFNULL(revoked_at,'live')) FROM ${P}iato_mcp_oauth_grants WHERE grant_id='$GRANT'")" "schema-live:1:live"
 check "token rows untouched" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_tokens")" "$TOKENS_BEFORE"
-check "db_version unchanged (it is not the gate any more)" "$(opt iato_mcp_db_version)" "1.13.0"
+check "db_version unchanged (it is not the gate any more)" "$(opt iato_mcp_db_version)" "$PLUGIN_VERSION"
 check "old one-shot flag retired" "$(opt iato_mcp_oauth_grants_backfilled)" ""
 
 echo "# B. replaying every step is harmless"

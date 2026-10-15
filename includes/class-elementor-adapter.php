@@ -934,6 +934,18 @@ class IATO_MCP_Elementor_Adapter {
 	 *                                      (what the caller decoded); read from
 	 *                                      meta when null. Used to sanitise only
 	 *                                      the values the request changed.
+	 * @param array      $opts              1.13.1: `atomic_ids` — ids of the
+	 *                                      Elementor Atomic (V4) elements this
+	 *                                      write changes. Whenever Elementor's
+	 *                                      save does not store the tree (it threw,
+	 *                                      was skipped or was refused), those
+	 *                                      elements go through Elementor's
+	 *                                      per-element validation first; if one
+	 *                                      fails, nothing is written.
+	 *                                      `atomic_paths` — JSON pointer paths of
+	 *                                      the elements a single-element tool
+	 *                                      edits; only the node at each path is
+	 *                                      checked, not other nodes with its id.
 	 *
 	 * @return array{
 	 *   previous_revision:string,
@@ -952,7 +964,8 @@ class IATO_MCP_Elementor_Adapter {
 		int $post_id,
 		array $decoded_elements,
 		string $previous_revision,
-		?array $stored_elements = null
+		?array $stored_elements = null,
+		array $opts = []
 	): array|WP_Error {
 		$post = get_post( $post_id );
 		if ( ! $post ) {
@@ -984,8 +997,22 @@ class IATO_MCP_Elementor_Adapter {
 			return new WP_Error( 'encode_failed', 'Failed to JSON-encode the modified Elementor tree.' );
 		}
 
-		// 1. Cache clear before the save so Elementor renders fresh.
+		// 0b (1.13.1). Element types Elementor cannot load right now (a
+		// deactivated addon's widgets, atomic elements while the Atomic Editor is
+		// off): Document::save() rebuilds the tree through each element's class
+		// and silently drops every element it cannot build, children included.
+		// Such a tree is stored by the plugin's own write instead (step 3).
+		$unregistered = self::unregistered_element_types( $decoded_elements );
+		if ( ! empty( $unregistered ) && null === $stored_elements ) {
+			$stored_elements = self::stored_elements( $post_id ); // for the check after the write
+		}
+
+		// 1. Cache clear before the save so Elementor renders fresh. The element
+		// cache is cleared for this post too (1.13.1): Elementor's global clear
+		// below runs once per request with optimized CSS files on, so in a bulk
+		// write later pages would otherwise render cached HTML in step 5.
 		delete_post_meta( $post_id, '_elementor_css' );
+		delete_post_meta( $post_id, '_elementor_element_cache' );
 		wp_cache_delete( $post_id, 'post_meta' );
 		wp_cache_delete( $post_id, 'posts' );
 
@@ -1016,7 +1043,10 @@ class IATO_MCP_Elementor_Adapter {
 		$regenerated    = false;
 		$elementor_save = null;
 		$save_error     = null;
-		if ( class_exists( '\Elementor\Plugin' ) ) {
+		if ( ! empty( $unregistered ) ) {
+			$elementor_save = 'skipped';
+			$regenerated    = true;
+		} elseif ( class_exists( '\Elementor\Plugin' ) ) {
 			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
 			if ( $document ) {
 				try {
@@ -1026,6 +1056,32 @@ class IATO_MCP_Elementor_Adapter {
 					$save_error     = $e->getMessage();
 				}
 				$regenerated = true;
+			}
+		}
+
+		// 2b (1.13.1). Elementor did not store the tree: its save threw, was
+		// skipped because the page holds types Elementor cannot load, or was
+		// refused (the unbound key runs as user 0, whom Elementor does not let
+		// save). Before the plugin stores the tree itself, every atomic element
+		// this write changed (every node with a changed id, copies included)
+		// goes through Elementor's own per-element save transform; if one fails,
+		// nothing is written, because the fallback would store exactly what
+		// Elementor refuses. When the changed elements validate and Elementor's
+		// message was "Settings validation failed", another element on the page
+		// is what it rejected (a value stored without its envelope by IATO
+		// 1.12.x / 1.13.0): the write goes ahead, so a damaged page can be
+		// repaired one element at a time, and the result names the damaged
+		// elements.
+		$invalid_elsewhere = null;
+		$atomic_ids        = array_values( array_map( 'strval', (array) ( $opts['atomic_ids'] ?? [] ) ) );
+		$atomic_paths      = array_values( array_map( 'strval', (array) ( $opts['atomic_paths'] ?? [] ) ) );
+		if ( ( ! empty( $atomic_ids ) || ! empty( $atomic_paths ) ) && true !== $elementor_save ) {
+			$refusal = self::atomic_validation_error( $post_id, $decoded_elements, $atomic_ids, $save_error, $atomic_paths );
+			if ( null !== $refusal ) {
+				return $refusal;
+			}
+			if ( 'error' === $elementor_save && str_starts_with( (string) $save_error, 'Settings validation failed' ) ) {
+				$invalid_elsewhere = self::invalid_elements( $decoded_elements );
 			}
 		}
 
@@ -1047,6 +1103,7 @@ class IATO_MCP_Elementor_Adapter {
 			} );
 			wp_cache_delete( $post_id, 'post_meta' );
 		}
+
 
 		// 4. Verify post_content actually changed.
 		wp_cache_delete( $post_id, 'posts' );
@@ -1070,6 +1127,11 @@ class IATO_MCP_Elementor_Adapter {
 			}
 		}
 
+		// Elementor's save did not run, so it did not clear this post's caches.
+		// Cleared after the frontend render above, which would otherwise keep
+		// CSS and element HTML rendered while some types could not be loaded.
+		$cache_cleared = 'skipped' === $elementor_save ? self::clear_post_caches( $post_id ) : null;
+
 		// 6. Verify meta persisted. Structural, not byte-length: when Elementor's
 		// own save ran it re-encodes the tree (defaults, key order, version
 		// fields), so the stored string legitimately differs from $encoded while
@@ -1092,11 +1154,454 @@ class IATO_MCP_Elementor_Adapter {
 		if ( null !== $save_error ) {
 			$result['elementor_save_error'] = $save_error;
 		}
+		if ( ! empty( $invalid_elsewhere ) ) {
+			$result['invalid_elements'] = $invalid_elsewhere;
+		}
+		if ( 'skipped' === $elementor_save ) {
+			$result['skipped_reason']             = 'unregistered_element_types';
+			$result['unregistered_element_types'] = $unregistered;
+			$result['cache_cleared']              = $cache_cleared;
+			$result['verification']               = self::verify_untouched( $stored_elements ?? [], $decoded_elements, $persisted_meta );
+		}
 		if ( ! empty( $changed ) ) {
 			$result['sanitized']       = true;
 			$result['sanitized_paths'] = $changed;
 		}
 		return $result;
+	}
+
+	/** @var callable|null Test seam for unregistered_element_types(): fn(string $el_type, string $widget_type): bool */
+	private static $type_checker = null;
+
+	/** Inject a registered-type check for tests; null restores Elementor's registries. */
+	public static function set_type_checker( ?callable $checker ): void {
+		self::$type_checker = $checker;
+	}
+
+	/**
+	 * Element types in a tree (nested elements included) that Elementor cannot
+	 * load right now, by the test Elementor itself applies before building an
+	 * element (Elements_Manager::get_element(): widgets_manager for widgets,
+	 * elements_manager for containers, sections and columns,
+	 * elementor/includes/managers/elements.php:79-111). Document::save() drops
+	 * such elements (elementor/core/base/document.php:1111-1115). Empty when
+	 * every type is registered or Elementor's registries cannot be asked; a
+	 * single entry with `error` when a lookup throws.
+	 *
+	 * @return array<int,array{type:string,element_ids:string[],error?:string}>
+	 */
+	public static function unregistered_element_types( array $elements ): array {
+		$is_registered = self::$type_checker;
+		if ( null === $is_registered ) {
+			if ( ! class_exists( '\Elementor\Plugin' ) || ! isset( \Elementor\Plugin::$instance ) ) {
+				return [];
+			}
+			$plugin   = \Elementor\Plugin::$instance;
+			$widgets  = isset( $plugin->widgets_manager ) ? $plugin->widgets_manager : null;
+			$elements_manager = isset( $plugin->elements_manager ) ? $plugin->elements_manager : null;
+			if ( ! is_object( $widgets ) || ! is_object( $elements_manager )
+				|| ! method_exists( $widgets, 'get_widget_types' ) || ! method_exists( $elements_manager, 'get_element_types' ) ) {
+				return [];
+			}
+			$is_registered = static function ( string $el_type, string $widget_type ) use ( $widgets, $elements_manager ): bool {
+				if ( 'widget' === $el_type ) {
+					return '' !== $widget_type && null !== $widgets->get_widget_types( $widget_type );
+				}
+				return '' !== $el_type && null !== $elements_manager->get_element_types( $el_type );
+			};
+		}
+
+		$found = [];
+		$known = [];
+		try {
+			self::walk_widgets( $elements, function ( array $element ) use ( &$found, &$known, $is_registered ) {
+				$el_type     = (string) ( $element['elType'] ?? '' );
+				$widget_type = 'widget' === $el_type ? (string) ( $element['widgetType'] ?? '' ) : '';
+				$key         = $el_type . '|' . $widget_type;
+				if ( ! array_key_exists( $key, $known ) ) {
+					$known[ $key ] = (bool) $is_registered( $el_type, $widget_type );
+				}
+				if ( ! $known[ $key ] ) {
+					$type             = 'widget' === $el_type ? ( '' !== $widget_type ? $widget_type : 'widget' ) : ( '' !== $el_type ? $el_type : 'unknown' );
+					$found[ $type ][] = isset( $element['id'] ) ? (string) $element['id'] : '';
+				}
+			} );
+		} catch ( \Throwable $e ) {
+			// The registry itself failed (an addon's register hook threw): it may
+			// now be half built for the rest of the request, and Elementor's save
+			// would drop every element that never registered. Treat it as
+			// unregistered so the plugin stores the tree itself.
+			return [ [ 'type' => '(Elementor element registry failed)', 'element_ids' => [], 'error' => $e->getMessage() ] ];
+		}
+
+		$out = [];
+		foreach ( $found as $type => $ids ) {
+			$out[] = [ 'type' => (string) $type, 'element_ids' => $ids ];
+		}
+		return $out;
+	}
+
+	/**
+	 * Clear one post's Elementor caches after the plugin stored the page itself
+	 * (Elementor's save, which would have done it, did not run): its CSS file
+	 * and meta, its element cache and its atomic styles. Rebuilt on the next
+	 * page view. Reports what was cleared.
+	 */
+	private static function clear_post_caches( int $post_id ): array {
+		$cleared = [ 'post_css' => false, 'element_cache' => false, 'atomic_styles' => false ];
+		try {
+			if ( class_exists( '\Elementor\Core\Files\CSS\Post' ) ) {
+				\Elementor\Core\Files\CSS\Post::create( $post_id )->delete();
+			}
+			delete_post_meta( $post_id, '_elementor_css' );
+			$cleared['post_css'] = true;
+		} catch ( \Throwable $e ) {
+			$cleared['post_css'] = false;
+		}
+		delete_post_meta( $post_id, '_elementor_element_cache' );
+		$cleared['element_cache'] = true;
+		if ( function_exists( 'do_action' ) ) {
+			try {
+				do_action( 'elementor/atomic-widgets/styles/clear', [ 'local', $post_id ] );
+				$cleared['atomic_styles'] = true;
+			} catch ( \Throwable $e ) {
+				$cleared['atomic_styles'] = false;
+			}
+		}
+		wp_cache_delete( $post_id, 'post_meta' );
+		return $cleared;
+	}
+
+	/**
+	 * After the plugin stored a tree itself: did the page keep every element,
+	 * and is every element this write did not change stored exactly as before?
+	 * Elements compare without their children (each child is compared on its
+	 * own). An element counts as changed when the written tree differs from the
+	 * stored one at that id, or the id is new.
+	 *
+	 * @return array{element_count_before:int,element_count_after:int,element_count_expected:int,untouched_identical:bool,mismatched_element_ids?:string[]}
+	 */
+	public static function verify_untouched( array $before, array $written, string $persisted_meta ): array {
+		$persisted = json_decode( $persisted_meta, true );
+		$persisted = is_array( $persisted ) ? self::force_arrays( $persisted ) : [];
+		$index     = function ( array $tree ): array {
+			$out   = [];
+			$count = 0;
+			self::walk_widgets( $tree, function ( array $element ) use ( &$out, &$count ) {
+				$count++;
+				$node = $element;
+				unset( $node['elements'] );
+				$out[ (string) ( $element['id'] ?? '' ) ] = wp_json_encode( $node );
+			} );
+			return [ $out, $count ];
+		};
+		[ $b, $before_count ]    = $index( $before );
+		[ $w, $written_count ]   = $index( $written );
+		[ $p, $persisted_count ] = $index( $persisted );
+
+		$mismatched = [];
+		foreach ( $b as $id => $node ) {
+			if ( ( $w[ $id ] ?? null ) !== $node ) {
+				continue; // changed or removed by this write
+			}
+			if ( ( $p[ $id ] ?? null ) !== $node ) {
+				$mismatched[] = (string) $id;
+			}
+		}
+		$report = [
+			'element_count_before'   => $before_count,
+			'element_count_after'    => $persisted_count,
+			'element_count_expected' => $written_count,
+			'untouched_identical'    => empty( $mismatched ) && $persisted_count === $written_count,
+		];
+		if ( ! empty( $mismatched ) ) {
+			$report['mismatched_element_ids'] = $mismatched;
+		}
+		return $report;
+	}
+
+	/**
+	 * Dry-run counterpart of what write_pipeline() reports: the sanitising
+	 * preview plus, when the tree holds element types Elementor cannot load
+	 * right now, the same skip report a real write gives (nothing is written).
+	 */
+	public static function preview_report( array $new_elements, ?array $stored_elements ): array {
+		$report       = self::sanitize_preview( $new_elements, $stored_elements );
+		$unregistered = self::unregistered_element_types( self::force_arrays( $new_elements ) );
+		if ( ! empty( $unregistered ) ) {
+			$report['elementor_save']             = 'skipped';
+			$report['skipped_reason']             = 'unregistered_element_types';
+			$report['unregistered_element_types'] = $unregistered;
+		}
+		return $report;
+	}
+
+	/**
+	 * The refusal for atomic elements Elementor's own validation rejects: every
+	 * node of the tree whose id is in $atomic_ids goes through
+	 * validate_element_for_save(). Used by write_pipeline() before the plugin
+	 * stores a tree itself, and by dry runs, which report the refusal the real
+	 * write would give. Null when every changed element passes (or cannot be
+	 * checked).
+	 */
+	public static function atomic_validation_error( int $post_id, array $elements, array $atomic_ids, ?string $save_error = null, array $atomic_paths = [] ): ?WP_Error {
+		if ( empty( $atomic_ids ) && empty( $atomic_paths ) ) {
+			return null;
+		}
+		$elements = self::force_arrays( $elements );
+		$rejected = array_merge(
+			self::rejected_atomic_elements( $elements, array_values( array_map( 'strval', $atomic_ids ) ) ),
+			self::rejected_atomic_elements_at( $elements, array_values( array_map( 'strval', $atomic_paths ) ) )
+		);
+		if ( empty( $rejected ) ) {
+			return null;
+		}
+		$list = implode( '; ', array_map( fn( $r ) => "{$r['element_id']} ({$r['type']}): {$r['elementor_error']}", $rejected ) );
+		$data = [
+			'status'   => 400,
+			'post_id'  => $post_id,
+			'elements' => $rejected,
+		];
+		if ( null !== $save_error ) {
+			$data['elementor_error'] = $save_error;
+		}
+		return new WP_Error(
+			'atomic_invalid_settings',
+			"Elementor's own validation rejects the new settings of {$list}. Nothing was written. Send each value as the typed value Elementor expects (the shape get_elementor_widget returns under settings for the element, with a valid value), or make the change in Elementor's editor.",
+			$data
+		);
+	}
+
+	/**
+	 * Dry-run form of atomic_validation_error(): the tree is first sanitised the
+	 * way write_pipeline() step 0 sanitises it (change-only, unless unfiltered
+	 * HTML is allowed), so the dry run validates exactly what the write would
+	 * hand Elementor and reports the same refusal.
+	 */
+	public static function dry_run_validation_error( int $post_id, array $elements, ?array $stored_elements, array $atomic_ids, array $atomic_paths = [] ): ?WP_Error {
+		if ( empty( $atomic_ids ) && empty( $atomic_paths ) ) {
+			return null;
+		}
+		$elements = self::force_arrays( $elements );
+		if ( ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+			$elements = IATO_MCP_Elementor_Sanitizer::diff_tree( $elements, $stored_elements )['elements'];
+		}
+		return self::atomic_validation_error( $post_id, $elements, $atomic_ids, null, $atomic_paths );
+	}
+
+	/**
+	 * Atomic nodes of a tree whose id is in $ids (every match: a copy keeps the
+	 * id of its source; an element without an id has the id ''), each run
+	 * through validate_element_for_save(). Returns the ones Elementor rejects.
+	 *
+	 * @return array<int,array{element_id:string,type:string,elementor_error:string}>
+	 */
+	private static function rejected_atomic_elements( array $elements, array $ids ): array {
+		$rejected = [];
+		self::walk_widgets( $elements, function ( array $element ) use ( &$rejected, $ids ) {
+			$id = isset( $element['id'] ) ? (string) $element['id'] : '';
+			if ( ! in_array( $id, $ids, true ) || ! IATO_MCP_Elementor_Atomic::has_atomic_type( $element ) ) {
+				return;
+			}
+			$error = self::validate_element_for_save( $element );
+			if ( null !== $error ) {
+				$rejected[] = [
+					'element_id'      => $id,
+					'type'            => IATO_MCP_Elementor_Atomic::type_of( $element ),
+					'elementor_error' => $error,
+				];
+			}
+		} );
+		return $rejected;
+	}
+
+	/**
+	 * The atomic nodes at the given JSON pointer paths (the element a
+	 * single-element tool edits), each run through validate_element_for_save().
+	 * Unlike rejected_atomic_elements(), another node that happens to carry the
+	 * same id (a damaged twin on a page with duplicate ids) is not checked.
+	 *
+	 * @return array<int,array{element_id:string,type:string,elementor_error:string}>
+	 */
+	private static function rejected_atomic_elements_at( array $elements, array $paths ): array {
+		$rejected = [];
+		foreach ( $paths as $path ) {
+			$node = self::pointer_get( $elements, $path );
+			if ( ! is_array( $node ) || ! IATO_MCP_Elementor_Atomic::has_atomic_type( $node ) ) {
+				continue;
+			}
+			$error = self::validate_element_for_save( $node );
+			if ( null !== $error ) {
+				$rejected[] = [
+					'element_id'      => isset( $node['id'] ) ? (string) $node['id'] : '',
+					'type'            => IATO_MCP_Elementor_Atomic::type_of( $node ),
+					'elementor_error' => $error,
+				];
+			}
+		}
+		return $rejected;
+	}
+
+	/** @var callable|null Test seam for validate_element_for_save(): fn(array $node): ?string */
+	private static $element_validator = null;
+
+	/** Inject an element validator for tests; null restores Elementor's. */
+	public static function set_element_validator( ?callable $validator ): void {
+		self::$element_validator = $validator;
+	}
+
+	/**
+	 * Run one element (without its children, which are checked on their own)
+	 * through Elementor's per-element save transform, the step of
+	 * Document::save() that validates atomic settings (Has_Atomic_Base::
+	 * get_data_for_save(), elementor/modules/atomic-widgets/elements/base/
+	 * has-atomic-base.php:247-283). Null when it passes or cannot be checked;
+	 * otherwise Elementor's message.
+	 */
+	private static function validate_element_for_save( array $node ): ?string {
+		if ( null !== self::$element_validator ) {
+			return ( self::$element_validator )( $node );
+		}
+		if ( ! class_exists( '\Elementor\Plugin' ) || ! isset( \Elementor\Plugin::$instance ) ) {
+			return null;
+		}
+		$node['elements'] = [];
+		try {
+			$manager = isset( \Elementor\Plugin::$instance->elements_manager ) ? \Elementor\Plugin::$instance->elements_manager : null;
+			if ( ! is_object( $manager ) || ! method_exists( $manager, 'create_element_instance' ) ) {
+				return null;
+			}
+			$element = $manager->create_element_instance( $node );
+			if ( ! is_object( $element ) || ! method_exists( $element, 'get_data_for_save' ) ) {
+				return null;
+			}
+			$element->get_data_for_save();
+			return null;
+		} catch ( \Throwable $e ) {
+			return $e->getMessage();
+		}
+	}
+
+	/**
+	 * Atomic elements of a tree whose stored settings hold a value without its
+	 * envelope (IATO_MCP_Elementor_Atomic::invalid_keys()), as
+	 * [{widget_id, type, invalid_keys}]. Empty for valid pages.
+	 */
+	public static function invalid_elements( array $elements ): array {
+		$out = [];
+		self::walk_widgets( $elements, function ( array $element ) use ( &$out ) {
+			$keys = IATO_MCP_Elementor_Atomic::invalid_keys( $element );
+			if ( ! empty( $keys ) ) {
+				$out[] = [
+					'widget_id'    => isset( $element['id'] ) ? (string) $element['id'] : null,
+					'type'         => IATO_MCP_Elementor_Atomic::type_of( $element ),
+					'invalid_keys' => $keys,
+				];
+			}
+		} );
+		return $out;
+	}
+
+	/**
+	 * The 1.13.1 refusal for values an atomic element cannot store.
+	 *
+	 * @param array $problems [{element_id, type, plain_keys, unknown_keys}]
+	 * @param array $nodes    element id => stored node (for the example shape)
+	 * @param array $sent     element id => the settings the caller sent
+	 */
+	public static function atomic_value_refusal( array $problems, array $nodes, array $sent ): WP_Error {
+		$parts    = [];
+		$examples = [];
+		foreach ( $problems as $p ) {
+			$label = "Element {$p['element_id']} ({$p['type']})";
+			if ( ! empty( $p['plain_keys'] ) ) {
+				$parts[] = $label . ': ' . implode( ', ', $p['plain_keys'] ) . ' sent as a plain value';
+				foreach ( $p['plain_keys'] as $key ) {
+					$example = isset( $nodes[ $p['element_id'] ] )
+						? IATO_MCP_Elementor_Atomic::envelope_example( $nodes[ $p['element_id'] ], $key, $sent[ $p['element_id'] ][ $key ] ?? null )
+						: null;
+					if ( null !== $example ) {
+						$examples[ $p['element_id'] ][ $key ] = $example;
+					}
+				}
+			}
+			if ( ! empty( $p['unknown_keys'] ) ) {
+				$schema  = isset( $nodes[ $p['element_id'] ] ) ? IATO_MCP_Elementor_Atomic::schema_props( $nodes[ $p['element_id'] ] ) : null;
+				$known   = null !== $schema ? ' (its settings: ' . implode( ', ', array_keys( $schema ) ) . ')' : '';
+				$parts[] = $label . ': ' . implode( ', ', $p['unknown_keys'] ) . ' ' . ( count( $p['unknown_keys'] ) > 1 ? 'are not settings' : 'is not a setting' ) . " of {$p['type']}{$known}";
+			}
+		}
+
+		$message = 'Refused: ' . implode( '; ', $parts ) . '. '
+			. 'Elementor Atomic Editor (V4) elements store each setting as a typed value, {"$$type": ..., "value": ...}. '
+			. 'This version of IATO does not convert plain values for these elements yet (that comes in a later IATO release), '
+			. 'and storing a plain value would break the element: Elementor drops links and images it cannot read and refuses to save the page. '
+			. 'To make the change now, send each setting as a typed value in the shape get_elementor_widget returns under settings for the element';
+		if ( ! empty( $examples ) ) {
+			$first_id  = array_key_first( $examples );
+			$first_key = array_key_first( $examples[ $first_id ] );
+			$message  .= ', for example ' . wp_json_encode( [ $first_key => $examples[ $first_id ][ $first_key ] ], JSON_UNESCAPED_SLASHES );
+		}
+		$message .= ", or make the change in Elementor's editor. Nothing was written.";
+
+		$data = [ 'status' => 400, 'elements' => $problems ];
+		if ( ! empty( $examples ) ) {
+			$data['examples'] = $examples;
+		}
+		return new WP_Error( 'atomic_plain_value_unsupported', $message, $data );
+	}
+
+	/**
+	 * The 1.13.1 guard for whole-tree writes (update_elementor_patch,
+	 * update_elementor_data): what the change would store on atomic elements,
+	 * compared with the stored tree by element id
+	 * (IATO_MCP_Elementor_Atomic::tree_changes()). Returns the refusal (null
+	 * when nothing is refused) and the ids of the atomic elements the change
+	 * touches, for write_pipeline()'s atomic_ids.
+	 *
+	 * @return array{error:?WP_Error,changed_ids:string[]}
+	 */
+	public static function check_atomic_tree( ?array $stored, array $new ): array {
+		$stored  = $stored ?? [];
+		$changes = IATO_MCP_Elementor_Atomic::tree_changes( $stored, $new );
+		if ( empty( $changes['problems'] ) ) {
+			return [ 'error' => null, 'changed_ids' => $changes['changed_ids'] ];
+		}
+		$nodes = [];
+		$sent  = [];
+		foreach ( $changes['problems'] as $problem ) {
+			$id          = $problem['element_id'];
+			$stored_node = self::find_widget( $stored, $id )['element'] ?? null;
+			$new_node    = self::find_widget( $new, $id )['element'] ?? [];
+			// The example shape comes from the stored element when it is the same
+			// kind of element, otherwise from the element as the change sets it.
+			$same_kind    = is_array( $stored_node ) && IATO_MCP_Elementor_Atomic::type_of( $stored_node ) === IATO_MCP_Elementor_Atomic::type_of( $new_node );
+			$nodes[ $id ] = $same_kind ? $stored_node : $new_node;
+			$sent[ $id ]  = is_array( $new_node['settings'] ?? null ) ? $new_node['settings'] : [];
+		}
+		return [ 'error' => self::atomic_value_refusal( $changes['problems'], $nodes, $sent ), 'changed_ids' => $changes['changed_ids'] ];
+	}
+
+	/**
+	 * Tool-level form of the atomic refusals: an isError result whose text is
+	 * JSON (error code, message, details), because MCP clients see only the
+	 * text. Any other WP_Error is returned unchanged.
+	 */
+	public static function tool_error( WP_Error $error ): array|WP_Error {
+		$code = $error->get_error_code();
+		if ( ! in_array( $code, [ 'atomic_plain_value_unsupported', 'atomic_invalid_settings' ], true ) ) {
+			return $error;
+		}
+		$data = $error->get_error_data();
+		$data = is_array( $data ) ? $data : [];
+		unset( $data['status'] );
+		return [
+			'isError' => true,
+			'content' => [ [
+				'type' => 'text',
+				'text' => wp_json_encode( [ 'error' => $code, 'message' => $error->get_error_message() ] + $data, JSON_UNESCAPED_SLASHES ),
+			] ],
+		];
 	}
 
 	/** The stored element tree (arrays), or null when there is none. */
@@ -1120,6 +1625,17 @@ class IATO_MCP_Elementor_Adapter {
 		$out = [ 'elementor_save' => $pipeline['elementor_save'] ?? null, 'stored_by' => $pipeline['stored_by'] ?? null ];
 		if ( isset( $pipeline['elementor_save_error'] ) ) {
 			$out['elementor_save_error'] = $pipeline['elementor_save_error'];
+		}
+		if ( ! empty( $pipeline['invalid_elements'] ) ) {
+			// 1.13.1: elements elsewhere on the page that Elementor rejected.
+			$out['invalid_elements'] = $pipeline['invalid_elements'];
+		}
+		// 1.13.1: Elementor's save skipped because the page holds element types
+		// Elementor cannot load right now; the plugin stored the page itself.
+		foreach ( [ 'skipped_reason', 'unregistered_element_types', 'cache_cleared', 'verification' ] as $key ) {
+			if ( isset( $pipeline[ $key ] ) ) {
+				$out[ $key ] = $pipeline[ $key ];
+			}
 		}
 		if ( ! empty( $pipeline['sanitized'] ) ) {
 			$out['sanitized']       = true;
@@ -1217,6 +1733,24 @@ class IATO_MCP_Elementor_Adapter {
 			return new WP_Error( 'widget_not_found', "Widget {$widget_id} not found in post {$post_id}." );
 		}
 
+		// 1.13.1: Elementor Atomic (V4) elements store every setting as a typed
+		// envelope. A plain value written over one is rejected by Elementor's
+		// save and, through the fallback write, stored anyway in a form that
+		// drops links and images and blocks every later save of the page. Such
+		// values, and keys the element does not have, are refused here (dry runs
+		// included) until IATO converts plain values itself.
+		$atomic_target = IATO_MCP_Elementor_Atomic::has_atomic_type( $found['element'] );
+		if ( $atomic_target ) {
+			$problems = IATO_MCP_Elementor_Atomic::patch_problems( $found['element'], $settings_patch );
+			if ( $problems['plain_keys'] || $problems['unknown_keys'] ) {
+				return self::atomic_value_refusal(
+					[ [ 'element_id' => $widget_id, 'type' => IATO_MCP_Elementor_Atomic::type_of( $found['element'] ) ] + $problems ],
+					[ $widget_id => $found['element'] ],
+					[ $widget_id => $settings_patch ]
+				);
+			}
+		}
+
 		// Apply patch in-place on a working copy so we can capture before/after
 		// without a second tree-walk.
 		$widget_path = $found['path'];
@@ -1257,20 +1791,33 @@ class IATO_MCP_Elementor_Adapter {
 		}
 
 		if ( $dry_run ) {
+			// 1.13.1: the per-element validation the write would run.
+			if ( $atomic_target ) {
+				$refusal = self::dry_run_validation_error( $post_id, $elements, $stored_elements, [], [ $widget_path ] );
+				if ( null !== $refusal ) {
+					return $refusal;
+				}
+			}
 			$preview = [
 				'post_id'          => $post_id,
 				'widget_id'        => $widget_id,
 				'dry_run'          => true,
 				'current_revision' => null,
 				'applied_patch'    => $applied_patch,
-			] + self::sanitize_preview( $elements, $stored_elements );
+			] + self::preview_report( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
 			return $preview;
 		}
 
-		$pipeline = self::write_pipeline( $post_id, $elements, $previous_revision, $stored_elements );
+		$pipeline = self::write_pipeline(
+			$post_id,
+			$elements,
+			$previous_revision,
+			$stored_elements,
+			$atomic_target ? [ 'atomic_paths' => [ $widget_path ] ] : []
+		);
 		if ( is_wp_error( $pipeline ) ) {
 			return $pipeline;
 		}
