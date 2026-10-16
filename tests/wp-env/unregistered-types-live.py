@@ -290,13 +290,16 @@ else:
     record(f'mixed page: element count {len(nodes(before))} before and {len(nodes(after))} after, none lost (1.13.0 lost six)', not lost and len(nodes(before)) == len(nodes(after)) == 11, lost)
     atomic = seed_fixture('atomic-only')
     before = meta(atomic)
+    # 1.14.0: Elementor can neither validate nor show an atomic element whose
+    # type it has not registered, so no write changes it, typed values included.
     r = call('update_elementor_widget', {'id': atomic, 'widget_id': 'a7e4d01', 'settings_patch': {'tag': {'$$type': 'string', 'value': 'h3'}}})
-    record('atomic page, typed-value edit: skip reported, every atomic element kept', skipped_ok(r, before, meta(atomic), ['e-flexbox', 'e-heading'], changed=('a7e4d01',)), r)
+    record('atomic page, typed-value edit of an unregistered atomic element: refused, nothing written',
+           r.get('_isError') and r.get('error') == 'atomic_write_unavailable' and 'does not have `e-heading` registered' in r.get('message', '') and meta(atomic) == before, r)
     r = call('update_elementor_widget', {'id': atomic, 'widget_id': 'a7e4d01', 'settings_patch': {'tag': 'h3'}})
-    record('atomic page, plain value: still refused by the guard', r.get('_isError') and r.get('error') == 'atomic_plain_value_unsupported', r)
+    record('atomic page, plain value: refused (atomic_write_unavailable)', r.get('_isError') and r.get('error') == 'atomic_write_unavailable', r)
     before = meta(atomic)
     r = call('update_elementor_patch', {'id': atomic, 'ops': [{'op': 'replace', 'path': '/0/elements/0/settings', 'value': {'tag': 'h3', 'title': 'Plain title'}}]})
-    record('Atomic Editor off: replacing every setting of an atomic element with plain values is refused', r.get('_isError') and r.get('error') == 'atomic_plain_value_unsupported' and meta(atomic) == before, r)
+    record('Atomic Editor off: replacing every setting of an atomic element with plain values is refused', r.get('_isError') and r.get('error') == 'atomic_write_unavailable' and meta(atomic) == before, r)
 
 print(f'\n{passes} passed, {len(fails)} failed')
 if fails:

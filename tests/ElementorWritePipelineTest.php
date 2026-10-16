@@ -9,88 +9,11 @@ declare( strict_types=1 );
  * IATO_MCP_Elementor_Adapter::write_pipeline() makes.
  */
 
-// ── Fake Elementor ─────────────────────────────────────────────────────────
-namespace Elementor {
-	final class FakeDocument {
-		/** @var 'ok'|'refuse'|'throw' */
-		public static string $mode = 'ok';
-		public static string $throw_message = 'Settings validation failed. simulated Elementor failure';
-		public static array $received = [];
-		/** @var array<int,array> map_meta_cap for unfiltered_html as seen inside save() */
-		public static array $cap_during_save = [];
-		public function save( array $data ): bool {
-			self::$received[] = $data;
-			self::$cap_during_save[] = \apply_filters( 'map_meta_cap', [ 'unfiltered_html' ], 'unfiltered_html', 1, [] );
-			if ( 'throw' === self::$mode ) {
-				throw new \RuntimeException( self::$throw_message );
-			}
-			if ( 'refuse' === self::$mode ) {
-				return false; // what Elementor does for a user who may not edit the post (e.g. user 0)
-			}
-			// On a real save Elementor re-encodes the data and renders post_content.
-			\IATO_Test_WP::$meta[ \ElementorWritePipelineHelper::POST ]['_elementor_data'] = json_encode( \ElementorWritePipelineHelper::reencode( $data['elements'] ) );
-			\IATO_Test_WP::$posts[ \ElementorWritePipelineHelper::POST ]['post_content'] = '<h2>rendered by elementor</h2>';
-			return true;
-		}
-	}
-	final class FakeDocuments { public static bool $absent = false; public function get( int $id ) { return self::$absent ? null : new FakeDocument(); } }
-	final class FakeFilesManager { public static int $cleared = 0; public function clear_cache(): void { self::$cleared++; } }
-	final class FakeFrontend {
-		public static int $renders = 0;
-		public function get_builder_content( int $id, bool $with_css = false ): string { self::$renders++; return '<h2>frontend fallback render</h2>'; }
-	}
-	final class Plugin {
-		public static ?Plugin $instance = null;
-		public FakeDocuments $documents;
-		public FakeFilesManager $files_manager;
-		public FakeFrontend $frontend;
-		public function __construct() { $this->documents = new FakeDocuments(); $this->files_manager = new FakeFilesManager(); $this->frontend = new FakeFrontend(); }
-		public static function instance(): Plugin { return self::$instance ??= new Plugin(); }
-	}
-	Plugin::$instance = Plugin::instance();
-}
-
-// ── WordPress stubs the pipeline calls ────────────────────────────────────
+// ── Fake Elementor and the WordPress calls the pipeline makes ─────────────
 namespace {
-	use PHPUnit\Framework\TestCase;
+	require_once __DIR__ . '/stubs-elementor.php';
 
-	final class ElementorWritePipelineHelper {
-		public const POST = 777;
-		/** Elementor's save normalises nodes: adds isInner/version-ish noise and reorders keys. */
-		public static function reencode( array $elements ): array {
-			$out = [];
-			foreach ( $elements as $el ) {
-				$node = [ 'id' => $el['id'], 'elType' => $el['elType'] ];
-				if ( isset( $el['widgetType'] ) ) { $node['widgetType'] = $el['widgetType']; }
-				$node['settings'] = $el['settings'] ?? [];
-				$node['elements'] = self::reencode( $el['elements'] ?? [] );
-				$node['isInner']  = false;
-				$out[] = $node;
-			}
-			return $out;
-		}
-	}
-	if ( ! function_exists( 'get_post' ) ) {
-		function get_post( int $id ): ?object { return isset( IATO_Test_WP::$posts[ $id ] ) ? (object) ( [ 'ID' => $id ] + IATO_Test_WP::$posts[ $id ] ) : null; }
-	}
-	if ( ! function_exists( 'get_post_field' ) ) {
-		function get_post_field( string $field, int $id ): string { return (string) ( IATO_Test_WP::$posts[ $id ][ $field ] ?? '' ); }
-	}
-	if ( ! function_exists( 'update_post_meta' ) ) {
-		function update_post_meta( int $id, string $key, mixed $value ): bool { $v = is_string( $value ) ? stripslashes( $value ) : ( is_array( $value ) ? IATO_Test_WP::unslash_deep( $value ) : $value ); IATO_Test_WP::$meta[ $id ][ $key ] = $v; IATO_Test_WP::$writes[] = [ $id, $key, $v ]; IATO_Test_WP::note_write( $key ); return true; }
-	}
-	if ( ! function_exists( 'delete_post_meta' ) ) {
-		function delete_post_meta( int $id, string $key ): bool { unset( IATO_Test_WP::$meta[ $id ][ $key ] ); return true; }
-	}
-	if ( ! function_exists( 'wp_cache_delete' ) ) {
-		function wp_cache_delete( mixed $key, string $group = '' ): bool { return true; }
-	}
-	if ( ! function_exists( 'wp_slash' ) ) {
-		function wp_slash( mixed $v ): mixed { return is_array( $v ) ? array_map( 'wp_slash', $v ) : ( is_string( $v ) ? addslashes( $v ) : $v ); }
-	}
-	if ( ! function_exists( 'wp_update_post' ) ) {
-		function wp_update_post( array $postarr ): int { IATO_Test_WP::$posts[ $postarr['ID'] ]['post_content'] = stripslashes( (string) ( $postarr['post_content'] ?? '' ) ); return $postarr['ID']; } // core unslashes
-	}
+	use PHPUnit\Framework\TestCase;
 
 	final class ElementorWritePipelineTest extends TestCase {
 		private const POST = ElementorWritePipelineHelper::POST;
@@ -117,6 +40,12 @@ namespace {
 				'css'  => fn( string $v ) => 'C[' . strip_tags( $v ) . ']',
 			] );
 			self::allow_unfiltered( false );
+			// 1.14.0: these tests cover the paths where IATO's atomic writer is
+			// unavailable (the 1.13.1 guard); ElementorWriterAtomicTest covers the
+			// writer with a fake of Elementor's resolver and parser.
+			$engine          = FakeAtomicEngine::heading_site(); // the types are registered (Elementor 4.2.4)
+			$engine->missing = 'Editing atomic elements with plain values needs Elementor 4.3.0 or later; this site runs Elementor 4.2.4.';
+			IATO_MCP_Elementor_Atomic_Writer::set_engine( $engine );
 			// What Elementor 4.3.4 registers on rest_api_init: the plain hook and
 			// one _for_<post_type> variant per Elementor-enabled post type.
 			IATO_Test_WP::reset_hooks();
@@ -132,6 +61,7 @@ namespace {
 			IATO_MCP_Elementor_Adapter::set_element_validator( null );
 			IATO_MCP_Elementor_Adapter::set_type_checker( null );
 			IATO_MCP_Elementor_Atomic::set_resolver( null );
+			IATO_MCP_Elementor_Atomic_Writer::set_engine( null );
 			self::authenticate( false );
 			self::allow_unfiltered( false );
 			unset( $GLOBALS['wp_filter'] );
@@ -602,7 +532,9 @@ namespace {
 			foreach ( [ true, false ] as $dry_run ) {
 				$r = $handler( [ 'id' => self::POST, 'elementor_data' => json_encode( $this->with_a1_tag( $this->atomic_page(), 'h3' ) ), 'dry_run' => $dry_run ] );
 				$this->assertTrue( $r['isError'] ?? false, $dry_run ? 'dry run' : 'write' );
-				$this->assertSame( 'atomic_plain_value_unsupported', json_decode( $r['content'][0]['text'], true )['error'] );
+				$body = json_decode( $r['content'][0]['text'], true );
+				$this->assertSame( 'atomic_write_unavailable', $body['error'], 'the 1.13.1 guard, naming what is missing' );
+				$this->assertStringContainsString( 'Elementor 4.3.0 or later', $body['message'] );
 			}
 			$this->assertSame( [], IATO_Test_WP::$writes );
 			$copied = $handler( [ 'id' => self::POST, 'elementor_data' => json_encode( [ [ 'id' => 'z9', 'elType' => 'widget', 'widgetType' => 'e-heading', 'settings' => [ 'tag' => 'h3' ], 'elements' => [] ] ] ), 'dry_run' => true ] );
@@ -638,7 +570,8 @@ namespace {
 			$r = IATO_MCP_Elementor_Adapter::do_update_widget( [ 'id' => self::POST, 'widget_id' => 'a1', 'settings_patch' => $patch, 'dry_run' => $dry_run ] );
 
 			$this->assertInstanceOf( WP_Error::class, $r );
-			$this->assertSame( 'atomic_plain_value_unsupported', $r->get_error_code() );
+			$this->assertSame( 'atomic_write_unavailable', $r->get_error_code(), 'the 1.13.1 guard where the writer is unavailable' );
+			$this->assertStringContainsString( 'needs Elementor 4.3.0 or later; this site runs Elementor 4.2.4', $r->get_error_message() );
 			$this->assertSame( [ [ 'element_id' => 'a1', 'type' => 'e-heading', 'plain_keys' => $plain_keys, 'unknown_keys' => [] ] ], $r->get_error_data()['elements'] );
 			$this->assertStringContainsString( 'Nothing was written', $r->get_error_message() );
 			$this->assertSame( [], IATO_Test_WP::$writes, 'nothing written' );
@@ -667,7 +600,7 @@ namespace {
 			$json = IATO_MCP_Elementor_Adapter::tool_error( $r );
 			$this->assertTrue( $json['isError'] );
 			$body = json_decode( $json['content'][0]['text'], true );
-			$this->assertSame( 'atomic_plain_value_unsupported', $body['error'] );
+			$this->assertSame( 'atomic_write_unavailable', $body['error'] );
 			$this->assertSame( 'a1', $body['elements'][0]['element_id'] );
 			$this->assertArrayNotHasKey( 'status', $body );
 			$other = new WP_Error( 'widget_not_found', 'x' );
@@ -716,18 +649,18 @@ namespace {
 		}
 
 		#[\PHPUnit\Framework\Attributes\DataProvider( 'refused_ops' )]
-		public function test_patch_tool_refuses_ops_that_store_plain_values_on_atomic_elements( array $ops, bool $dry_run ): void {
+		public function test_patch_tool_refuses_ops_that_store_plain_values_on_atomic_elements( array $ops, bool $dry_run, string $code = 'atomic_write_unavailable' ): void {
 			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->atomic_page() );
 			$r = $this->patch_tool( $ops, $dry_run );
 			$this->assertTrue( $r['isError'] ?? false );
-			$this->assertSame( 'atomic_plain_value_unsupported', json_decode( $r['content'][0]['text'], true )['error'] );
+			$this->assertSame( $code, json_decode( $r['content'][0]['text'], true )['error'] );
 			$this->assertSame( [], IATO_Test_WP::$writes );
 		}
 
 		public static function refused_ops(): array {
 			return [
 				'replace …/settings/tag with a plain value' => [ [ [ 'op' => 'replace', 'path' => '/0/elements/0/settings/tag', 'value' => 'h3' ] ], false ],
-				'add a plain key'                           => [ [ [ 'op' => 'add', 'path' => '/0/elements/0/settings/link', 'value' => [ 'destination' => 'https://x.test/' ] ] ], false ],
+				'add a plain key'                           => [ [ [ 'op' => 'add', 'path' => '/0/elements/0/settings/link', 'value' => [ 'destination' => 'https://x.test/' ] ] ], false, 'atomic_plain_value_unsupported' ], // link is not in this schema: refused as an unknown key, whatever the writer
 				'replace the whole settings object'         => [ [ [ 'op' => 'replace', 'path' => '/0/elements/0/settings', 'value' => [ 'tag' => 'h3' ] ] ], false ],
 				'a new atomic element with plain settings'  => [ [ [ 'op' => 'add', 'path' => '/0/elements/-', 'value' => [ 'id' => 'n1', 'elType' => 'widget', 'widgetType' => 'e-paragraph', 'settings' => [ 'paragraph' => 'x' ], 'elements' => [] ] ] ], false ],
 				'dry run'                                   => [ [ [ 'op' => 'replace', 'path' => '/0/elements/0/settings/tag', 'value' => 'h3' ] ], true ],

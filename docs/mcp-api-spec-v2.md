@@ -22,6 +22,7 @@
    - [Tier 4 — Routing Awareness](#tier-4--routing-awareness)
    - [Tier 5 — Compact Format on Reads](#tier-5--compact-format-on-reads)
    - [Tier 6 — Semantic Helpers](#tier-6--semantic-helpers)
+   - [Atomic (Editor V4) writes (1.14.0)](#atomic-editor-v4-writes-1140)
 4. [Backwards Compatibility](#backwards-compatibility)
 5. [Phased Rollout](#phased-rollout)
 6. [Regression Fixtures](#regression-fixtures)
@@ -134,6 +135,22 @@ The existing `dry_run` flag — already supported by `tool-page-builder`, `tool-
 | `idempotency_replay` | Same key, different payload, within 60 s | 409 |
 | `not_elementor` | Post isn't an Elementor document | 400 |
 | `template_locked` | Theme Builder template referenced is read-only on this site | 423 |
+| `atomic_plain_value_unsupported` | 1.13.1: a key an atomic element does not have (or, before 1.14.0, any plain value) | 400 |
+| `atomic_invalid_settings` | Elementor's validation rejects the new settings of an atomic element | 400 |
+| `atomic_write_unavailable` | 1.14.0: a plain value for an atomic element where Elementor's code to convert it is missing (Elementor before 4.3.0, the Atomic Editor off, the type not registered); the message names what is missing | 400 |
+| `atomic_prop_not_supported` | 1.14.0: a key or object field the atomic element does not have, or `classes` (global classes) | 400 |
+| `atomic_type_not_supported` | 1.14.0: `e-component` instances | 400 |
+| `atomic_duplicate_key` | 1.14.0: a setting and one of its aliases sent together | 400 |
+| `atomic_value_unresolvable` | 1.14.0: Elementor's resolver cannot convert the value | 400 |
+| `atomic_value_dropped` / `atomic_subkeys_dropped` | 1.14.0: Elementor's validation would drop a value sent, or a stored sub-value | 400 |
+| `atomic_url_rejected` | 1.14.0: an image URL that is not absolute, or a URL Elementor's sanitising empties (`javascript:`) | 400 |
+| `atomic_library_alt_separate` | 1.14.0: the alt of a Media Library image sent with another change | 400 |
+| `elementor_editor_unsaved_changes` | 1.14.0: the Elementor editor holds the post lock and reported unsaved changes (Elementor's own rule) | 409 |
+| `elementor_cannot_edit` / `elementor_validation_failed` | 1.14.0, atomic path: Elementor refused the save / its save rejected the page | 403 / 400 |
+| `iato_mcp_token_unbound` | 1.14.0, atomic path: the site key has no owner (Settings > IATO MCP, Token owner) | 403 |
+| `tool_exception` | 1.14.0: a Throwable inside a tool handler (JSON text names the tool and the exception) | — |
+
+The atomic codes come back as an `isError` result whose text is JSON: `{ error, message, element_id?, ... }`.
 
 All errors include `error_message` (string) and `error_data` (object). On a 409 `revision_conflict`, `error_data.current_revision` is included so the client can re-sync without an extra read.
 
@@ -145,13 +162,15 @@ All errors include `error_message` (string) and `error_data` (object). On a 409 
 
 ### Change receipts
 
-Extend `IATO_MCP_Change_Receipt::record()` ([`includes/class-change-receipt.php`](../includes/class-change-receipt.php)) for widget-level entries. New columns or a JSON `metadata` column (TBD — see [Open Questions](#open-questions)) capture:
+Every Elementor write records a receipt through `IATO_MCP_Change_Receipt::record()` ([`includes/class-change-receipt.php`](../includes/class-change-receipt.php)), with the actor (1.13.0), and returns a slim `change_receipt` (`change_id`, `target_type`, `field`, `applied_at`, `actor`). The `rollback` tool and `/wp-json/iato-mcp/v1/rollback` reverse any of them, with the conflict check (`rollback_conflict` unless `force`) and `dry_run`.
 
-- `widget_id` — the targeted Elementor widget
-- `path` — JSON Pointer string within the widget settings (e.g. `/settings/header_size`)
-- `before` / `after` — the values at that path
+| `target_type` | Written by | `field` | `before_value` / `after_value` | Rollback |
+|---|---|---|---|---|
+| `elementor_widget` | classic `update_elementor_widget`, `set_widget_setting`, `set_heading_level`, bulk rows; `update_elementor_patch`; `update_elementor_data` | `elementor:<widget_id>:<pointer>`, `elementor:document:patch`, `elementor:document:replace` | the stored tree as it was (1.13.0; pruned after the retention period) / the revision hash of what was stored | restores the whole tree |
+| `elementor_atomic` (1.14.0) | edits of Atomic Editor (V4) elements through the writer | `elementor:<element_id>:settings` | `{element_id, type, path, keys: {key: stored value, or null when absent}}` / the same keys as read back after the write | restores those keys of that element only, validated by Elementor; refused (`rollback_unavailable`) when the element is gone or Elementor's code is missing |
+| `image` (`alt_text`) | `update_alt_text`, including the alt of a Media Library image routed from an atomic element | `alt_text` | the attachment's alt | restores the attachment's alt |
 
-The widget-level rollback endpoint (future, not in v2.0–2.2 scope) reverses by applying the inverse patch. For now, the existing `/wp-json/iato-mcp/v1/rollback` continues to operate on whole-document receipts created by v1 writes; widget-level receipts are recorded but only surfaced in the call log, not yet rolled back individually.
+Bulk results drop `change_receipt` from classic rows (lean payloads); atomic rows keep it, one receipt per element (two rows on one element share it).
 
 ---
 
@@ -229,9 +248,17 @@ Partial-merges a settings patch into a single widget.
     { "op": "replace", "path": "/settings/header_size", "value": "h1", "previous_value": "h2" }
   ],
   "content_updated": true,
-  "post_content_length": 17892
+  "post_content_length": 17892,
+  "applied_via": "iato-native",
+  "schema": "classic",
+  "state": "live",
+  "elementor_save": true,
+  "stored_by": "elementor",
+  "change_receipt": { "change_id": "wr_…", "target_type": "elementor_widget", "field": "elementor:abc123:/0/elements/1/settings", "applied_at": "…", "actor": { "user_id": 1, "user_login": "admin", "kind": "site_key" } }
 }
 ```
+
+Fields since 1.13.0: `elementor_save` (`true` = Elementor's `Document::save()` stored the tree; `false` = Elementor refused; `"error"` = it threw, with `elementor_save_error`; `"skipped"` = not called, with `skipped_reason`), `stored_by` (`elementor` | `plugin`), `sanitized: true` and `sanitized_paths` (`<element id>/settings/<path>`, only when a value was altered), `change_receipt`. Since 1.13.1: `invalid_elements`, `skipped_reason: "unregistered_element_types"` with `unregistered_element_types`, `cache_cleared`, `verification`. Since 1.14.0: `applied_via`, `schema`, `state`; when the plugin stored a classic page because Elementor's save failed, `cache_cleared`, `css_regenerated: false` and `css_note`. Atomic targets: see [Atomic (Editor V4) writes](#atomic-editor-v4-writes-1140).
 
 **Errors:** `not_elementor`, `widget_not_found`, `revision_conflict`, `schema_violation`, `auth_denied`, `idempotency_replay`.
 
@@ -419,7 +446,7 @@ set_heading_level(id, widget_id, level: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
                   dry_run?, if_revision?, idempotency_key?)
 ```
 
-Equivalent to `update_elementor_widget(id, widget_id, { "header_size": "<level>" }, ...)` but the model can express the intent in one parameter. Also validates that the target widget is actually a heading widget (returns `schema_violation` otherwise).
+Equivalent to `update_elementor_widget(id, widget_id, { "header_size": "<level>" }, ...)` but the model can express the intent in one parameter. Also validates that the target widget is actually a heading widget (returns `invalid_widget_type` otherwise). Since 1.14.0 an Atomic Editor `e-heading` is accepted too: its level is `{ "tag": "<level>" }`, written through the atomic writer.
 
 #### `set_widget_setting`
 
@@ -431,6 +458,26 @@ set_widget_setting(id, widget_id, key: string, value: any,
 Equivalent to `update_elementor_widget(id, widget_id, { "<key>": <value> }, ...)`. Slightly more discoverable than the patch form for one-key changes.
 
 These helpers are a **thin layer** — they exist to make the model's intent legible in the call log and to give the client a clean affordance for the 80 % case. They MUST NOT diverge from `update_elementor_widget`'s behavior; they call through it.
+
+### Atomic (Editor V4) writes (1.14.0)
+
+Elementor Atomic Editor elements (`e-heading`, `e-paragraph`, `e-button`, `e-image`, `e-flexbox`, `e-div-block`, …) store every setting as a typed value, `{"$$type": …, "value": …}`. Since 1.14.0 the fix tools take plain values for them and `IATO_MCP_Elementor_Atomic_Writer` ([`includes/class-elementor-atomic-writer.php`](../includes/class-elementor-atomic-writer.php)) converts and validates each value with Elementor's own code (`IATO_MCP_Elementor_Atomic_Engine`: the settings plain-values resolver, Elementor 4.3.0+, and `Props_Parser`). The plugin never builds a typed value itself. An element is atomic when Elementor's registered class for its type has a props schema; when Elementor cannot say (type not registered), when its type starts with `e-` and its settings hold typed values (the 1.13.1 rule).
+
+**Routing.**
+
+| Tool | Atomic target |
+|---|---|
+| `set_heading_level` | `e-heading` → `{tag: level}`; other atomic types → `invalid_widget_type` |
+| `set_widget_setting`, `update_elementor_widget` | each key through the writer, plain or typed. A plain object (`link`, `image`) changes only the fields it names; the other stored fields keep their bytes (unlike classic, where arrays replace). `null` removes a key. Setting names Elementor accepts as aliases work (`text` for an `e-heading` title) and are reported under `aliases`. |
+| `update_elementor_widgets_bulk` | a page's atomic rows run as one read-modify-write after that page's classic rows; at most 50 per page per call (`batch_size_exceeded`); a row that fails validation fails alone; `if_revision` per row is compared with the page revision at the start of the group; each row keeps its element's `change_receipt` |
+| `update_elementor_patch`, `update_elementor_data` | ops as before; plain values in the atomic elements the change touches are converted (`converted_elements`), then the same page check; the whole-document receipt stays |
+| `update_alt_text` | `post_id` + `element_id`: an `e-image` with an external URL gets `image.src.alt`; one with a Media Library image changes the attachment's alt (`routed_to: "attachment_alt"`, `scope: "all uses of attachment N"`) |
+
+**Rules.** Only the element's schema keys (`atomic_prop_not_supported` lists them, with a hint for classic names such as `header_size`); `classes` and `e-component` are not edited. Image URLs must be absolute; setting a URL on a Media Library image clears its attachment id (Elementor requires one or the other). The alt of a Media Library image is changed in a call of its own. Values Elementor's validation rejects or drops are refused; nothing is written.
+
+**Sequence.** Bound user (`iato_mcp_token_unbound`), Elementor's code available (`atomic_write_unavailable`), the element's type registered (`atomic_write_unavailable`: with the Atomic Editor off nothing can validate or show the element, so typed values are refused too), the editor not holding unsaved changes (`elementor_editor_unsaved_changes`, 409), `if_revision`; Elementor's load migrations, captured in memory and stored together with the change in the one write (`migrated_by_elementor: true`; `"would_migrate"` when nothing is written: dry run, no-op, refusal); build and validate; the page check: Elementor's per-element save transform over every atomic element and, for users without `unfiltered_html`, the kses pass Elementor's save applies, over every element including the untouched settings of the edited one. When the save would reject or alter an element the call does not change, the plugin stores the page itself so that element keeps its bytes (`elementor_save: "skipped"`, `skipped_reason: "invalid_elements_on_page"` with `invalid_elements`, or `"elementor_would_alter_untouched"` with `skipped_for_elements`). Otherwise Elementor's `Document::save()`: `false` → `elementor_cannot_edit`, a "Settings validation failed" throw → `elementor_validation_failed` (nothing written), any other throw → the plugin's write of the validated tree. Receipts right after the write; this post's caches only (Post CSS, element cache, atomic styles; no global flush); a re-read verifies the result.
+
+**Result fields (atomic).** `applied_via: "iato-native"`, `schema: "atomic"`, `state: "live"`, `applied: [{key, from, to}]` (plain values, `to` as read back), `applied_patch` (ops on `…/settings/<key>` with the stored typed value and, for `replace` / `remove`, `previous_value`), `render_error` (an addon threw while the page rendered after the write; the change and its receipt stand), `verified` (and `verification_diff`), `elementor_save`, `stored_by`, `skipped_reason`, `sanitized` / `sanitized_paths` (only when Elementor's sanitising changed a value beyond entity encoding), `migrated_by_elementor`, `editor_autosave_pending` and `editor_autosave` (`{user, user_id, modified, note}`: an autosave by any user newer than the page), `css: {scope: "post", post_css, element_cache, atomic_styles}`, `save_check`, `change_receipt` (`elementor_atomic`). Dry runs: `would_apply`, `would_store`, `save_check`; nothing written, no caches touched.
 
 ---
 

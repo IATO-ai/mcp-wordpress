@@ -100,6 +100,13 @@ class IATO_MCP_Rollback_Conflict {
 				$raw = IATO_MCP_Elementor_Adapter::stored_raw( $post_id );
 				return self::compare( IATO_MCP_Elementor_Adapter::compute_revision( $raw ), $after, 'Elementor revision' );
 
+			case 'elementor_atomic':
+				// 1.14.0: one atomic element's settings.
+				if ( ! get_post( $post_id ) ) {
+					return self::unverifiable( 'the post no longer exists' );
+				}
+				return IATO_MCP_Elementor_Atomic_Writer::conflict( $receipt );
+
 			case 'taxonomy':
 				return self::taxonomy( $receipt, $field, $post_id );
 

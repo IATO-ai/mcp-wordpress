@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
 Live checks for 1.13.1, driven by tests/wp-env/atomic-guard-live.sh
+
+Since 1.14.0 this suite covers the 1.13.1 guard where IATO's atomic writer is
+unavailable: the .sh turns on the test mu-plugin's iato_mcp_test_throw_resolver
+switch, so Elementor's settings resolver fails to load and plain values are
+refused with atomic_write_unavailable (keys an element does not have stay
+atomic_plain_value_unsupported). tests/wp-env/atomic-fixes-live.sh covers the
+writer itself.
 (env: BASE, SVC = cli | tests-cli, KEY, OWNER, ATOMIC_SRC, MIXED_SRC).
 
 Every check runs on a scratch copy of a Sprint A fixture page (published),
@@ -178,7 +185,7 @@ def front(pid, wid):
     return {'present': True, 'tag': m.group(1), 'html': re.sub(r'\s+', ' ', html[m.start():m.start() + 500])}
 
 
-def is_refusal(r, code='atomic_plain_value_unsupported'):
+def is_refusal(r, code='atomic_write_unavailable'):
     return isinstance(r, dict) and r.get('_isError') and r.get('error') == code
 
 
@@ -208,7 +215,7 @@ page = seed(ATOMIC_SRC)
 before = meta(page)
 for name, tool, make in refusals:
     r = call(tool, make(page))
-    record(name + ': refused', is_refusal(r), r)
+    record(name + ': refused', is_refusal(r, 'atomic_plain_value_unsupported' if 'header_size' in name else 'atomic_write_unavailable'), r)
     record(name + ': nothing written', meta(page) == before)
 r = call('set_widget_setting', {'id': page, 'widget_id': 'a7e4d01', 'key': 'tag', 'value': 'h3'})
 record('the refusal names the element and shows the typed value to send',
@@ -225,12 +232,12 @@ b = call('update_elementor_widgets_bulk', {'updates': [
 ]})
 rows = b.get('results', [])
 record('B1 bulk: both plain rows fail with the code and its details',
-       b.get('failed') == 2 and all(x.get('error') == 'atomic_plain_value_unsupported' and (x.get('error_data') or {}).get('elements') for x in rows), b)
+       b.get('failed') == 2 and all(x.get('error') == 'atomic_write_unavailable' and (x.get('error_data') or {}).get('elements') for x in rows), b)
 record('B1 bulk: nothing written', meta(page) == before)
 
 h = call('set_heading_level', {'id': page, 'widget_id': 'a7e4d01', 'level': 'h3'})
 record('set_heading_level on e-heading: refused with the typed-value hint',
-       h.get('_isError') and 'typed value' in h.get('text', '') and '"$$type": "string", "value": "h3"' in h.get('text', ''), h)
+       is_refusal(h) and 'typed value' in h.get('message', '') and '"$$type": "string", "value": "h3"' in h.get('message', ''), h)
 
 wp('option', 'update', 'iato_mcp_key_owner', '0', user=None)
 try:

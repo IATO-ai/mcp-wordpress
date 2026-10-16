@@ -13,6 +13,16 @@
  *   iato_mcp_test_allow_unfiltered → the plugin's iato_mcp_allow_unfiltered_html
  *                                    filter returns true (Application Password
  *                                    administrators keep raw HTML);
+ *   iato_mcp_test_force_save_fail_message → the message of that throw (1.14.0);
+ *   iato_mcp_test_throw_resolver   → a hook on Elementor's settings resolver
+ *                                    registration throws (1.14.0);
+ *   iato_mcp_test_throw_in_tool    → get_bloginfo( 'name' ) throws inside a
+ *                                    tool handler (get_site_info), for the
+ *                                    tools/call catch (1.14.0);
+ *   iato_mcp_test_record_styles_clear → records the path of every
+ *                                    elementor/atomic-widgets/styles/clear
+ *                                    action in iato_mcp_test_styles_cleared
+ *                                    (1.14.0);
  *   iato_mcp_test_record_widget_registration → records in
  *                                    iato_mcp_test_widgets_registered whether
  *                                    Elementor's widget registration ran in a
@@ -22,8 +32,12 @@
 add_filter( 'elementor/document/save/data', function ( $data ) {
 	// Probe first, so the forced throw below still records the capability.
 	update_option( 'iato_mcp_test_cap_during_save', current_user_can( 'unfiltered_html' ) ? '1' : '0', false );
+	// 1.14.0: count Elementor saves (the bulk tool saves a page's atomic rows once).
+	update_option( 'iato_mcp_test_saves', (int) get_option( 'iato_mcp_test_saves', 0 ) + 1, false );
 	if ( get_option( 'iato_mcp_test_force_save_fail' ) ) {
-		throw new RuntimeException( 'forced by iato-mcp test mu-plugin' );
+		// 1.14.0: iato_mcp_test_force_save_fail_message picks the message (for
+		// example "Settings validation failed. tag: invalid_value").
+		throw new RuntimeException( (string) get_option( 'iato_mcp_test_force_save_fail_message', 'forced by iato-mcp test mu-plugin' ) );
 	}
 	return $data;
 }, 1 );
@@ -47,5 +61,29 @@ add_action( 'shutdown', function () {
 add_action( 'elementor/widgets/register', function () {
 	if ( get_option( 'iato_mcp_test_record_widget_registration' ) && defined( 'REST_REQUEST' ) && REST_REQUEST ) {
 		update_option( 'iato_mcp_test_widgets_registered', '1', false );
+	}
+}, 1 );
+
+// 1.14.0: an addon hook on Elementor's settings resolver registration throws.
+add_action( 'elementor/atomic-widgets/settings-resolvers/register', function () {
+	if ( get_option( 'iato_mcp_test_throw_resolver' ) ) {
+		throw new RuntimeException( 'resolver hook forced to throw by iato-mcp test mu-plugin' );
+	}
+}, 1 );
+
+// 1.14.0: a throw inside a tool handler (get_site_info reads the site name).
+add_filter( 'option_blogname', function ( $value ) {
+	if ( get_option( 'iato_mcp_test_throw_in_tool' ) && defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+		throw new RuntimeException( 'tool handler forced to throw by iato-mcp test mu-plugin' );
+	}
+	return $value;
+} );
+
+// 1.14.0: record which per-post atomic styles were cleared.
+add_action( 'elementor/atomic-widgets/styles/clear', function ( $path ) {
+	if ( get_option( 'iato_mcp_test_record_styles_clear' ) ) {
+		$seen   = json_decode( (string) get_option( 'iato_mcp_test_styles_cleared', '[]' ), true ) ?: [];
+		$seen[] = $path;
+		update_option( 'iato_mcp_test_styles_cleared', wp_json_encode( $seen ), false );
 	}
 }, 1 );

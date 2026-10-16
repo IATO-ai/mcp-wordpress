@@ -11,6 +11,7 @@ if ( ! class_exists( 'IATO_Test_WPDB' ) ) {
 	final class IATO_Test_WPDB {
 		public string $prefix = 'wp_';
 		public string $options = 'wp_options';
+		public string $posts = 'wp_posts';
 		/** @var array<int,array{0:string,1:array}> */
 		public array $inserts = [];
 		public function insert( string $table, array $data, mixed $format = null ): int { $this->inserts[] = [ $table, $data ]; return 1; }
@@ -25,7 +26,10 @@ if ( ! class_exists( 'IATO_Test_WPDB' ) ) {
 		/** @var array<int,mixed> every query() call */
 		public array $queries = [];
 		public function prepare( string $q, mixed ...$a ): string { $this->prepared[] = [ $q, $a ]; return $q; }
-		public function get_row( mixed ...$a ): ?array { return null; }
+		/** @var object|null what get_row() returns (an autosave row in ElementorWriterAtomicTest) */
+		public ?object $row = null;
+		public function get_row( mixed ...$a ): mixed { return $this->row; }
+		public function esc_like( string $t ): string { return addcslashes( $t, '_%\\' ); }
 		public function get_results( mixed ...$a ): array { return []; }
 		public function get_var( mixed ...$a ): mixed { return null; }
 		public function query( mixed ...$a ): int { $this->queries[] = $a[0] ?? null; return array_shift( $this->query_results ) ?? 0; }

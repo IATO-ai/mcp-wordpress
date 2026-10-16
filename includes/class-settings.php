@@ -212,7 +212,7 @@ class IATO_MCP_Settings {
 		'update_elementor_patch'   => 'Apply an RFC 6902 JSON Patch to the whole document',
 		'update_elementor_widgets_bulk' => 'Patch many widgets across many posts in one call',
 		'find_elementor_widgets'   => 'Search Elementor posts for widgets matching a filter',
-		'set_heading_level'        => 'Set the header_size on a heading widget (h1-h6)',
+		'set_heading_level'        => 'Set a heading\'s level (h1-h6), classic or atomic',
 		'set_widget_setting'       => 'Set a single key on a widget\'s settings',
 		'resolve_url'              => 'Resolve a URL to its rendering post, with Theme Builder shadowing detection',
 		'get_post_meta'            => 'Read post meta (single key or all) with credential-shaped keys redacted',

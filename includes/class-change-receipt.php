@@ -244,6 +244,7 @@ class IATO_MCP_Change_Receipt {
 			'attachment'       => 'edit_posts',
 			'post_meta'        => 'edit_posts',
 			'elementor_widget' => 'edit_posts',
+			'elementor_atomic' => 'edit_posts',
 			'menu_item'        => 'edit_theme_options',
 			'redirect'         => 'manage_options',
 		];
@@ -264,6 +265,7 @@ class IATO_MCP_Change_Receipt {
 	 * edit_posts. Rules, per target_type (field):
 	 *
 	 *   post / page / post_meta / elementor_widget   edit_post   <post_id>
+	 *   elementor_atomic (1.14.0)                    edit_post   <post_id>
 	 *   post create (rollback trashes the post)      delete_post <post_id>
 	 *   post status restoring publish/future/private edit_post   <post_id> + the type's publish cap (also[])
 	 *   image (alt text; post_id is the attachment) edit_post   <attachment_id>
@@ -324,6 +326,7 @@ class IATO_MCP_Change_Receipt {
 			case 'page':
 			case 'post_meta':
 			case 'elementor_widget':
+			case 'elementor_atomic':
 			case 'image':
 				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
 

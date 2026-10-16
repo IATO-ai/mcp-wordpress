@@ -1,6 +1,8 @@
 #!/bin/zsh
 # Live checks for 1.13.1 (Elementor Atomic (V4) write guard, no-fallback rule,
-# stored-value flag on reads, repair by sending a typed value).
+# stored-value flag on reads, repair by sending a typed value). Since 1.14.0 the
+# guard runs where IATO's atomic writer is unavailable; this script makes it so
+# with the mu-plugin's iato_mcp_test_throw_resolver switch.
 # Installs the test-only mu-plugin (tests/wp-env/mu-force-elementor-save-fail.php),
 # needs the Sprint A fixture pages (tests/wp-env/create-fixture-pages.php) and a
 # site key bound to an administrator, then runs tests/wp-env/atomic-guard-live.py.
@@ -25,7 +27,7 @@ if [ "${2:-}" = "--cleanup" ]; then
 		W wp db query "DELETE FROM ${P}iato_change_receipts WHERE post_id IN ($(echo $ids | tr ' ' ',' | sed 's/,$//'))"
 		W wp post delete ${=ids} --force >/dev/null
 	fi
-	W wp option delete iato_mcp_test_force_save_fail iato_mcp_test_allow_unfiltered iato_mcp_test_cap_during_save iato_mcp_test_cap_at_shutdown iato_mcp_test_record_widget_registration iato_mcp_test_widgets_registered >/dev/null
+	W wp option delete iato_mcp_test_force_save_fail iato_mcp_test_allow_unfiltered iato_mcp_test_cap_during_save iato_mcp_test_cap_at_shutdown iato_mcp_test_record_widget_registration iato_mcp_test_widgets_registered iato_mcp_test_throw_resolver iato_mcp_test_saves >/dev/null
 	W rm -f "$MU"
 	W wp plugin activate elementor >/dev/null
 	echo "cleanup done ($TARGET)"
@@ -44,4 +46,9 @@ export ATOMIC_SRC=$(W wp post list --post_type=page --name=iato-fixture-atomic-o
 export MIXED_SRC=$(W wp post list --post_type=page --name=iato-fixture-mixed --field=ID)
 export CLASSIC_SRC=$(W wp post list --post_type=page --name=iato-fixture-classic-only --field=ID)
 if [ -z "$ATOMIC_SRC" ] || [ -z "$MIXED_SRC" ] || [ -z "$CLASSIC_SRC" ]; then echo "run tests/wp-env/create-fixture-pages.php first"; exit 2; fi
+# 1.14.0: the writer made unavailable, so the 1.13.1 guard path is what runs.
+W wp option update iato_mcp_test_throw_resolver 1 >/dev/null
 python3 -I tests/wp-env/atomic-guard-live.py
+rc=$?
+W wp option delete iato_mcp_test_throw_resolver >/dev/null
+exit $rc

@@ -134,6 +134,8 @@ require_once __DIR__ . '/stubs-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
+require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-engine.php';
+require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-writer.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-abilities.php';
 require_once IATO_MCP_DIR . 'includes/class-auth.php';
