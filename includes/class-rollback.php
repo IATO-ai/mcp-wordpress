@@ -224,8 +224,13 @@ class IATO_MCP_Rollback {
 		];
 		// An Elementor receipt's before value is the whole stored tree; responses
 		// carry its revision hash instead (the hash get_elementor_data reports).
-		$is_tree = 'elementor_widget' === $receipt['target_type'];
-		$restore = [ 'restored_value' => $before ];
+		$is_tree   = 'elementor_widget' === $receipt['target_type'];
+		$is_atomic = IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE === $receipt['target_type'];
+		$restore   = [ 'restored_value' => $before ];
+		if ( $is_atomic ) {
+			// 1.14.0: one atomic element's settings, shown in plain form.
+			$restore = [ 'restored_value' => IATO_MCP_Elementor_Atomic_Writer::restore_view( $receipt ) ];
+		}
 		if ( $is_tree ) {
 			$restore = null === $before || null !== self::no_elementor_from( $before )
 				? [ 'restored_revision' => null, 'restored' => 'no_elementor_data' ]
@@ -242,10 +247,20 @@ class IATO_MCP_Rollback {
 			}
 		}
 
+		// 1.14.0: an atomic element's dry run runs the real rollback's gates and
+		// checks (bound user, open editor, Elementor's validation, the page
+		// check), so it refuses what the real call would refuse.
+		if ( $dry_run && $is_atomic && ( 'conflict' !== $check['status'] || $force ) ) {
+			$gates = IATO_MCP_Elementor_Atomic_Writer::rollback( $receipt, true );
+			if ( is_wp_error( $gates ) ) {
+				return $gates;
+			}
+		}
+
 		if ( $dry_run ) {
 			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
 				+ $base
-				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] : [ 'would_restore' => $before ] )
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] : [ 'would_restore' => $is_atomic ? $restore['restored_value'] : $before ] )
 				+ [ 'conflict_check' => $report ];
 		}
 
@@ -306,6 +321,12 @@ class IATO_MCP_Rollback {
 				[ 'status' => 409 ]
 			);
 		}
+		if ( IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE === $type ) {
+			$why = IATO_MCP_Elementor_Atomic_Writer::rollback_unavailable( $receipt );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
 		if ( 'taxonomy' === $type && 'update_term' === $field ) {
 			$snapshot = IATO_MCP_Rollback_Conflict::json_array( $before );
 			if ( (int) ( $snapshot['term_id'] ?? 0 ) <= 0 ) {
@@ -350,6 +371,8 @@ class IATO_MCP_Rollback {
 				return self::rollback_attachment( $field, $post_id, $before_value );
 			case 'elementor_widget':
 				return self::rollback_elementor( $post_id, $before_value );
+			case IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE:
+				return IATO_MCP_Elementor_Atomic_Writer::rollback( $receipt );
 			default:
 				return new WP_Error( 'unsupported_target_type', "Rollback not supported for target_type: {$target_type}" );
 		}
@@ -880,6 +903,13 @@ class IATO_MCP_Rollback {
 		// One null, other not.
 		if ( null === $request_val || null === $stored_val ) {
 			return false;
+		}
+
+		// A JSON value sent decoded (an object or array) is compared with the
+		// stored JSON text in canonical form (1.14.0; it used to be cast to the
+		// string "Array" and never matched).
+		if ( is_array( $request_val ) || is_object( $request_val ) || is_array( $stored_val ) ) {
+			return IATO_MCP_Rollback_Conflict::canonical( $request_val ) === IATO_MCP_Rollback_Conflict::canonical( $stored_val );
 		}
 
 		// String comparison (handles JSON strings).

@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.13.1
+Stable tag: 1.14.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -14,7 +14,7 @@ Exposes an MCP server from any self-hosted WordPress site, enabling AI agents li
 
 WordPress.com has a built-in MCP server. Now self-hosted WordPress does too.
 
-[IATO MCP](https://iato.ai/wordpress-mcp) connects your WordPress site to Claude Desktop and other MCP-enabled AI clients. Once connected, you can ask Claude to audit your site and fix SEO issues, identify orphan pages, clean up broken links, and more — all in a single conversation.
+[IATO MCP](https://iato.ai/wordpress-mcp) connects your WordPress site to Claude Desktop and other MCP-enabled AI clients. Once connected, you can ask Claude to audit your site and fix SEO issues, identify orphan pages, clean up broken links, and more, all in a single conversation.
 
 https://www.youtube.com/watch?v=gSX6Vc9Yask
 
@@ -43,6 +43,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Manage redirect rules
 * Read and write Elementor page builder data
 * Widget-grained Elementor edits with optimistic concurrency, idempotency, and bulk operations
+* Fix heading levels, text, links and image alt text on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later), converted and validated with Elementor's own code, each change with its own rollback
 * Clone the styling of an existing Elementor post in one call via `update_elementor_data(..., inherit_settings_from: <id>)`
 * Resolve URLs to their rendering post (Theme Builder shadowing detection)
 * Search content across the site
@@ -147,7 +148,13 @@ IATO 1.13.0 and earlier could store a plain value on an Elementor Atomic Editor 
 
 To find the affected elements, read the page with get_elementor_data, get_elementor_widget, list_elementor_widgets or find_elementor_widgets. Since 1.13.1 they flag the element with stored_value_invalid: true, and invalid_keys names the settings to repair; get_elementor_data also lists them under invalid_elements.
 
-To repair an element in 1.13.1, send each listed setting again as a typed value with update_elementor_widget, in the shape get_elementor_widget shows under settings for the element, for example {"tag": {"$$type": "string", "value": "h2"}}. From 1.14.0, sending the plain value again also works. When several elements on a page are affected, repair them one at a time; Elementor saves the page normally again once the last one is repaired. A damaged element cannot be copied (update_elementor_patch refuses the copy): repair the source first, then copy it. You can also restore a revision saved before the IATO edit, under History, then Revisions, in Elementor.
+To repair an element, send each listed setting again with update_elementor_widget, set_widget_setting or set_heading_level. From 1.14.0 (with Elementor 4.3.0 or later) the plain value works, for example {"tag": "h2"} or {"link": {"destination": "https://example.com/"}}: IATO stores it in Elementor's format and the element is repaired. With 1.13.1, or on a site without Elementor 4.3.0, send it as a typed value, in the shape get_elementor_widget shows under settings for the element, for example {"tag": {"$$type": "string", "value": "h2"}}. When several elements on a page are affected, repair them one at a time; Elementor saves the page normally again once the last one is repaired. A damaged element cannot be copied (update_elementor_patch refuses the copy): repair the source first, then copy it. You can also restore a revision saved before the IATO edit, under History, then Revisions, in Elementor.
+
+= Can IATO edit Elementor Atomic Editor (V4) elements? =
+
+Yes, from 1.14.0, with Elementor 4.3.0 or later and the Atomic Editor turned on. set_heading_level, set_widget_setting, update_elementor_widget, update_elementor_widgets_bulk and update_elementor_patch take plain values for atomic headings, paragraphs, buttons, images and containers, and update_alt_text takes post_id and element_id for an atomic image. IATO converts and validates each value with Elementor's own code and keeps every setting the call does not name as it was stored. Changes go live, like edits to classic widgets, and each one can be rolled back on its own.
+
+The alt text of an image from the Media Library belongs to the attachment, so IATO changes it there, and the change applies everywhere that image is used. Global classes and component instances are not edited by IATO yet. On sites with an older Elementor, IATO accepts only typed values for atomic elements and says what is missing. While the Atomic Editor is off, IATO does not change atomic elements at all, because Elementor cannot check them; the rest of the page can still be edited.
 
 = Can I control which tools are available? =
 
@@ -165,6 +172,21 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.14.0 =
+* New: Heading level, text, link and external-image alt fixes now work on Elementor Atomic Editor (V4) elements through the existing tools (set_heading_level, set_widget_setting, update_elementor_widget, update_elementor_widgets_bulk, update_elementor_patch, update_alt_text). IATO converts and validates values with Elementor's own code (Elementor 4.3.0 or later), and edits go live like classic edits.
+* New: Each atomic change records a receipt per element and can be rolled back on its own, with the conflict check and dry_run.
+* New: Results say how a change was applied (applied_via), that it is live (state), which values were sanitised, and which caches were cleared.
+* New: update_alt_text accepts post_id and element_id to fix the alt text of an atomic image that uses an external URL. For a Media Library image it changes the attachment's alt text, as before. update_alt_text also accepts dry_run.
+* Change: Plain values sent to atomic elements, refused since 1.13.1, are now converted and validated with Elementor's code and stored in Elementor's format. On sites without Elementor 4.3.0 or later, the 1.13.1 rule stays: only typed values are accepted, and the refusal (now atomic_write_unavailable) says what is missing.
+* Change: While Elementor cannot load an atomic element's type (the Atomic Editor is off, or the plugin that provides it is inactive), IATO no longer changes that element, because nothing can validate it; typed values were stored unchecked until now. Other elements on the page can still be edited.
+* Change: In update_elementor_widgets_bulk, atomic rows for the same page are applied in one save, so several rows that send the same if_revision now succeed together. Before this change, every row after the first failed with revision_conflict. Classic rows are unchanged.
+* New: get_iato_seo_fixes lists issues it cannot act on under skipped, with a reason: a URL that is not a WordPress post on this site, or a URL on another domain.
+* Fix: An error thrown inside a tool or another plugin now returns a clear error instead of a PHP fatal error.
+* Fix: When Elementor's own save fails and IATO stores the page itself, IATO clears that page's CSS and element cache and says so in the result.
+* Fix: Sending a setting again to an atomic element that an earlier IATO version stored as a plain value repairs that element.
+* Tweak: Atomic edits clear only the edited page's caches, not every page's.
+* Tweak: Wording of the plugin description.
 
 = 1.13.1 =
 * Fix: plain values sent to Elementor Atomic Editor (V4) elements are now refused instead of being stored in a form that could remove links or images and block later saves.
@@ -431,6 +453,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.14.0 =
+Heading, text, link and image alt fixes now work on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later), validated with Elementor's own code and with a rollback for each change. Sending a setting again repairs elements damaged by IATO 1.13.0 or earlier.
 
 = 1.13.1 =
 Stops plain values from breaking Elementor Atomic Editor (V4) elements. Pages edited with earlier versions may have broken atomic elements (a missing link or image, or a page Elementor will not save); the FAQ explains how to find and repair them.

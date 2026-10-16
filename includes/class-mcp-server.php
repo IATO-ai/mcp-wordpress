@@ -293,12 +293,22 @@ class IATO_MCP_Server {
 				: 'tool_error';
 		}
 
+		// A JSON error text names its own code (tool_exception, the atomic and
+		// rollback refusals); anything else is logged as tool_error.
+		$tool_code = 'tool_error';
+		if ( null !== $tool_error ) {
+			$decoded = json_decode( $tool_error, true );
+			if ( is_array( $decoded ) && is_string( $decoded['error'] ?? null ) && '' !== $decoded['error'] ) {
+				$tool_code = $decoded['error'];
+			}
+		}
+
 		self::log_call(
 			$method,
 			$tool_name,
 			$args,
 			null === $tool_error ? 'success' : 'error',
-			null === $tool_error ? null : 'tool_error',
+			null === $tool_error ? null : $tool_code,
 			$tool_error,
 			$started
 		);
@@ -447,7 +457,15 @@ class IATO_MCP_Server {
 		}
 
 		$handler = self::$tools[ $name ]['handler'];
-		$result  = call_user_func( $handler, $arguments );
+		// 1.14.0: an uncaught Throwable from a tool handler (or from code it calls
+		// in WordPress or another plugin) becomes a clear tool error instead of a
+		// PHP fatal, which WordPress answers with a non-JSON-RPC HTTP 500 and no
+		// call-log entry.
+		try {
+			$result = call_user_func( $handler, $arguments );
+		} catch ( \Throwable $e ) {
+			return self::tool_exception_result( (string) $name, $e );
+		}
 
 		if ( is_wp_error( $result ) ) {
 			$err_msg = $result->get_error_message();
@@ -468,6 +486,35 @@ class IATO_MCP_Server {
 	}
 
 	// ── Helpers ────────────────────────────────────────────────────────────────
+
+	/**
+	 * The isError result for a tool handler that threw: JSON text naming the
+	 * tool and the exception, logged under WP_DEBUG with file and line. The
+	 * call log records it as tool_exception (handle_request() reads the error
+	 * code from JSON error texts).
+	 */
+	private static function tool_exception_result( string $tool, \Throwable $e ): array {
+		if ( defined( 'WP_DEBUG' ) && WP_DEBUG && function_exists( 'error_log' ) ) {
+			error_log( sprintf( '[iato-mcp] tool %s threw %s: %s at %s:%d', $tool, get_class( $e ), $e->getMessage(), $e->getFile(), $e->getLine() ) );
+		}
+		return [
+			'isError' => true,
+			'content' => [ [
+				'type' => 'text',
+				'text' => (string) wp_json_encode( [
+					'error'     => 'tool_exception',
+					'tool'      => $tool,
+					'exception' => get_class( $e ),
+					'message'   => sprintf(
+						'The tool %1$s failed with an error inside WordPress or another plugin (%2$s: %3$s). Changes made before the failure may have been applied: check the change receipts and the content before retrying.',
+						$tool,
+						get_class( $e ),
+						$e->getMessage()
+					),
+				] ),
+			] ],
+		];
+	}
 
 	/**
 	 * Build a JSON-RPC error response.

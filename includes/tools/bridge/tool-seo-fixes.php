@@ -17,6 +17,11 @@
  * IATO tools used: get_seo_issues
  * WP resolution:   url_to_postid() per affected URL
  *
+ * Issues these tools cannot act on (1.14.0) are listed under `skipped`
+ * instead of the fix list: a URL on another domain (`other_domain`; a crawl
+ * can follow links off the site) or one that is not a WordPress post or page
+ * on this site (`not_a_wordpress_post`: archives, search pages, files, no URL).
+ *
  * @package IATO_MCP
  */
 
@@ -35,7 +40,7 @@ const IATO_MCP_MANUAL_INSTRUCTIONS = [
 IATO_MCP_Server::register_tool(
 	'get_iato_seo_fixes',
 	[
-		'description' => 'Returns SEO issues from IATO with WordPress post IDs and slugs attached. Auto-fixable issues (title, meta, alt text) include current and suggested values ready to pass to update_seo_data or update_alt_text. Manual issues include step-by-step instructions.',
+		'description' => 'Returns SEO issues from IATO with WordPress post IDs and slugs attached. Auto-fixable issues (title, meta, alt text) include current and suggested values ready to pass to update_seo_data or update_alt_text. Manual issues include step-by-step instructions. Issues on another domain or on URLs that are not WordPress posts of this site are listed under skipped, with the reason, instead of the fix list.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -70,12 +75,25 @@ IATO_MCP_Server::register_tool(
 		}
 
 		$issues     = [];
+		$skipped    = [];
 		$auto_count = 0;
 
 		foreach ( $issues_data as $issue ) {
 			$type    = $issue['type'] ?? $issue['issue_type'] ?? $issue['rule'] ?? $issue['rule_type'] ?? $issue['category'] ?? '';
 			$url     = $issue['url'] ?? $issue['page_url'] ?? $issue['affected_url'] ?? $issue['link'] ?? '';
-			$wp_id   = $url ? url_to_postid( $url ) : 0;
+			$url     = is_string( $url ) ? $url : '';
+			$host    = '' !== $url ? wp_parse_url( $url, PHP_URL_HOST ) : null;
+			$on_site = '' !== $url && iato_mcp_url_on_this_site( $url );
+			$wp_id   = $on_site ? url_to_postid( $url ) : 0;
+			if ( ! $wp_id ) {
+				$skipped[] = [
+					'issue_type' => $type,
+					'url'        => $url,
+					'title'      => $issue['title'] ?? $issue['name'] ?? $issue['summary'] ?? $issue['message'] ?? '',
+					'reason'     => ( is_string( $host ) && '' !== $host && ! $on_site ) ? 'other_domain' : 'not_a_wordpress_post',
+				];
+				continue;
+			}
 			$wp_slug = $wp_id ? get_post_field( 'post_name', $wp_id ) : null;
 			$is_auto = in_array( $type, IATO_MCP_AUTO_FIX_TYPES, true );
 
@@ -124,6 +142,23 @@ IATO_MCP_Server::register_tool(
 			'auto_fixable' => $auto_count,
 			'manual'       => count( $issues ) - $auto_count,
 			'issues'       => $issues,
+			'skipped'      => $skipped,
 		] );
 	}
 );
+
+/**
+ * Is a crawled URL on this site? Hosts compare without case and without a
+ * leading "www."; a URL without a host (site-relative) is on the site.
+ */
+if ( ! function_exists( 'iato_mcp_url_on_this_site' ) ) :
+function iato_mcp_url_on_this_site( string $url ): bool {
+	$host = wp_parse_url( $url, PHP_URL_HOST );
+	if ( ! is_string( $host ) || '' === $host ) {
+		return ! preg_match( '#^[a-z][a-z0-9+.-]*:#i', $url ); // mailto:, tel:, … are not pages
+	}
+	$site = wp_parse_url( home_url(), PHP_URL_HOST );
+	$norm = static fn( string $h ): string => preg_replace( '/^www\./', '', strtolower( $h ) );
+	return is_string( $site ) && $norm( $host ) === $norm( $site );
+}
+endif;

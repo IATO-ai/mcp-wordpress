@@ -17,7 +17,7 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'set_heading_level',
 	[
-		'description' => 'Set the header_size on a heading widget (h1-h6). Wrapper over update_elementor_widget — same dry_run, if_revision, idempotency_key semantics. Errors if the target widget is not a heading.',
+		'description' => 'Set the level of a heading (h1-h6): header_size on a classic heading widget, tag on an Elementor Atomic Editor (V4) e-heading (converted and validated with Elementor\'s own code, Elementor 4.3.0 or later). Wrapper over update_elementor_widget — same dry_run, if_revision, idempotency_key semantics. Errors if the target widget is not a heading.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -70,13 +70,23 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'widget_not_found', "Widget {$widget_id} not found in post {$post_id}." );
 		}
 		$widget_type = (string) ( $found['element']['widgetType'] ?? '' );
-		if ( 'heading' !== $widget_type ) {
-			$message = "set_heading_level only operates on heading widgets; got '{$widget_type}'.";
-			if ( 'e-heading' === $widget_type ) {
-				// 1.13.1: point atomic headings at the typed-value form.
-				$message .= ' For an Elementor Atomic (V4) heading, set its tag with update_elementor_widget as a typed value, for example settings_patch {"tag": {"$$type": "string", "value": "' . $level . '"}}. Plain values for atomic elements come in a later IATO release.';
+		$patch       = [ 'header_size' => $level ];
+		if ( 'e-heading' === $widget_type && IATO_MCP_Elementor_Atomic_Writer::is_target( $found['element'] ) ) {
+			// 1.14.0: an atomic heading's level is its `tag`, written through the
+			// atomic writer. Where the writer is unavailable, point at the
+			// typed-value form (1.13.1).
+			$unregistered = IATO_MCP_Elementor_Atomic_Writer::unregistered( $found['element'] );
+			if ( null !== $unregistered ) {
+				return IATO_MCP_Elementor_Adapter::tool_error( $unregistered );
 			}
-			return new WP_Error( 'invalid_widget_type', $message );
+			$unavailable = IATO_MCP_Elementor_Atomic_Writer::unavailable( $found['element'] );
+			if ( null !== $unavailable ) {
+				$message = "set_heading_level cannot convert the level for this Elementor Atomic (V4) heading: " . preg_replace( '/ Nothing was written\..*$/s', '', $unavailable->get_error_message() ) . ' Set its tag with update_elementor_widget as a typed value instead, for example settings_patch {"tag": {"$$type": "string", "value": "' . $level . '"}}. Nothing was written.';
+				return IATO_MCP_Elementor_Adapter::tool_error( new WP_Error( 'atomic_write_unavailable', $message, (array) $unavailable->get_error_data() ) );
+			}
+			$patch = [ 'tag' => $level ];
+		} elseif ( 'heading' !== $widget_type ) {
+			return new WP_Error( 'invalid_widget_type', "set_heading_level only operates on heading widgets; got '{$widget_type}'." );
 		}
 
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;
@@ -93,14 +103,14 @@ IATO_MCP_Server::register_tool(
 		$delegated_args = [
 			'id'             => $post_id,
 			'widget_id'      => $widget_id,
-			'settings_patch' => [ 'header_size' => $level ],
+			'settings_patch' => $patch,
 			'dry_run'        => ! empty( $args['dry_run'] ),
 			'if_revision'    => $args['if_revision'] ?? null,
 		];
 
 		$result = IATO_MCP_Elementor_Adapter::do_update_widget( $delegated_args );
 		if ( is_wp_error( $result ) ) {
-			return $result;
+			return IATO_MCP_Elementor_Adapter::tool_error( $result );
 		}
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'set_heading_level', $key, $args, $result );
@@ -113,7 +123,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'set_widget_setting',
 	[
-		'description' => 'Set a single key on a widget\'s settings. Convenience wrapper over update_elementor_widget for the common single-field case. Same dry_run, if_revision, idempotency_key semantics. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
+		'description' => 'Set a single key on a widget\'s settings. Convenience wrapper over update_elementor_widget for the common single-field case. Same dry_run, if_revision, idempotency_key semantics. On Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later) plain values are converted and validated with Elementor\'s own code; a plain object (link, image) changes only the fields it names. Elsewhere atomic elements accept only $$type envelope values.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [

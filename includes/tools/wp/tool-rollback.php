@@ -101,7 +101,9 @@ if ( ! function_exists( 'iato_mcp_rollback_error' ) ) :
 function iato_mcp_rollback_error( WP_Error $error ): array|WP_Error {
 	$detailed = [ 'rollback_conflict', 'rollback_actor_mismatch', 'rollback_unavailable', 'already_rolled_back' ];
 	if ( ! in_array( $error->get_error_code(), $detailed, true ) ) {
-		return $error;
+		// 1.14.0: refusals from rolling back an atomic element change (the page
+		// check, Elementor's editability, an open editor) carry details too.
+		return class_exists( 'IATO_MCP_Elementor_Adapter' ) ? IATO_MCP_Elementor_Adapter::tool_error( $error ) : $error;
 	}
 	$data = $error->get_error_data();
 	$data = is_array( $data ) ? $data : [];

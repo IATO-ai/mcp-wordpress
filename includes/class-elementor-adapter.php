@@ -946,6 +946,23 @@ class IATO_MCP_Elementor_Adapter {
 	 *                                      the elements a single-element tool
 	 *                                      edits; only the node at each path is
 	 *                                      checked, not other nodes with its id.
+	 *                                      1.14.0 (IATO_MCP_Elementor_Atomic_Writer):
+	 *                                      `atomic` — the tree was built and
+	 *                                      validated by the atomic writer: the
+	 *                                      global CSS flush is skipped, this
+	 *                                      post's caches are cleared after the
+	 *                                      write, Elementor refusing the save
+	 *                                      (false) or rejecting the settings is
+	 *                                      a refusal, not a fallback write.
+	 *                                      `skip_save` — reason to store the tree
+	 *                                      with the plugin's own write instead of
+	 *                                      Elementor's save (the writer's page
+	 *                                      check found that the save would alter
+	 *                                      or reject elements this write does not
+	 *                                      change); `skip_ids` — those elements.
+	 *                                      `on_written` — called right after the
+	 *                                      tree is stored, before caches and
+	 *                                      checks (receipts).
 	 *
 	 * @return array{
 	 *   previous_revision:string,
@@ -983,7 +1000,9 @@ class IATO_MCP_Elementor_Adapter {
 		// iato_mcp_allow_unfiltered_html). Elementor's own save, below, adds
 		// its blanket kses pass on top for users without unfiltered_html.
 		$changed = [];
-		if ( ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
+		// 1.14.0: `verbatim` (an atomic rollback restoring values recorded from
+		// Elementor's own sanitisers) skips this pass.
+		if ( empty( $opts['verbatim'] ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
 			if ( null === $stored_elements ) {
 				$stored_elements = self::stored_elements( $post_id );
 			}
@@ -1007,16 +1026,20 @@ class IATO_MCP_Elementor_Adapter {
 			$stored_elements = self::stored_elements( $post_id ); // for the check after the write
 		}
 
+		$atomic    = ! empty( $opts['atomic'] );
+		$skip_save = isset( $opts['skip_save'] ) && is_string( $opts['skip_save'] ) && '' !== $opts['skip_save'] ? $opts['skip_save'] : null;
+
 		// 1. Cache clear before the save so Elementor renders fresh. The element
 		// cache is cleared for this post too (1.13.1): Elementor's global clear
 		// below runs once per request with optimized CSS files on, so in a bulk
 		// write later pages would otherwise render cached HTML in step 5.
+		// Atomic writes (1.14.0) clear this post's caches only, after the write.
 		delete_post_meta( $post_id, '_elementor_css' );
 		delete_post_meta( $post_id, '_elementor_element_cache' );
 		wp_cache_delete( $post_id, 'post_meta' );
 		wp_cache_delete( $post_id, 'posts' );
 
-		if ( class_exists( '\Elementor\Plugin' ) ) {
+		if ( ! $atomic && class_exists( '\Elementor\Plugin' ) ) {
 			$plugin = \Elementor\Plugin::$instance;
 			if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
 				$plugin->files_manager->clear_cache();
@@ -1043,11 +1066,17 @@ class IATO_MCP_Elementor_Adapter {
 		$regenerated    = false;
 		$elementor_save = null;
 		$save_error     = null;
-		if ( ! empty( $unregistered ) ) {
+		if ( ! empty( $unregistered ) || null !== $skip_save ) {
 			$elementor_save = 'skipped';
 			$regenerated    = true;
 		} elseif ( class_exists( '\Elementor\Plugin' ) ) {
-			$document = \Elementor\Plugin::$instance->documents->get( $post_id );
+			try {
+				$document = \Elementor\Plugin::$instance->documents->get( $post_id );
+			} catch ( \Throwable $e ) {
+				$document       = null;
+				$elementor_save = 'error';
+				$save_error     = $e->getMessage();
+			}
 			if ( $document ) {
 				try {
 					$elementor_save = IATO_MCP_Auth::write_unlocked( fn() => (bool) $document->save( [ 'elements' => $decoded_elements ] ) );
@@ -1057,6 +1086,29 @@ class IATO_MCP_Elementor_Adapter {
 				}
 				$regenerated = true;
 			}
+		}
+
+		// 1.14.0: on the atomic writer's path the tree was validated with
+		// Elementor's parser and checked against its save transform, so
+		// Elementor refusing the save is Elementor's own editability rule
+		// (Role Manager, post type not enabled for Elementor, trashed post) and
+		// a validation failure means Elementor and that check disagree: both
+		// are refusals, and nothing is written. Any other Throwable (an addon
+		// failing in its own save code) keeps the fallback write of the
+		// validated tree below.
+		if ( $atomic && false === $elementor_save ) {
+			return new WP_Error(
+				'elementor_cannot_edit',
+				"Elementor does not let the current user edit post {$post_id} (Elementor's Role Manager, the post type not enabled for Elementor, or a trashed post). Nothing was written.",
+				[ 'status' => 403, 'post_id' => $post_id ]
+			);
+		}
+		if ( $atomic && 'error' === $elementor_save && str_starts_with( (string) $save_error, 'Settings validation failed' ) ) {
+			return new WP_Error(
+				'elementor_validation_failed',
+				"Elementor's save rejected the page: {$save_error}. Nothing was written.",
+				[ 'status' => 400, 'post_id' => $post_id, 'elementor_error' => $save_error ]
+			);
 		}
 
 		// 2b (1.13.1). Elementor did not store the tree: its save threw, was
@@ -1104,6 +1156,12 @@ class IATO_MCP_Elementor_Adapter {
 			wp_cache_delete( $post_id, 'post_meta' );
 		}
 
+		// 1.14.0: the tree is stored; the caller records its receipts now, so a
+		// failure in the steps below never leaves a live change without one.
+		if ( isset( $opts['on_written'] ) && is_callable( $opts['on_written'] ) ) {
+			( $opts['on_written'] )();
+		}
+
 
 		// 4. Verify post_content actually changed.
 		wp_cache_delete( $post_id, 'posts' );
@@ -1112,25 +1170,35 @@ class IATO_MCP_Elementor_Adapter {
 		$content_updated = ( $new_content !== $old_content );
 
 		// 5. Frontend fallback.
+		// Guarded (1.14.0): the render runs every widget's code, addons
+		// included, after the tree and its receipts are stored; a throw here is
+		// reported and the cache clears below still run.
+		$render_error = null;
 		if ( $regenerated && ! $content_updated && class_exists( '\Elementor\Plugin' ) ) {
-			$frontend = \Elementor\Plugin::instance()->frontend;
-			if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
-				$rendered = $frontend->get_builder_content( $post_id, true );
-				if ( ! empty( $rendered ) && $rendered !== $old_content ) {
-					wp_update_post( wp_slash( [ // wp_update_post() unslashes
-						'ID'           => $post_id,
-						'post_content' => $rendered,
-					] ) );
-					$new_content     = $rendered;
-					$content_updated = true;
+			try {
+				$frontend = \Elementor\Plugin::instance()->frontend;
+				if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
+					$rendered = $frontend->get_builder_content( $post_id, true );
+					if ( ! empty( $rendered ) && $rendered !== $old_content ) {
+						wp_update_post( wp_slash( [ // wp_update_post() unslashes
+							'ID'           => $post_id,
+							'post_content' => $rendered,
+						] ) );
+						$new_content     = $rendered;
+						$content_updated = true;
+					}
 				}
+			} catch ( \Throwable $e ) {
+				$render_error = $e->getMessage();
 			}
 		}
 
 		// Elementor's save did not run, so it did not clear this post's caches.
 		// Cleared after the frontend render above, which would otherwise keep
 		// CSS and element HTML rendered while some types could not be loaded.
-		$cache_cleared = 'skipped' === $elementor_save ? self::clear_post_caches( $post_id ) : null;
+		// 1.14.0: also after a classic fallback write (Elementor's save failed)
+		// and after every atomic write, which skips the global flush.
+		$cache_cleared = ( 'skipped' === $elementor_save || 'plugin' === $stored_by || $atomic ) ? self::clear_post_caches( $post_id ) : null;
 
 		// 6. Verify meta persisted. Structural, not byte-length: when Elementor's
 		// own save ran it re-encodes the tree (defaults, key order, version
@@ -1154,14 +1222,31 @@ class IATO_MCP_Elementor_Adapter {
 		if ( null !== $save_error ) {
 			$result['elementor_save_error'] = $save_error;
 		}
+		if ( null !== $render_error ) {
+			$result['render_error'] = $render_error;
+		}
 		if ( ! empty( $invalid_elsewhere ) ) {
 			$result['invalid_elements'] = $invalid_elsewhere;
 		}
-		if ( 'skipped' === $elementor_save ) {
+		if ( 'skipped' === $elementor_save && ! empty( $unregistered ) ) {
 			$result['skipped_reason']             = 'unregistered_element_types';
 			$result['unregistered_element_types'] = $unregistered;
 			$result['cache_cleared']              = $cache_cleared;
 			$result['verification']               = self::verify_untouched( $stored_elements ?? [], $decoded_elements, $persisted_meta );
+		} elseif ( 'skipped' === $elementor_save ) {
+			$result['skipped_reason'] = $skip_save;
+			if ( ! empty( $opts['skip_ids'] ) ) {
+				$result['skipped_for_elements'] = array_values( array_map( 'strval', (array) $opts['skip_ids'] ) );
+			}
+		}
+		if ( $atomic ) {
+			$result['css'] = [ 'scope' => 'post' ] + (array) $cache_cleared;
+		} elseif ( 'plugin' === $stored_by && 'skipped' !== $elementor_save ) {
+			// 1.14.0: classic write stored by the plugin because Elementor's save
+			// failed. Elementor did not rebuild this page's CSS.
+			$result['cache_cleared']   = $cache_cleared;
+			$result['css_regenerated'] = false;
+			$result['css_note']        = "Elementor did not save the page (its save failed or was refused), so Elementor did not rebuild this page's CSS. IATO deleted the page's CSS and element cache; Elementor rebuilds them on the next page view. If the page still looks unstyled, clear any page cache and use Elementor > Tools > Regenerate Files & Data.";
 		}
 		if ( ! empty( $changed ) ) {
 			$result['sanitized']       = true;
@@ -1427,7 +1512,13 @@ class IATO_MCP_Elementor_Adapter {
 		$rejected = [];
 		foreach ( $paths as $path ) {
 			$node = self::pointer_get( $elements, $path );
-			if ( ! is_array( $node ) || ! IATO_MCP_Elementor_Atomic::has_atomic_type( $node ) ) {
+			if ( ! is_array( $node ) ) {
+				// The edited element is not where the write put it: refuse rather
+				// than store a tree nothing validated (1.14.0).
+				$rejected[] = [ 'element_id' => '', 'type' => 'unknown', 'elementor_error' => "no element at {$path}" ];
+				continue;
+			}
+			if ( ! IATO_MCP_Elementor_Atomic::has_atomic_type( $node ) && ! IATO_MCP_Elementor_Atomic_Writer::is_target( $node ) ) {
 				continue;
 			}
 			$error = self::validate_element_for_save( $node );
@@ -1509,7 +1600,7 @@ class IATO_MCP_Elementor_Adapter {
 	 * @param array $nodes    element id => stored node (for the example shape)
 	 * @param array $sent     element id => the settings the caller sent
 	 */
-	public static function atomic_value_refusal( array $problems, array $nodes, array $sent ): WP_Error {
+	public static function atomic_value_refusal( array $problems, array $nodes, array $sent, ?WP_Error $unavailable = null ): WP_Error {
 		$parts    = [];
 		$examples = [];
 		foreach ( $problems as $p ) {
@@ -1532,11 +1623,24 @@ class IATO_MCP_Elementor_Adapter {
 			}
 		}
 
-		$message = 'Refused: ' . implode( '; ', $parts ) . '. '
-			. 'Elementor Atomic Editor (V4) elements store each setting as a typed value, {"$$type": ..., "value": ...}. '
-			. 'This version of IATO does not convert plain values for these elements yet (that comes in a later IATO release), '
-			. 'and storing a plain value would break the element: Elementor drops links and images it cannot read and refuses to save the page. '
-			. 'To make the change now, send each setting as a typed value in the shape get_elementor_widget returns under settings for the element';
+		// The writer's absence explains plain values only; keys the element does
+		// not have are refused as in 1.13.1.
+		$has_plain = (bool) array_filter( $problems, fn( $p ) => ! empty( $p['plain_keys'] ) );
+		if ( ! $has_plain ) {
+			$unavailable = null;
+		}
+		$message = 'Refused: ' . implode( '; ', $parts ) . '. ';
+		if ( $has_plain ) {
+			$why      = null !== $unavailable
+				? 'IATO converts plain values for these elements with Elementor\'s own code, which is not available here: ' . preg_replace( '/ Nothing was written\..*$/s', '', $unavailable->get_error_message() )
+				: 'IATO could not convert these values with Elementor\'s code for this element.';
+			$message .= 'Elementor Atomic Editor (V4) elements store each setting as a typed value, {"$$type": ..., "value": ...}. '
+				. $why . ' '
+				. 'Storing a plain value would break the element: Elementor drops links and images it cannot read and refuses to save the page. '
+				. 'To make the change now, send each setting as a typed value in the shape get_elementor_widget returns under settings for the element';
+		} else {
+			$message .= 'Send only the element\'s own settings';
+		}
 		if ( ! empty( $examples ) ) {
 			$first_id  = array_key_first( $examples );
 			$first_key = array_key_first( $examples[ $first_id ] );
@@ -1547,6 +1651,13 @@ class IATO_MCP_Elementor_Adapter {
 		$data = [ 'status' => 400, 'elements' => $problems ];
 		if ( ! empty( $examples ) ) {
 			$data['examples'] = $examples;
+		}
+		if ( $has_plain ) {
+			$extra = null !== $unavailable ? $unavailable->get_error_data() : null;
+			if ( is_array( $extra ) && isset( $extra['elementor_version'] ) ) {
+				$data['elementor_version'] = $extra['elementor_version'];
+			}
+			return new WP_Error( 'atomic_write_unavailable', $message, $data );
 		}
 		return new WP_Error( 'atomic_plain_value_unsupported', $message, $data );
 	}
@@ -1561,7 +1672,7 @@ class IATO_MCP_Elementor_Adapter {
 	 *
 	 * @return array{error:?WP_Error,changed_ids:string[]}
 	 */
-	public static function check_atomic_tree( ?array $stored, array $new ): array {
+	public static function check_atomic_tree( ?array $stored, array $new, ?WP_Error $unavailable = null ): array {
 		$stored  = $stored ?? [];
 		$changes = IATO_MCP_Elementor_Atomic::tree_changes( $stored, $new );
 		if ( empty( $changes['problems'] ) ) {
@@ -1579,8 +1690,27 @@ class IATO_MCP_Elementor_Adapter {
 			$nodes[ $id ] = $same_kind ? $stored_node : $new_node;
 			$sent[ $id ]  = is_array( $new_node['settings'] ?? null ) ? $new_node['settings'] : [];
 		}
-		return [ 'error' => self::atomic_value_refusal( $changes['problems'], $nodes, $sent ), 'changed_ids' => $changes['changed_ids'] ];
+		return [ 'error' => self::atomic_value_refusal( $changes['problems'], $nodes, $sent, $unavailable ), 'changed_ids' => $changes['changed_ids'] ];
 	}
+
+	/** Error codes the Elementor tools return as JSON text (code, message, details). */
+	public const DETAILED_ERRORS = [
+		'atomic_plain_value_unsupported',
+		'atomic_invalid_settings',
+		// 1.14.0, the atomic writer.
+		'atomic_write_unavailable',
+		'atomic_prop_not_supported',
+		'atomic_type_not_supported',
+		'atomic_duplicate_key',
+		'atomic_value_unresolvable',
+		'atomic_value_dropped',
+		'atomic_subkeys_dropped',
+		'atomic_url_rejected',
+		'atomic_library_alt_separate',
+		'elementor_cannot_edit',
+		'elementor_validation_failed',
+		'elementor_editor_unsaved_changes',
+	];
 
 	/**
 	 * Tool-level form of the atomic refusals: an isError result whose text is
@@ -1589,7 +1719,7 @@ class IATO_MCP_Elementor_Adapter {
 	 */
 	public static function tool_error( WP_Error $error ): array|WP_Error {
 		$code = $error->get_error_code();
-		if ( ! in_array( $code, [ 'atomic_plain_value_unsupported', 'atomic_invalid_settings' ], true ) ) {
+		if ( ! in_array( $code, self::DETAILED_ERRORS, true ) ) {
 			return $error;
 		}
 		$data = $error->get_error_data();
@@ -1632,7 +1762,7 @@ class IATO_MCP_Elementor_Adapter {
 		}
 		// 1.13.1: Elementor's save skipped because the page holds element types
 		// Elementor cannot load right now; the plugin stored the page itself.
-		foreach ( [ 'skipped_reason', 'unregistered_element_types', 'cache_cleared', 'verification' ] as $key ) {
+		foreach ( [ 'skipped_reason', 'unregistered_element_types', 'skipped_for_elements', 'cache_cleared', 'verification', 'css', 'css_regenerated', 'css_note', 'render_error' ] as $key ) {
 			if ( isset( $pipeline[ $key ] ) ) {
 				$out[ $key ] = $pipeline[ $key ];
 			}
@@ -1733,20 +1863,36 @@ class IATO_MCP_Elementor_Adapter {
 			return new WP_Error( 'widget_not_found', "Widget {$widget_id} not found in post {$post_id}." );
 		}
 
-		// 1.13.1: Elementor Atomic (V4) elements store every setting as a typed
-		// envelope. A plain value written over one is rejected by Elementor's
-		// save and, through the fallback write, stored anyway in a form that
-		// drops links and images and blocks every later save of the page. Such
-		// values, and keys the element does not have, are refused here (dry runs
-		// included) until IATO converts plain values itself.
-		$atomic_target = IATO_MCP_Elementor_Atomic::has_atomic_type( $found['element'] );
+		// Elementor Atomic (V4) elements store every setting as a typed
+		// envelope. 1.14.0: the atomic writer converts and validates values with
+		// Elementor's own code (IATO_MCP_Elementor_Atomic_Writer). Where it
+		// cannot (Elementor before 4.3.0, the element type not registered), the
+		// 1.13.1 guard stays: plain values and keys the element does not have
+		// are refused (dry runs included), typed values go through as before.
+		$atomic_target = IATO_MCP_Elementor_Atomic_Writer::is_target( $found['element'] );
 		if ( $atomic_target ) {
+			// A type Elementor cannot load right now: nothing can validate it.
+			$unregistered = IATO_MCP_Elementor_Atomic_Writer::unregistered( $found['element'] );
+			if ( null !== $unregistered ) {
+				return $unregistered;
+			}
+			$unavailable = IATO_MCP_Elementor_Atomic_Writer::unavailable( $found['element'] );
+			if ( null === $unavailable ) {
+				return IATO_MCP_Elementor_Atomic_Writer::update_widget(
+					$post_id,
+					$widget_id,
+					$found['path'],
+					$settings_patch,
+					[ 'dry_run' => $dry_run, 'echo_previous' => null !== $if_revision ]
+				);
+			}
 			$problems = IATO_MCP_Elementor_Atomic::patch_problems( $found['element'], $settings_patch );
 			if ( $problems['plain_keys'] || $problems['unknown_keys'] ) {
 				return self::atomic_value_refusal(
 					[ [ 'element_id' => $widget_id, 'type' => IATO_MCP_Elementor_Atomic::type_of( $found['element'] ) ] + $problems ],
 					[ $widget_id => $found['element'] ],
-					[ $widget_id => $settings_patch ]
+					[ $widget_id => $settings_patch ],
+					$unavailable
 				);
 			}
 		}
@@ -1783,7 +1929,7 @@ class IATO_MCP_Elementor_Adapter {
 				'applied_patch'       => [],
 				'content_updated'     => false,
 				'post_content_length' => strlen( (string) get_post_field( 'post_content', $post_id ) ),
-			];
+			] + self::classic_markers( $atomic_target );
 			if ( $echo_prev ) {
 				$noop = [ 'previous_revision' => $previous_revision ] + $noop;
 			}
@@ -1804,7 +1950,7 @@ class IATO_MCP_Elementor_Adapter {
 				'dry_run'          => true,
 				'current_revision' => null,
 				'applied_patch'    => $applied_patch,
-			] + self::preview_report( $elements, $stored_elements );
+			] + self::classic_markers( $atomic_target ) + self::preview_report( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
@@ -1829,7 +1975,7 @@ class IATO_MCP_Elementor_Adapter {
 			'applied_patch'       => $applied_patch,
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
-		] + self::pipeline_report( $pipeline );
+		] + self::classic_markers( $atomic_target ) + self::pipeline_report( $pipeline );
 		if ( $echo_prev ) {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}
@@ -1857,6 +2003,19 @@ class IATO_MCP_Elementor_Adapter {
 		];
 
 		return $response;
+	}
+
+	/**
+	 * 1.14.0 result markers: how the change was applied (`applied_via`), the
+	 * element's schema, and `state: live` (written to the post, not staged in
+	 * an autosave). Atomic results from the writer carry the same keys.
+	 */
+	public static function classic_markers( bool $atomic = false ): array {
+		return [
+			'applied_via' => IATO_MCP_Elementor_Atomic_Writer::APPLIED_VIA,
+			'schema'      => $atomic ? IATO_MCP_Elementor_Atomic::SCHEMA_ATOMIC : IATO_MCP_Elementor_Atomic::SCHEMA_CLASSIC,
+			'state'       => 'live',
+		];
 	}
 
 	/**

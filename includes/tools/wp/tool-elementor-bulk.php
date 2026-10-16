@@ -19,7 +19,7 @@ const IATO_MCP_FIND_POST_CAP = 500;
 IATO_MCP_Server::register_tool(
 	'update_elementor_widgets_bulk',
 	[
-		'description' => 'Apply a batch of widget patches across many posts in one call. Each update is independent — partial success is the expected mode (decode/find/revision errors per update don\'t block siblings). Optional outer idempotency_key covers the entire batch (single 60s window). Requires edit_posts. Atomic (Elementor V4) elements accept only $$type envelope values for now.',
+		'description' => 'Apply a batch of widget patches across many posts in one call. Each update is independent — partial success is the expected mode (decode/find/revision errors per update don\'t block siblings). Optional outer idempotency_key covers the entire batch (single 60s window). Requires edit_posts. Rows that target Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later) take plain values, converted and validated with Elementor\'s own code: the atomic rows of one page are applied together in one save after that page\'s classic rows (at most 50 per page per call), each row\'s if_revision is checked against the page revision at the start of that group (after the page\'s classic rows), a row that fails validation fails alone while a refusal of the whole page (Elementor refusing the save, an editor with unsaved changes) fails every atomic row of that page, and each row carries its element\'s change_receipt. Elsewhere atomic elements accept only $$type envelope values.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -68,6 +68,10 @@ IATO_MCP_Server::register_tool(
 		$results   = [];
 		$succeeded = 0;
 		$failed    = 0;
+		// 1.14.0: rows that target atomic elements the writer can edit, per page,
+		// applied together after the loop (after that page's classic rows).
+		$atomic_groups = [];
+		$trees         = [];
 
 		foreach ( $updates as $i => $update ) {
 			if ( ! is_array( $update ) ) {
@@ -114,6 +118,24 @@ IATO_MCP_Server::register_tool(
 				continue;
 			}
 
+			if ( ! array_key_exists( $post_id, $trees ) ) {
+				$trees[ $post_id ] = IATO_MCP_Elementor_Adapter::stored_elements( $post_id );
+			}
+			$target = is_array( $trees[ $post_id ] ) && is_array( $update['settings_patch'] ?? null )
+				? IATO_MCP_Elementor_Adapter::find_widget( $trees[ $post_id ], $widget_id )
+				: null;
+			if ( null !== $target && IATO_MCP_Elementor_Atomic_Writer::is_target( $target['element'] )
+				&& null === IATO_MCP_Elementor_Atomic_Writer::unavailable( $target['element'] ) ) {
+				$atomic_groups[ $post_id ][] = [
+					'index'       => $i,
+					'widget_id'   => $widget_id,
+					'path'        => $target['path'],
+					'patch'       => $update['settings_patch'],
+					'if_revision' => $update['if_revision'] ?? null,
+				];
+				continue;
+			}
+
 			$single_args = [
 				'id'             => $post_id,
 				'widget_id'      => $widget_id,
@@ -150,6 +172,50 @@ IATO_MCP_Server::register_tool(
 			$result['success'] = true;
 			$results[]         = $result;
 			$succeeded++;
+		}
+
+		foreach ( $atomic_groups as $post_id => $rows ) {
+			$batch = array_slice( $rows, 0, IATO_MCP_Elementor_Atomic_Writer::MAX_ROWS_PER_PAGE );
+			foreach ( array_slice( $rows, IATO_MCP_Elementor_Atomic_Writer::MAX_ROWS_PER_PAGE ) as $extra ) {
+				$results[] = [
+					'index'      => $extra['index'],
+					'post_id'    => $post_id,
+					'widget_id'  => $extra['widget_id'],
+					'success'    => false,
+					'error'      => 'batch_size_exceeded',
+					'error_data' => [ 'max_rows_per_page' => IATO_MCP_Elementor_Atomic_Writer::MAX_ROWS_PER_PAGE ],
+					'message'    => 'At most ' . IATO_MCP_Elementor_Atomic_Writer::MAX_ROWS_PER_PAGE . " rows for atomic elements of post {$post_id} are applied per call. Send this row again in another call.",
+				];
+				$failed++;
+			}
+			$applied = IATO_MCP_Elementor_Atomic_Writer::apply( (int) $post_id, $batch, [ 'dry_run' => $dry_run ] );
+			foreach ( $batch as $j => $row ) {
+				$outcome = is_wp_error( $applied ) ? $applied : ( $applied['rows'][ $j ] ?? null );
+				if ( ! is_array( $outcome ) ) {
+					$error     = $outcome instanceof WP_Error ? $outcome : new WP_Error( 'atomic_write_failed', 'The change could not be applied.' );
+					$err_data  = $error->get_error_data();
+					$results[] = [
+						'index'      => $row['index'],
+						'post_id'    => $post_id,
+						'widget_id'  => $row['widget_id'],
+						'success'    => false,
+						'error'      => $error->get_error_code(),
+						'error_data' => is_array( $err_data ) ? $err_data : null,
+						'message'    => $error->get_error_message(),
+					];
+					$failed++;
+					continue;
+				}
+				$result = [ 'post_id' => (int) $post_id, 'widget_id' => $row['widget_id'] ]
+					+ IATO_MCP_Elementor_Atomic_Writer::row_response( $outcome, $applied['page'], $row['path'], $dry_run );
+				$result['index']   = $row['index'];
+				$result['success'] = true;
+				$results[]         = $result;
+				$succeeded++;
+			}
+		}
+		if ( ! empty( $atomic_groups ) ) {
+			usort( $results, fn( $a, $b ) => (int) $a['index'] <=> (int) $b['index'] );
 		}
 
 		$response = [
