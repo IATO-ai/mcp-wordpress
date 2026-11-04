@@ -16,7 +16,7 @@ VOLATILE_KEYS = {"revision", "previous_revision", "current_revision", "change_id
                  "applied_at", "date", "date_gmt", "modified", "modified_gmt", "guid", "link",
                  "duration_ms", "req_id", "request_id", "generated_at", "idempotency_replay",
                  "post_content_length", "meta_length", "edit_lock", "_edit_lock", "_edit_last",
-                 "timing", "phases", "elapsed_ms", "received_at"}
+                 "timing", "phases", "elapsed_ms", "received_at", "cache"}
 
 def call(base, headers, name, args):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",

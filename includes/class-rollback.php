@@ -90,7 +90,9 @@ class IATO_MCP_Rollback {
 			return self::error_response( 'before_value mismatch — rollback rejected', $change_id, 400 );
 		}
 
+		IATO_MCP_Cache::begin();
 		$result = self::execute( $receipt, [ 'force' => $force, 'dry_run' => $dry_run ] );
+		$cache  = IATO_MCP_Cache::flush();
 		if ( is_wp_error( $result ) ) {
 			$data = $result->get_error_data();
 			$data = is_array( $data ) ? $data : [];
@@ -102,6 +104,10 @@ class IATO_MCP_Rollback {
 				return self::error_response( $result->get_error_message(), $change_id, 400 );
 			}
 			return $result;
+		}
+
+		if ( null !== $cache ) {
+			$result['cache'] = $cache;
 		}
 
 		return new WP_REST_Response( $result, 200 );
@@ -272,6 +278,10 @@ class IATO_MCP_Rollback {
 			);
 		}
 
+		// 1.15.0: before the restore, while a post it deletes can still be looked
+		// at, and whatever the restore returns: a failed one may have written.
+		IATO_MCP_Cache::note_rollback( $receipt );
+
 		$result = self::dispatch_rollback( $receipt );
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -327,6 +337,12 @@ class IATO_MCP_Rollback {
 				return $why;
 			}
 		}
+		if ( 'site_setting' === $type ) {
+			$why = self::site_setting_unavailable( $field, $before );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
 		if ( 'taxonomy' === $type && 'update_term' === $field ) {
 			$snapshot = IATO_MCP_Rollback_Conflict::json_array( $before );
 			if ( (int) ( $snapshot['term_id'] ?? 0 ) <= 0 ) {
@@ -365,6 +381,8 @@ class IATO_MCP_Rollback {
 				return self::rollback_taxonomy( $field, $post_id, $before_value, $receipt['after_value'] ?? null );
 			case 'redirect':
 				return self::rollback_redirect( $field, $before_value );
+			case 'site_setting':
+				return self::rollback_site_setting( $field, $before_value );
 			case 'post_meta':
 				return self::rollback_post_meta( $field, $post_id, $before_value );
 			case 'attachment':
@@ -376,6 +394,48 @@ class IATO_MCP_Rollback {
 			default:
 				return new WP_Error( 'unsupported_target_type', "Rollback not supported for target_type: {$target_type}" );
 		}
+	}
+
+	/**
+	 * Why a `site_setting` receipt cannot be restored, or null. The field names an
+	 * option to write, so it must be one update_site_settings writes; a page the
+	 * site no longer has published cannot go back to being the front page.
+	 */
+	private static function site_setting_unavailable( string $field, mixed $before ): ?WP_Error {
+		if ( ! in_array( $field, IATO_MCP_Rollback_Conflict::SITE_OPTIONS, true ) ) {
+			return new WP_Error( 'rollback_unavailable', "This receipt names an option update_site_settings does not write: {$field}.", [ 'status' => 409 ] );
+		}
+		if ( in_array( $field, [ 'page_on_front', 'page_for_posts' ], true ) && (int) $before > 0 ) {
+			if ( ! iato_mcp_is_published_page( (int) $before ) ) {
+				return new WP_Error(
+					'rollback_unavailable',
+					sprintf( 'Page %d is no longer a published page, so it cannot be restored as %s. Publish it first, or choose another page with update_site_settings.', (int) $before, $field ),
+					[ 'status' => 409 ]
+				);
+			}
+			$other = 'page_on_front' === $field ? 'page_for_posts' : 'page_on_front';
+			if ( (int) get_option( $other, 0 ) === (int) $before ) {
+				return new WP_Error(
+					'rollback_unavailable',
+					sprintf( 'Page %1$d is now %2$s, and one page cannot be both the front page and the posts page. Change %2$s first, with update_site_settings or by rolling that change back.', (int) $before, $other ),
+					[ 'status' => 409 ]
+				);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Rollback update_site_settings. A null before value means the option was
+	 * empty ('' is recorded as null), so it goes back to empty, never deleted:
+	 * '0' is a real value of the page options.
+	 */
+	private static function rollback_site_setting( string $field, mixed $before_value ): bool|WP_Error {
+		update_option( $field, null === $before_value ? '' : (string) $before_value ); // update_option() does not unslash
+		if ( 'page_on_front' === $field ) {
+			flush_rewrite_rules( false ); // as update_site_settings does
+		}
+		return true;
 	}
 
 	/**
@@ -506,15 +566,8 @@ class IATO_MCP_Rollback {
 
 		clean_post_cache( $post_id );
 		if ( 0 === stripos( $field, '_elementor_' ) ) {
-			delete_post_meta( $post_id, '_elementor_css' );
-			wp_cache_delete( $post_id, 'post_meta' );
 			wp_cache_delete( $post_id, 'posts' );
-			if ( class_exists( '\Elementor\Plugin' ) ) {
-				$plugin = \Elementor\Plugin::$instance;
-				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
-					$plugin->files_manager->clear_cache();
-				}
-			}
+			IATO_MCP_Elementor_Adapter::clear_post_css( $post_id );
 		}
 
 		return true;

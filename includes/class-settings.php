@@ -27,6 +27,7 @@ class IATO_MCP_Settings {
 	private const TOOL_NAMES = [
 		'get_site_info',
 		'get_site_settings',
+		'update_site_settings',
 		'get_posts',
 		'get_post',
 		'create_post',
@@ -156,6 +157,10 @@ class IATO_MCP_Settings {
 		'1.11.0' => [
 			'list_elementor_templates',
 		],
+		// v1.15.0 — site title, tagline and home page.
+		'1.15.0' => [
+			'update_site_settings',
+		],
 	];
 
 	/** Tools that require the IATO API key before they'll be registered. */
@@ -178,6 +183,7 @@ class IATO_MCP_Settings {
 	private const TOOL_DESCRIPTIONS = [
 		'get_site_info'            => 'Basic site information and health',
 		'get_site_settings'        => 'WordPress settings (admin only)',
+		'update_site_settings'     => 'Set site title, tagline and home page (admin only)',
 		'get_posts'                => 'List published posts with filters',
 		'get_post'                 => 'Single post details and meta',
 		'create_post'              => 'Create new posts and pages',
@@ -238,7 +244,7 @@ class IATO_MCP_Settings {
 	/** Tool groupings for UI categories. */
 	private const TOOL_CATEGORIES = [
 		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts', 'get_post_meta', 'update_post_meta', 'set_page_settings', 'set_featured_image' ],
-		'Site'          => [ 'get_site_info', 'get_site_settings' ],
+		'Site'          => [ 'get_site_info', 'get_site_settings', 'update_site_settings' ],
 		'SEO'           => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
 		'Media'         => [ 'get_media', 'update_alt_text', 'create_media' ],
 		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details' ],
@@ -328,6 +334,16 @@ class IATO_MCP_Settings {
 		// the first time the option is saved.
 		update_option( 'iato_mcp_abilities_enabled', self::sanitize_bool_flag( $abilities_enabled ) );
 
+		// Caching and HTML widgets (1.15.0). Hidden value=0 siblings, as above.
+		$cache_purge_enabled = isset( $_POST['iato_mcp_cache_purge_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_cache_purge_enabled'] ) )
+			: true;
+		update_option( 'iato_mcp_cache_purge_enabled', self::sanitize_bool_flag( $cache_purge_enabled ) );
+		$inline_markup_enabled = isset( $_POST['iato_mcp_inline_markup_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_inline_markup_enabled'] ) )
+			: false;
+		update_option( 'iato_mcp_inline_markup_enabled', self::sanitize_bool_flag( $inline_markup_enabled ) );
+
 		// Media uploads — URL source toggle. The render emits a hidden value=0
 		// sibling so the key is always present in $_POST regardless of checkbox
 		// state (unchecked => "0", checked => "1" wins because PHP keeps the
@@ -364,6 +380,8 @@ class IATO_MCP_Settings {
 				'crawl_id'            => $crawl_id,
 				'tools_enabled'       => count( $tools ),
 				'abilities_enabled'   => $abilities_enabled,
+				'cache_purge_enabled' => $cache_purge_enabled,
+				'inline_markup_enabled' => $inline_markup_enabled,
 				'media_url_enabled'   => $media_url_enabled,
 				'media_hosts_count'   => count( $host_list ),
 				'media_max_bytes'     => $max_bytes,
@@ -493,6 +511,20 @@ class IATO_MCP_Settings {
 			'type'              => 'string',
 			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
 			'default'           => '1',
+		] );
+
+		// --- Caching and HTML widgets (v1.15.0) ---
+		// Stored as '1' / '0', see below. Readers pass their default to get_option():
+		// the default registered here does not apply on MCP (REST) requests.
+		register_setting( self::OPTION_GROUP, 'iato_mcp_cache_purge_enabled', [
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '1',
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_inline_markup_enabled', [
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '0',
 		] );
 
 		// --- Media upload settings (v1.6.0) ---
@@ -681,6 +713,10 @@ class IATO_MCP_Settings {
 
 		$abilities_enabled   = IATO_MCP_Abilities::is_enabled();
 		$abilities_api_exists = function_exists( 'wp_register_ability' );
+
+		$cache_purge_enabled   = IATO_MCP_Cache::is_enabled();
+		$inline_markup_enabled = IATO_MCP_Inline_Markup::is_enabled();
+		$cache_detected        = IATO_MCP_Cache::detected();
 
 		$media_url_enabled = rest_sanitize_boolean( get_option( 'iato_mcp_media_url_source_enabled', '0' ) );
 		$media_host_list   = (array) get_option( 'iato_mcp_media_url_host_allowlist', [] );
@@ -1068,6 +1104,53 @@ class IATO_MCP_Settings {
 						<div class="iato-field-value">
 							<input type="number" name="iato_mcp_media_upload_rate_limit" id="iato_mcp_media_upload_rate_limit" value="<?php echo esc_attr( (string) $media_rate_limit ); ?>" min="0" step="1" class="iato-input" style="max-width:240px;" />
 							<p class="iato-hint"><?php esc_html_e( 'Uploads per minute per authenticated user. Set to 0 to disable rate limiting. Default 20.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+				</div>
+
+				<div class="iato-card">
+					<div class="iato-card-header">
+						<div class="iato-card-title">
+							<span class="dashicons dashicons-performance"></span>
+							<h2><?php esc_html_e( 'Caching and HTML widgets', 'iato-mcp' ); ?></h2>
+						</div>
+					</div>
+					<p class="iato-card-desc"><?php esc_html_e( 'What happens to page caches after a change made through MCP, and what an HTML widget may keep.', 'iato-mcp' ); ?></p>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_cache_purge_enabled"><?php esc_html_e( 'Page caches', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_cache_purge_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_cache_purge_enabled" id="iato_mcp_cache_purge_enabled" value="1" <?php checked( $cache_purge_enabled ); ?> />
+								<span><?php esc_html_e( 'Purge page caches after changes', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint"><?php esc_html_e( 'Works with LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache and SiteGround Optimizer. A CDN or host cache IATO cannot reach is mentioned in the tool response instead.', 'iato-mcp' ); ?></p>
+							<p class="iato-hint">
+								<?php
+								if ( [] === $cache_detected ) {
+									esc_html_e( 'No cache plugin found on this site.', 'iato-mcp' );
+								} else {
+									printf(
+										/* translators: %s: comma-separated cache plugin slugs */
+										esc_html__( 'Found on this site: %s', 'iato-mcp' ),
+										esc_html( implode( ', ', $cache_detected ) )
+									);
+								}
+								?>
+							</p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_inline_markup_enabled"><?php esc_html_e( 'HTML widgets', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_inline_markup_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_inline_markup_enabled" id="iato_mcp_inline_markup_enabled" value="1" <?php checked( $inline_markup_enabled ); ?> />
+								<span><?php esc_html_e( 'Allow inline SVG and style blocks in HTML widgets for administrators', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint"><?php esc_html_e( 'Applies to the Elementor HTML widget only, and only when the connection\'s WordPress user holds both unfiltered_html and manage_options. Scripts, event attributes, javascript: URLs, foreignObject, @import and off-site url() are still removed. Needs WordPress 6.5 or later.', 'iato-mcp' ); ?></p>
 						</div>
 					</div>
 				</div>

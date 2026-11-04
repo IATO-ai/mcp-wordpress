@@ -24,6 +24,9 @@ $slug      = match ( $variant ) {
 	'author'   => 'iato-sanitize-fixture-author',
 	'rollback'  => 'iato-rollback-fixture',
 	'retention' => 'iato-retention-fixture',
+	'cache-a'   => 'iato-cache-fixture-a',
+	'cache-b'   => 'iato-cache-fixture-b',
+	'inline'    => 'iato-inline-fixture',
 	default    => 'iato-sanitize-fixture',
 };
 $post_type = 'author' === $variant ? 'post' : 'page';

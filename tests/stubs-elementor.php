@@ -14,6 +14,8 @@ namespace Elementor {
 		/** @var 'ok'|'refuse'|'throw' */
 		public static string $mode = 'ok';
 		public static string $throw_message = 'Settings validation failed. simulated Elementor failure';
+		/** @var callable|null what Elementor's kses_post_deep does to each string, for a user without unfiltered_html */
+		public static $kses = null;
 		public static array $received = [];
 		/** @var array<int,array> map_meta_cap for unfiltered_html as seen inside save() */
 		public static array $cap_during_save = [];
@@ -27,13 +29,25 @@ namespace Elementor {
 				return false; // what Elementor does for a user who may not edit the post (e.g. user 0)
 			}
 			// On a real save Elementor re-encodes the data and renders post_content.
-			\IATO_Test_WP::$meta[ \ElementorWritePipelineHelper::POST ]['_elementor_data'] = json_encode( \ElementorWritePipelineHelper::reencode( $data['elements'] ) );
+			$elements = \ElementorWritePipelineHelper::reencode( $data['elements'] );
+			if ( null !== self::$kses ) {
+				array_walk_recursive( $elements, function ( &$v ) { $v = is_string( $v ) ? ( self::$kses )( $v ) : $v; } );
+			}
+			\IATO_Test_WP::$meta[ \ElementorWritePipelineHelper::POST ]['_elementor_data'] = json_encode( $elements );
 			\IATO_Test_WP::$posts[ \ElementorWritePipelineHelper::POST ]['post_content'] = '<h2>rendered by elementor</h2>';
 			return true;
 		}
 	}
 	final class FakeDocuments { public static bool $absent = false; public function get( int $id ) { return self::$absent ? null : new FakeDocument(); } }
-	final class FakeFilesManager { public static int $cleared = 0; public function clear_cache(): void { self::$cleared++; } }
+	final class FakeFilesManager {
+		public static int $cleared = 0;
+		public function clear_cache(): void {
+			self::$cleared++;
+			if ( class_exists( 'IATO_Test_Cache_State' ) ) {
+				\IATO_Test_Cache_State::$calls[] = 'elementor_clear_cache';
+			}
+		}
+	}
 	final class FakeFrontend {
 		public static int $renders = 0;
 		/** 1.14.0: an addon widget throwing while the page renders. */
@@ -55,6 +69,35 @@ namespace Elementor {
 		public static function instance(): Plugin { return self::$instance ??= new Plugin(); }
 	}
 	Plugin::$instance = Plugin::instance();
+}
+
+// Elementor's per-post CSS file, the calls IATO_MCP_Cache makes.
+namespace Elementor\Core\Files\CSS {
+	final class Post {
+		/** @var 'ok'|'throw_delete'|'throw_update'|'keep_meta' */
+		public static string $mode = 'ok';
+		public static string $status = 'empty';
+		/** @var int[] posts whose file was rebuilt */
+		public static array $updated = [];
+		public function __construct( private int $id ) {}
+		public static function create( int $id ): self { return new self( $id ); }
+		public function delete(): void {
+			if ( 'throw_delete' === self::$mode ) {
+				throw new \RuntimeException( 'cannot delete CSS' );
+			}
+		}
+		public function update(): void {
+			if ( 'throw_update' === self::$mode ) {
+				throw new \RuntimeException( 'addon control failed' );
+			}
+			self::$updated[] = $this->id;
+			if ( class_exists( 'IATO_Test_Cache_State' ) ) {
+				\IATO_Test_Cache_State::$calls[] = 'post_css_update:' . $this->id;
+			}
+		}
+		public function get_meta( ?string $property = null ): mixed { return self::$status; }
+		public function get_path(): string { return __FILE__; }
+	}
 }
 
 // ── WordPress stubs the pipeline calls ────────────────────────────────────

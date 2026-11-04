@@ -308,6 +308,7 @@ IATO_MCP_Server::register_tool(
 				'current_revision' => null,
 				'applied_patch'    => $applied,
 			] + $markers + IATO_MCP_Elementor_Adapter::preview_report( $elements, $stored_elements );
+			IATO_MCP_Sanitize_Report::add_to( $preview, $atomic_check['sanitized_report'] ?? [] );
 			if ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ) {
 				$preview['elementor_save'] = 'skipped';
 				$preview['skipped_reason'] = $atomic_check['pipeline_opts']['skip_save'];
@@ -336,6 +337,7 @@ IATO_MCP_Server::register_tool(
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
 		] + $markers + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
+		IATO_MCP_Sanitize_Report::add_to( $response, $atomic_check['sanitized_report'] ?? [] );
 		if ( $echo_prev ) {
 			$response = [ 'previous_revision' => $pipeline['previous_revision'] ] + $response;
 		}

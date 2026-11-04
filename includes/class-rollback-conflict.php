@@ -116,10 +116,18 @@ class IATO_MCP_Rollback_Conflict {
 			case 'redirect':
 				return self::redirect( $after );
 
+			case 'site_setting':
+				return in_array( $field, self::SITE_OPTIONS, true )
+					? self::compare( get_option( $field ), $after, "site setting {$field}" )
+					: self::unverifiable( "unknown site setting {$field}" );
+
 			default:
 				return self::unverifiable( "no conflict check for target_type {$type}" );
 		}
 	}
+
+	/** The options update_site_settings writes; a `site_setting` receipt's field names one of them. */
+	public const SITE_OPTIONS = [ 'blogname', 'blogdescription', 'show_on_front', 'page_on_front', 'page_for_posts' ];
 
 	/** Receipt field → WP_Post property for target_type post. */
 	private const POST_FIELDS = [

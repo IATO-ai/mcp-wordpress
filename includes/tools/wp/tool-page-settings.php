@@ -75,6 +75,7 @@ IATO_MCP_Server::register_tool(
 		$planned = [];
 		$touched_elementor = false;
 		$sanitized_paths   = [];
+		$removed           = [];
 
 		foreach ( $writes as $write ) {
 			$key = (string) $write['key'];
@@ -101,12 +102,17 @@ IATO_MCP_Server::register_tool(
 					$after = $s['value'];
 					if ( ! empty( $s['changed'] ) ) {
 						$sanitized_paths = array_merge( $sanitized_paths, $s['changed'] );
+						$removed         = array_merge( $removed, $s['report'] );
 					}
 				}
 			} else {
 				$before = get_post_meta( $post_id, $key, true );
 				$before = ( '' === $before ) ? null : $before;
 				$after  = is_string( $raw_value ) ? sanitize_text_field( $raw_value ) : $raw_value;
+				$entry  = IATO_MCP_Sanitize_Report::for_value( $key, 'text', $raw_value, $after );
+				if ( null !== $entry ) {
+					$removed[] = $entry;
+				}
 				// Array values: markup in the strings this write changes goes
 				// through wp_kses_post (1.13.0).
 				if ( ( is_array( $after ) || is_object( $after ) ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
@@ -114,6 +120,7 @@ IATO_MCP_Server::register_tool(
 					$after = $s['value'];
 					if ( ! empty( $s['changed'] ) ) {
 						$sanitized_paths = array_merge( $sanitized_paths, $s['changed'] );
+						$removed         = array_merge( $removed, $s['report'] );
 					}
 				}
 			}
@@ -126,6 +133,7 @@ IATO_MCP_Server::register_tool(
 		}
 
 		$sanitized_report = empty( $sanitized_paths ) ? [] : [ 'sanitized' => true, 'sanitized_paths' => $sanitized_paths ];
+		IATO_MCP_Sanitize_Report::add_to( $sanitized_report, $removed );
 
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
@@ -158,15 +166,8 @@ IATO_MCP_Server::register_tool(
 
 		clean_post_cache( $post_id );
 		if ( $touched_elementor ) {
-			delete_post_meta( $post_id, '_elementor_css' );
-			wp_cache_delete( $post_id, 'post_meta' );
 			wp_cache_delete( $post_id, 'posts' );
-			if ( class_exists( '\Elementor\Plugin' ) ) {
-				$plugin = \Elementor\Plugin::$instance;
-				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
-					$plugin->files_manager->clear_cache();
-				}
-			}
+			IATO_MCP_Elementor_Adapter::clear_post_css( $post_id );
 		}
 
 		return IATO_MCP_Server::ok( [

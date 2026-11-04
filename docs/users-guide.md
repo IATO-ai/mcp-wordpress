@@ -117,7 +117,9 @@ Navigate to **Settings → IATO MCP** in your WordPress admin.
 
 ### What gets filtered
 
-Content written through MCP is filtered the way WordPress filters a non-administrator's: scripts, event handlers and embeds are removed from post content and from Elementor widgets, whatever the role of the user behind the credential. Elementor edits report `sanitized: true` and the setting paths that were changed, so the AI client can tell you what was removed; dry runs report the same. Only the values a request changes are filtered; content a person authored in other widgets on the same page stays as it is. If you need raw HTML through MCP, a developer can enable it for Application Password users with the `iato_mcp_allow_unfiltered_html` filter.
+Content written through MCP is filtered the way WordPress filters a non-administrator's: scripts, event handlers and embeds are removed from post content and from Elementor widgets, whatever the role of the user behind the credential. Elementor edits report `sanitized: true`, the setting paths that were changed, and a `sanitized_report` naming the tags and attributes removed from each value, so the AI client can tell you what was removed; dry runs report the same. Only the values a request changes are filtered; content a person authored in other widgets on the same page stays as it is. If you need raw HTML through MCP, a developer can enable it for Application Password users with the `iato_mcp_allow_unfiltered_html` filter.
+
+`<style>` and `<svg>` are removed like any other disallowed tag, and a removed style block's CSS stays on the page as visible text, which the report warns about. To keep them in Elementor HTML widgets, turn on **Allow inline SVG and style blocks in HTML widgets for administrators** (see [Caching and HTML widgets](#caching-and-html-widgets)).
 
 The generic `update_post_meta` tool cannot write Elementor's own data (`_elementor_data`, caches, CSS); the Elementor tools are the way to edit pages, and the error says which one to use.
 
@@ -132,6 +134,11 @@ Every AI client that connected through OAuth (for example the Claude connector o
 
 The API key is validated against the IATO API when you save settings. A green "Connected" badge confirms a valid key.
 
+### Caching and HTML widgets
+
+- **Purge page caches after changes** (on by default). After each change made through MCP, IATO purges the cache plugins it finds: LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache and SiteGround Optimizer. See [Page Caches](#page-caches).
+- **Allow inline SVG and style blocks in HTML widgets for administrators** (off by default, WordPress 6.5 or later). The `html` setting of an Elementor HTML widget keeps `<style>` and these SVG elements: `svg`, `g`, `path`, `rect`, `circle`, `line`, `polyline`, `polygon`, `title`. It applies only when the connection's WordPress user holds both `unfiltered_html` and `manage_options`, on any kind of connection. It does not grant `unfiltered_html`, and every other value stays filtered. Still removed: `<script>`, event attributes, `javascript:` URLs, `foreignObject`, `use`, `image` and animation elements, and from style blocks `@import` and anything that loads from another site. A style block that can't be read safely, for example one with an unterminated `url()` or a character reference such as `&#105;`, is dropped whole, and `removed_css` says why.
+
 ### Tool Toggles
 
 Every tool can be individually enabled or disabled. Tools are organized by category:
@@ -139,7 +146,7 @@ Every tool can be individually enabled or disabled. Tools are organized by categ
 | Category | Tools |
 |----------|-------|
 | Content | `get_posts`, `get_post`, `create_post`, `update_post`, `search_posts` |
-| Site | `get_site_info`, `get_site_settings` |
+| Site | `get_site_info`, `get_site_settings`, `update_site_settings` |
 | SEO | `get_seo_data`, `update_seo_data` |
 | Media | `get_media`, `update_alt_text` |
 | Navigation | `get_menus`, `get_menu_items`, `update_menu_item` |
@@ -152,7 +159,7 @@ Disabled tools will not appear in the AI client's tool list.
 
 ## WordPress Tools
 
-These 17 tools work without an IATO account. They use native WordPress APIs.
+These tools work without an IATO account. They use native WordPress APIs.
 
 ### Content Tools
 
@@ -217,11 +224,27 @@ Full-text search across posts and pages.
 
 #### `get_site_info`
 
-Returns site name, URL, WordPress version, active theme, and plugin count. No parameters required.
+Returns site name, URL, WordPress version, active theme, plugin count, and `cache`: the page cache plugins found (`detected`) and notes about caches IATO cannot purge. No parameters required.
 
 #### `get_site_settings`
 
-Returns site title, tagline, admin email, timezone, and permalink structure.
+Returns site title, tagline, admin email, timezone, permalink structure, and what the home page shows: `show_on_front`, `page_on_front`, `page_for_posts`.
+
+**Capability:** `manage_options` (admin only)
+
+#### `update_site_settings`
+
+Sets the site title, the tagline and what the home page shows. Send only what should change; any other key is refused.
+
+| Parameter | Option | Notes |
+|---|---|---|
+| `title` | `blogname` | Tags are removed |
+| `tagline` | `blogdescription` | Tags are removed |
+| `homepage_displays` | `show_on_front` | `posts` or `page` |
+| `front_page_id` | `page_on_front` | A published page. Required when `homepage_displays` is `page` |
+| `posts_page_id` | `page_for_posts` | A published page other than the front page, or `0` to clear |
+
+Accepts `dry_run`. Returns the before and after value of each option in `changes`, a change receipt per option changed (one `change_receipt`, or `change_receipts` for several), and a `cache` object: the whole site is purged.
 
 **Capability:** `manage_options` (admin only)
 
@@ -460,6 +483,38 @@ If no SEO plugin is installed, IATO MCP reads the native WordPress post title. S
 
 ---
 
+## Page Caches
+
+After a change, IATO purges the cache plugins it finds and adds a `cache` object to the tool's response:
+
+```json
+"cache": {
+  "detected": ["litespeed"],
+  "purged": true,
+  "scope": "post",
+  "notes": ["Hostinger server cache or a CDN may still hold the old page; purge it in hPanel or the CDN dashboard if changes don't appear."]
+}
+```
+
+- **`detected`**: the cache plugins found: `litespeed`, `wp-rocket`, `w3-total-cache`, `wp-super-cache`, `wp-fastest-cache`, `sg-optimizer`.
+- **`purged`**: `true` if IATO asked every detected plugin to purge and none failed, `false` if one failed or purging is off, `null` if none was found or nothing was written. It means the purge was requested: LiteSpeed acts on a response header and W3 Total Cache at the end of the request.
+- **`scope`**: `post` or `all`, `null` when the call changed nothing. `post_ids` lists the pages when a bulk write touched several.
+- **`notes`**: anything worth passing on, such as a CDN IATO cannot reach. Notes never change `purged`.
+
+| Change | What is purged |
+|---|---|
+| One post or page, its SEO data, meta, Elementor content or featured image | That page, plus the home URL for the front page or posts page |
+| The Elementor kit, Theme Builder templates, global widgets, saved templates | The whole site, and all Elementor CSS |
+| Menus, terms, redirects, `update_site_settings` | The whole site |
+| A slug change, or unpublishing a post | The whole site: the old URL can't be derived from the post any more |
+| An image's alt text | The page the image is attached to. Other pages using the image stay cached, and the note says so |
+
+A call that changes nothing, or a dry run, purges nothing. Dry runs and reads have no `cache` object.
+
+Editing a page clears and rebuilds only that page's Elementor CSS, whichever setting is on. A developer can skip a purge with the `iato_mcp_cache_purge` filter (`$purge, $scope, $post_id`) or add their own with the `iato_mcp_after_cache_purge` action (`$scope, $post_id, $results`).
+
+---
+
 ## Dry-Run Mode
 
 Write operations that modify external data support `dry_run: true`. When enabled, the tool returns a preview of what *would* change without actually making any modifications.
@@ -482,6 +537,7 @@ Every write tool returns a `change_receipt` with a `change_id`. Pass it to the `
 - **Who can undo a change.** The user who made it, or an administrator. An Editor cannot undo an Author's change, even on a post the Editor may edit. Changes recorded before version 1.13.0 keep the earlier rule: anyone allowed to edit the object.
 - **Changes that were changed again.** If the value is no longer what the change left behind, because someone edited it afterwards in WordPress or another change came later, `rollback` refuses with `rollback_conflict` and shows the current and expected values. Undo the later change first, or pass `force: true` to overwrite it.
 - **Checking first.** `dry_run: true` reports what would be restored and whether the value has changed since, without writing anything.
+- **Site settings.** Each option `update_site_settings` changed has its own receipt. A page that is no longer published cannot be restored as the front page or posts page.
 - **Elementor pages.** Elementor edits made with 1.13.0 or later can be undone exactly for 90 days, including content a person added elsewhere on the page. Each receipt keeps a copy of the page as it was, and a daily cleanup removes copies older than 90 days to keep the database small; the receipt itself stays. Older edits, and edits made with versions before 1.13.0, are restored in Elementor under History, then Revisions. Settings > IATO MCP Diagnostics shows when the cleanup last ran. A developer can change the period with the `iato_mcp_receipt_retention_days` filter (0 keeps every copy).
 
 ---
@@ -561,6 +617,10 @@ You'll see this error when using bridge or sync tools without an IATO API key. G
 
 - The API key authenticates as the WordPress admin who activated the plugin.
 - Ensure that admin account has the `edit_posts` capability (standard for administrators).
+
+### Visitors still see the old page
+
+Check `cache` in the tool's response. If `purged` is not `true`, or `notes` names a cache, purge that cache by hand. A CDN or host cache is out of IATO's reach. If `detected` is empty and the page is still stale, a cache IATO does not know is in front of the site: use the `iato_mcp_after_cache_purge` action to purge it automatically.
 
 ### Connection works in config but not via Custom Connector
 
