@@ -159,7 +159,7 @@ The alt text of an image from the Media Library belongs to the attachment, so IA
 
 = Why do visitors still see the old page after a change? =
 
-IATO purges the cache plugins it finds after each change and says what happened in the tool's `cache` object. A cache in front of WordPress, such as Cloudflare or a host's CDN, is out of its reach: the response names it in `cache.notes` so the AI client can tell you to purge it from that service's dashboard. On Hostinger, LiteSpeed's full purge also clears hCDN when Hostinger Tools 3.0.79 or later is active, but a single-page purge does not.
+IATO purges the cache plugins it finds after each change and says what happened in the tool's `cache` object. A cache in front of WordPress, such as Cloudflare or a host's CDN, is out of its reach: the response names it in `cache.notes` so the AI client can tell you to purge it from that service's dashboard. On Hostinger, LiteSpeed's full purge also clears hCDN when Hostinger Tools 3.0.79 or later is active. A single-page purge cleared it too on the Hostinger site we tested, but IATO does not control that, so if a page still looks stale, purge hCDN in hPanel.
 
 = Why was a style block or an SVG removed from my HTML widget? =
 
