@@ -162,6 +162,25 @@ ok('editor create_post page publish (publish_pages)', ecp)
 ok('admin update_post on contributor draft', call('admin', 'update_post', {'id': CD, 'excerpt': 'admin was here'}))
 ok('site key update_post on admin page', call('key', 'update_post', {'id': P, 'excerpt': 'secpatch key'}))
 ok('site key get_post_meta on admin page', call('key', 'get_post_meta', {'id': P}))
+
+# 1.15.1: Elementor's element cache.
+for who in ('author', 'admin', 'key'):
+    post = AD if who == 'author' else P
+    one = call(who, 'get_post_meta', {'id': post, 'key': '_elementor_element_cache', 'include_protected': True})
+    record(f'{who} cannot read the element cache meta', bool(one.get('isError')) and 'denylist' in one.get('text', ''), one)
+    refused = call(who, 'update_post', {'id': post, 'content': 'x [elementor-element k="a" data="b"]'})
+    record(f'{who} cannot store the cache shortcode', bool(refused.get('isError')) and 'reserved_shortcode' in refused.get('text', ''), refused)
+    escaped = call(who, 'update_post', {'id': post, 'content': '%5Belementor-element k=a'})
+    record(f'{who} cannot store it URL-encoded', bool(escaped.get('isError')) and 'reserved_shortcode' in escaped.get('text', ''), escaped)
+tree = '[{"id":"x1","elType":"widget","widgetType":"text-editor","settings":{"editor":"\\u005belementor-element k=a"},"elements":[]}]'
+wrapped = call('author', 'update_elementor_data', {'id': AD, 'elementor_data': tree, 'dry_run': True})
+record('a JSON escape in a tree does not hide it, dry run included', bool(wrapped.get('isError')) and 'reserved_shortcode' in wrapped.get('text', ''), wrapped)
+fine = call('author', 'update_post', {'id': AD, 'excerpt': 'an elementor-element class is ordinary text'})
+ok('ordinary text naming the class is accepted', fine)
+searched = call('author', 'search_posts', {'query': '[elementor-element'})
+ok('a read may search for the cache shortcode', searched)
+all_meta = call('key', 'get_post_meta', {'id': P, 'include_protected': True})
+record('the meta is never listed', '_elementor_element_cache' not in (all_meta.get('meta') or {}), all_meta.get('redacted_keys'))
 ok('site key assign_term on contributor draft', call('key', 'assign_term', {'post_id': CD, 'term_id': 1}))
 nf = call('key', 'update_post', {'id': 999999, 'title': 'x'})
 record('site key missing post is not_found, not forbidden', bool(nf.get('isError')) and 'not found' in nf.get('text', '').lower(), nf)

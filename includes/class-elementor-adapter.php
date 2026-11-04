@@ -1191,6 +1191,10 @@ class IATO_MCP_Elementor_Adapter {
 				}
 			} catch ( \Throwable $e ) {
 				$render_error = $e->getMessage();
+			} finally {
+				// Elementor adds this for the render and removes it only on success.
+				// Left on, the next save would write its cache shortcode into post_content.
+				remove_filter( 'elementor/element/should_render_shortcode', '__return_true' );
 			}
 		}
 

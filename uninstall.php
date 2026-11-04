@@ -32,6 +32,7 @@ delete_option( 'iato_mcp_db_version' );
 delete_option( 'iato_mcp_schema_version' );
 delete_option( 'iato_mcp_receipt_prune_last' );
 wp_clear_scheduled_hook( 'iato_mcp_prune_receipts' );
+wp_clear_scheduled_hook( 'iato_mcp_element_cache_sweep' );
 delete_option( 'iato_mcp_abilities_enabled' );
 delete_option( 'iato_mcp_cache_purge_enabled' );
 delete_option( 'iato_mcp_inline_markup_enabled' );

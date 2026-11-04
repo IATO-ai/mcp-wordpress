@@ -149,6 +149,7 @@ The existing `dry_run` flag — already supported by `tool-page-builder`, `tool-
 | `elementor_cannot_edit` / `elementor_validation_failed` | 1.14.0, atomic path: Elementor refused the save / its save rejected the page | 403 / 400 |
 | `iato_mcp_token_unbound` | 1.14.0, atomic path: the site key has no owner (Settings > IATO MCP, Token owner) | 403 |
 | `tool_exception` | 1.14.0: a Throwable inside a tool handler (JSON text names the tool and the exception) | — |
+| `reserved_shortcode` | 1.15.1: the arguments of a tool that writes contain `[elementor-element`, a shortcode Elementor reserves for its own cache. The call is refused before the tool runs. Read tools may search for it | — |
 
 The atomic codes come back as an `isError` result whose text is JSON: `{ error, message, element_id?, ... }`.
 

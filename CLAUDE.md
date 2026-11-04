@@ -28,6 +28,7 @@ WordPress Plugin (iato-mcp)
   ├── class-change-receipt.php        ← before/after audit trail for writes
   ├── class-cache.php                 ← page cache purges and the `cache` response object
   ├── class-sanitize-report.php       ← what sanitising removed (`sanitized_report`)
+  ├── class-element-cache-guard.php   ← keeps Elementor's element cache key and shortcode out of tool calls
   ├── class-inline-markup.php         ← opt-in inline SVG and style blocks in HTML widgets
   └── tools/
       ├── wp/        ← WP REST wrappers (posts, SEO, media, menus, taxonomy, Elementor, etc.)
@@ -86,7 +87,7 @@ On error, return `isError: true` with a message — never throw exceptions out o
 
 ## Schema migrations
 
-`includes/class-schema.php` — `IATO_MCP_Schema`. Table changes and one-shot data fix-ups are keyed by an integer schema version (`iato_mcp_schema_version`, `IATO_MCP_Schema::VERSION`) that is independent of the plugin version. Why: a site that ran a pre-release build already stores that build's `iato_mcp_db_version`, so a `version_compare` gate on the final release would skip every table change made after that build (found during the 1.13.0 staging test). `run()` executes every step above the stored version in order and bumps the option after each one; a step that throws stops the run without advancing past it and is retried on the next request; deleting the option replays everything. Every step must therefore be idempotent (dbDelta, `INSERT IGNORE` / `NOT EXISTS`, option writes that tolerate repeats). Steps so far: 1 base tables (receipts, call log, media phase log), 2 OAuth client/token tables + carry-over of the option-based clients + legacy flags, 3 OAuth grants table + backfill, 4 receipt actor columns (`actor_*`, `rolled_back_by_*`, index on `actor_user_id`) and call-log `credential_kind` / `client_id`, 5 receipts `pruned_at` and index `target_applied (target_type, applied_at)` for the retention job. `run()` is called from `iato_mcp_maybe_run_migrations()` on `plugins_loaded` and from activation. The tool-list backfill (`TOOL_MIGRATION_BACKFILL`) stays keyed by the plugin version, which is only bumped afterwards.
+`includes/class-schema.php` — `IATO_MCP_Schema`. Table changes and one-shot data fix-ups are keyed by an integer schema version (`iato_mcp_schema_version`, `IATO_MCP_Schema::VERSION`) that is independent of the plugin version. Why: a site that ran a pre-release build already stores that build's `iato_mcp_db_version`, so a `version_compare` gate on the final release would skip every table change made after that build (found during the 1.13.0 staging test). `run()` executes every step above the stored version in order and bumps the option after each one; a step that throws stops the run without advancing past it and is retried on the next request; deleting the option replays everything. Every step must therefore be idempotent (dbDelta, `INSERT IGNORE` / `NOT EXISTS`, option writes that tolerate repeats). Steps so far: 1 base tables (receipts, call log, media phase log), 2 OAuth client/token tables + carry-over of the option-based clients + legacy flags, 3 OAuth grants table + backfill, 4 receipt actor columns (`actor_*`, `rolled_back_by_*`, index on `actor_user_id`) and call-log `credential_kind` / `client_id`, 5 receipts `pruned_at` and index `target_applied (target_type, applied_at)` for the retention job, 6 Elementor's element cache refreshed (`IATO_MCP_Element_Cache_Guard::refresh()`). `run()` is called from `iato_mcp_maybe_run_migrations()` on `plugins_loaded` and from activation. The tool-list backfill (`TOOL_MIGRATION_BACKFILL`) stays keyed by the plugin version, which is only bumped afterwards.
 
 **Adding a step** (whenever a change touches tables): append `N => [ self::class, 'step_name' ]` to `steps()` with `N = VERSION + 1`, bump `VERSION`, make the step idempotent, and add a case to `tests/wp-env/schema-migration-live.sh`. `tests/SchemaMigrationTest.php` checks ordering, no-op reruns, the stop-on-failure rule and that the step map is contiguous.
 
@@ -286,6 +287,16 @@ Because the lock is lifted around `Document::save()`, Elementor's own `kses_post
 
 Tests: `tests/ElementorSanitizerTest.php`, `tests/ElementorWritePipelineTest.php`, `tests/MetaContentKeysTest.php` (stubs in `tests/stubs-meta.php`); live: `tests/wp-env/elementor-sanitize-live.sh` → `.py` with the test-only mu-plugin `tests/wp-env/mu-force-elementor-save-fail.php` (forces `Document::save()` to throw; lets the unfiltered filter return true) and the fixture seeder `tests/wp-env/create-sanitize-fixture.php`.
 
+## Elementor's element cache (1.15.1)
+
+`includes/class-element-cache-guard.php` (`IATO_MCP_Element_Cache_Guard`). Elementor keeps rendered pages in the `_elementor_element_cache` post meta, with dynamic widgets written as its `[elementor-element]` shortcode and a site-wide key (option `_elementor_element_cache_unique_id`). Neither is for clients.
+
+- **Reads.** `_elementor_element_cache` is in `IATO_MCP_Meta_Policy::DENY_PATTERNS`. `scrub()` also replaces the key in every tool result (`handle_tools_call()`, which wraps `run_tool()`) and in the REST rollback route's responses.
+- **Writes.** `run_tool()` refuses a call whose arguments hold the shortcode (`holds_shortcode()`: the raw string, without tags, URL and entity decoded, inside JSON strings) with `reserved_shortcode`, before the handler runs, unless `unfiltered_html_allowed()`. Tools named as reads are exempt (`is_read_tool()`: `get_`, `list_`, `find_`, `search_`, `resolve_`): they store nothing, and searching is how a site finds a shortcode stored earlier. It refuses rather than edits: removing text from sanitised markup can join what is left into a live attribute.
+- **Render.** `write_pipeline()` step 5 removes Elementor's `elementor/element/should_render_shortcode` filter in a `finally`: Elementor removes it only when the render succeeds.
+- **Upgrade.** Schema step 6 calls `refresh()`: a new key with `update_option` when one exists (Elementor creates a missing one without a lock), and the cached meta deleted. WP-Cron event `iato_mcp_element_cache_sweep`, 15 minutes later, deletes the meta again and purges page caches, because a render in progress can store the old key, which prints nothing. Cleared on deactivation and in `uninstall.php`. A replay (the schema option deleted by hand) makes one more key and one more rebuild, with the same end state.
+- Tests: `tests/ElementCacheGuardTest.php`; live: `tests/wp-env/permissions-live.py`, `tests/wp-env/schema-migration-live.sh` sections F and G.
+
 ## Page caches and the `cache` object (1.15.0)
 
 `includes/class-cache.php` (`IATO_MCP_Cache`). Spec: docs/mcp-api-spec-v2.md, "Reports on every write".
@@ -409,7 +420,7 @@ No governance policy UI, no autopilot toggle, no resync.
 `includes/class-meta-policy.php` — shared by `get_post_meta`, `update_post_meta`, `set_page_settings`, `set_featured_image`, and `update_elementor_data` (when `inherit_settings_from` is used).
 
 Two layers:
-1. **Denylist** (hard-reject even with `force=true`): keys matching credential / auth / capability patterns — `*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, `wp_capabilities`, `wp_user_level`, `wp_user_roles`, `session_tokens`, `wp_2fa_*`. Case-insensitive substring match.
+1. **Denylist** (hard-reject even with `force=true`): keys matching credential / auth / capability patterns — `*_token*`, `*_secret*`, `*_api_key*`, `*_password*`, `*_credential*`, `_oauth_*`, `_jwt_*`, `_refresh_token_*`, `_elementor_element_cache*`, `wp_capabilities`, `wp_user_level`, `wp_user_roles`, `session_tokens`, `wp_2fa_*`. Case-insensitive substring match.
 2. **Allowlist** (writable without `force=true`): public custom meta (any key not starting with `_`) plus known-safe prefixes — `site-`, `ast-`, `footer-sml-`, `_elementor_`, `_wp_page_template`, `_thumbnail_id`, `_yoast_`, `_genesis_`, `_kadence_`, `_generate_`, `rank_math_`, `_seopress_`.
 
 Anything not in the denylist and not in the allowlist requires `force=true` on writes and returns `meta_requires_force`.

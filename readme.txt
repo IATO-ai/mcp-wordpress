@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.15.0
+Stable tag: 1.15.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -181,6 +181,10 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.15.1 =
+* Security: Hardened how Elementor's cached page data is handled. Update recommended. Elementor rebuilds each page once on its next view, and page caches are purged once shortly after the update.
+* Change: get_post_meta no longer returns _elementor_element_cache, and a write containing Elementor's [elementor-element] cache shortcode is refused with reserved_shortcode. Read tools can still search for it.
 
 = 1.15.0 =
 * New: Changes made through MCP now purge page caches: LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache and SiteGround Optimizer. A change to one page purges that page, plus the home URL for the front page or posts page. A change to the Elementor kit, Theme Builder templates, global widgets, saved templates, menus, terms, redirects or site settings purges the whole site. Turn it off under Settings > IATO MCP.
@@ -472,6 +476,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.15.1 =
+Security update; update recommended. Elementor rebuilds each page once on its next view.
 
 = 1.15.0 =
 Changes made through MCP now purge page caches and say so, a new tool sets the site title and home page, and responses say exactly what sanitizing removed. Classic Elementor edits now rebuild only the edited page's CSS.
