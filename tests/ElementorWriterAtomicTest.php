@@ -603,6 +603,18 @@ final class ElementorWriterAtomicTest extends TestCase {
 		$this->assertSame( self::env( 'string', 'h3' ), $this->node( 'h1' )['settings']['tag'] );
 	}
 
+	public function test_a_throw_while_the_page_renders_does_not_leave_elementors_cache_filter_on(): void {
+		$hook = 'elementor/element/should_render_shortcode';
+		$GLOBALS['wp_filter'][ $hook ] = (object) [ 'callbacks' => [ 10 => [ '__return_true' => [ 'function' => '__return_true' ] ] ] ];
+		\Elementor\FakeDocument::$mode          = 'throw';
+		\Elementor\FakeDocument::$throw_message = 'an addon failed in its save code';
+		\Elementor\FakeFrontend::$throw         = true;
+		$r = $this->update( 'h1', [ 'tag' => 'h3' ] );
+		$this->assertSame( 'addon widget failed to render', $r['render_error'] );
+		$this->assertSame( [], $GLOBALS['wp_filter'][ $hook ]->callbacks[10] );
+		unset( $GLOBALS['wp_filter'][ $hook ] );
+	}
+
 	public function test_a_routed_library_alt_is_sanitised_like_update_alt_text(): void {
 		$this->update( 'i2', [ 'image' => [ 'src' => [ 'alt' => "Lib\nalt" ] ] ] );
 		$alts = array_values( array_filter( IATO_Test_WP::$writes, fn( $w ) => '_wp_attachment_image_alt' === $w[1] ) );

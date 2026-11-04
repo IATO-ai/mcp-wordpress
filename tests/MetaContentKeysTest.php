@@ -65,7 +65,6 @@ final class MetaContentKeysTest extends TestCase {
 	public static function content_keys(): array {
 		return [
 			[ '_elementor_data' ],
-			[ '_elementor_element_cache' ],
 			[ '_elementor_css' ],
 			[ '_elementor_inline_svg' ],
 			[ '_elementor_markdown_cache' ],

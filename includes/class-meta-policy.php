@@ -38,6 +38,7 @@ class IATO_MCP_Meta_Policy {
 		'_oauth_',
 		'_jwt_',
 		'_refresh_token_',
+		'_elementor_element_cache', // Elementor's cached pages and their key (IATO_MCP_Element_Cache_Guard)
 	];
 
 	/**

@@ -25,6 +25,12 @@ if ( ! function_exists( 'wp_schedule_event' ) ) {
 		return true;
 	}
 }
+if ( ! function_exists( 'wp_schedule_single_event' ) ) {
+	function wp_schedule_single_event( int $timestamp, string $hook, array $args = [], bool $wp_error = false ): bool {
+		IATO_Test_Cron::$events[ $hook ] = [ 'at' => $timestamp, 'recurrence' => '' ];
+		return true;
+	}
+}
 if ( ! function_exists( 'wp_clear_scheduled_hook' ) ) {
 	function wp_clear_scheduled_hook( string $hook, array $args = [], bool $wp_error = false ): int {
 		$had = isset( IATO_Test_Cron::$events[ $hook ] ) ? 1 : 0;

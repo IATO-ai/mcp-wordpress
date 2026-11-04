@@ -5,7 +5,8 @@
 # backfill; replaying all steps is a no-op for the data; the pre-1.13.0 path
 # still carries the client option over; a site at schema 3 gets the receipt
 # actor and call-log credential columns (step 4) with its rows intact; a site
-# at schema 4 gets receipts.pruned_at and the cleanup index (step 5).
+# at schema 4 gets receipts.pruned_at and the cleanup index (step 5); a site at
+# schema 5 gets its Elementor element cache refreshed (step 6).
 #
 # All state is prepared and read through `wp db query`, which does not boot
 # WordPress: any `wp option` / `wp eval` call would run the plugin's
@@ -43,7 +44,7 @@ X "DROP TABLE IF EXISTS ${P}iato_mcp_oauth_grants"
 check "grants table gone before the load" "$(Q "SHOW TABLES LIKE '${P}iato_mcp_oauth_grants'")" ""
 check "schema option gone before the load" "$(opt iato_mcp_schema_version)" ""
 load
-check "schema version recorded" "$(opt iato_mcp_schema_version)" "5"
+check "schema version recorded" "$(opt iato_mcp_schema_version)" "6"
 check "grants table created" "$(Q "SHOW TABLES LIKE '${P}iato_mcp_oauth_grants'")" "${P}iato_mcp_oauth_grants"
 check "one grant row per grant_id in the token table" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_grants")" "$GRANT_IDS"
 check "seeded grant backfilled with its client and user" "$(Q "SELECT CONCAT(client_id,':',user_id,':',IFNULL(revoked_at,'live')) FROM ${P}iato_mcp_oauth_grants WHERE grant_id='$GRANT'")" "schema-live:1:live"
@@ -54,7 +55,7 @@ check "old one-shot flag retired" "$(opt iato_mcp_oauth_grants_backfilled)" ""
 echo "# B. replaying every step is harmless"
 delopt iato_mcp_schema_version
 load
-check "schema version back to 5" "$(opt iato_mcp_schema_version)" "5"
+check "schema version back to the latest" "$(opt iato_mcp_schema_version)" "6"
 check "grant rows unchanged" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_grants")" "$GRANT_IDS"
 check "token rows unchanged" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_tokens")" "$TOKENS_BEFORE"
 check "client rows unchanged" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_clients")" "$CLIENTS_BEFORE"
@@ -73,7 +74,7 @@ check "legacy option removed" "$(opt iato_mcp_oauth_clients)" ""
 check "legacy-key flag set" "$(opt iato_mcp_oauth_legacy_key)" "1"
 check "notice flag set" "$(opt iato_mcp_oauth_legacy_notice)" "1"
 check "db_version bumped to the plugin version" "$(opt iato_mcp_db_version)" "$PLUGIN_VERSION"
-check "schema version 5 again" "$(opt iato_mcp_schema_version)" "5"
+check "schema version latest again" "$(opt iato_mcp_schema_version)" "6"
 load
 check "second load: client not duplicated" "$(Q "SELECT COUNT(*) FROM ${P}iato_mcp_oauth_clients WHERE client_id='schemaold'")" "1"
 
@@ -81,6 +82,12 @@ echo "# D. site at schema 3: step 4 adds the actor and credential columns, rows 
 R="${P}iato_change_receipts"
 L="${P}iato_mcp_call_log"
 col() { Q "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$1' AND COLUMN_NAME = '$2'"; }
+# MariaDB's instant DROP COLUMN keeps the column in the table's metadata, where
+# it still counts towards the row size limit. Enough runs of this suite on one
+# site make ADD COLUMN fail with error 1118, and dbDelta does not report it.
+# A rebuild clears them, so each run starts clean. The plugin never drops columns.
+X "ALTER TABLE $R FORCE"
+X "ALTER TABLE $L FORCE"
 for c in actor_user_id actor_kind actor_client_id rolled_back_by_user_id rolled_back_by_kind rolled_back_by_client_id; do
 	[ "$(col "$R" "$c")" = "1" ] && X "ALTER TABLE $R DROP COLUMN $c"
 done
@@ -94,7 +101,7 @@ CALLS_BEFORE=$(Q "SELECT COUNT(*) FROM $L")
 setopt_ iato_mcp_schema_version 3
 check "actor columns gone before the load" "$(col "$R" actor_kind)$(col "$L" credential_kind)" "00"
 load
-check "schema version 5 (steps 4 and 5 ran)" "$(opt iato_mcp_schema_version)" "5"
+check "schema version 6 (steps 4 to 6 ran)" "$(opt iato_mcp_schema_version)" "6"
 for c in actor_user_id actor_kind actor_client_id rolled_back_by_user_id rolled_back_by_kind rolled_back_by_client_id; do
 	check "receipts column $c added" "$(col "$R" "$c")" "1"
 done
@@ -107,11 +114,12 @@ check "receipt rows unchanged" "$(Q "SELECT COUNT(*) FROM $R")" "$RECEIPTS_BEFOR
 check "call log rows kept (the load adds none: no MCP call)" "$(Q "SELECT COUNT(*) FROM $L")" "$CALLS_BEFORE"
 delopt iato_mcp_schema_version
 load
-check "replaying every step keeps the columns and the rows" "$(opt iato_mcp_schema_version):$(col "$R" actor_kind):$(Q "SELECT COUNT(*) FROM $R")" "5:1:$RECEIPTS_BEFORE"
+check "replaying every step keeps the columns and the rows" "$(opt iato_mcp_schema_version):$(col "$R" actor_kind):$(Q "SELECT COUNT(*) FROM $R")" "6:1:$RECEIPTS_BEFORE"
 X "DELETE FROM $R WHERE change_id = '$OLDCID'"
 
 echo "# E. site at schema 4: step 5 adds pruned_at and the cleanup index"
 idx() { Q "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$1' AND INDEX_NAME = '$2'"; }
+X "ALTER TABLE $R FORCE"
 [ "$(col "$R" pruned_at)" = "1" ] && X "ALTER TABLE $R DROP COLUMN pruned_at"
 [ "$(idx "$R" target_applied)" = "1" ] && X "ALTER TABLE $R DROP INDEX target_applied"
 OLDCID="wr_$(python3 -c 'import secrets;print(secrets.token_hex(8))')"
@@ -119,11 +127,34 @@ X "INSERT INTO $R (change_id, post_id, target_type, field, before_value, after_v
 setopt_ iato_mcp_schema_version 4
 check "pruned_at and index gone before the load" "$(col "$R" pruned_at)$(idx "$R" target_applied)" "00"
 load
-check "schema version 5" "$(opt iato_mcp_schema_version)" "5"
+check "schema version 5" "$(opt iato_mcp_schema_version)" "6"
 check "pruned_at added" "$(col "$R" pruned_at)" "1"
 check "index on (target_type, applied_at) added" "$(Q "SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$R' AND INDEX_NAME = 'target_applied'")" "target_type,applied_at"
 check "existing receipt kept, not pruned" "$(Q "SELECT CONCAT(before_value, ':', IFNULL(pruned_at, 'NULL'), ':', actor_kind) FROM $R WHERE change_id = '$OLDCID'")" "[]:NULL:site_key"
 X "DELETE FROM $R WHERE change_id = '$OLDCID'"
+
+echo "# F. site at schema 5: step 6 refreshes Elementor's element cache"
+PM="${P}postmeta"
+EC_KEY="$(python3 -c 'import secrets;print(secrets.token_hex(16))')"
+EC_POST=$(Q "SELECT ID FROM ${P}posts WHERE post_type='page' ORDER BY ID LIMIT 1")
+setopt_ _elementor_element_cache_unique_id "$EC_KEY"
+X "INSERT INTO $PM (post_id, meta_key, meta_value) VALUES ($EC_POST, '_elementor_element_cache', '{\"timeout\":1}')"
+setopt_ iato_mcp_schema_version 5
+check "cached row present before the load" "$(Q "SELECT COUNT(*) > 0 FROM $PM WHERE meta_key='_elementor_element_cache' AND post_id=$EC_POST")" "1"
+load
+check "schema version 6" "$(opt iato_mcp_schema_version)" "6"
+NEWK=$(opt _elementor_element_cache_unique_id)
+check "key replaced" "$([ "$NEWK" != "$EC_KEY" ] && [ "${#NEWK}" = "32" ] && echo yes)" "yes"
+check "the row written before the load is gone" "$(Q "SELECT COUNT(*) FROM $PM WHERE meta_key='_elementor_element_cache' AND meta_value='{\"timeout\":1}'")" "0"
+check "one second pass scheduled" "$(Q "SELECT option_value LIKE '%iato_mcp_element_cache_sweep%' FROM $O WHERE option_name='cron'")" "1"
+load
+check "another load does not replace it again" "$(opt _elementor_element_cache_unique_id)" "$NEWK"
+echo "# G. site at schema 5 that never ran Elementor's cache: no key is created"
+delopt _elementor_element_cache_unique_id
+setopt_ iato_mcp_schema_version 5
+curl -s -o /dev/null "$B/wp-login.php"
+check "schema version 6" "$(opt iato_mcp_schema_version)" "6"
+check "no key created" "$(opt _elementor_element_cache_unique_id)" ""
 
 # Cleanup
 delopt iato_mcp_oauth_legacy_key

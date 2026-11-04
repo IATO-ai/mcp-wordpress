@@ -433,6 +433,15 @@ class IATO_MCP_Server {
 	 * @return array|WP_Error
 	 */
 	private static function handle_tools_call( array $params ): array|WP_Error {
+		$result = self::run_tool( $params );
+		return is_array( $result ) ? IATO_MCP_Element_Cache_Guard::scrub( $result ) : $result;
+	}
+
+	/**
+	 * @param array $params The tools/call params: name, arguments.
+	 * @return array|WP_Error The tool result.
+	 */
+	private static function run_tool( array $params ): array|WP_Error {
 		$name      = $params['name']      ?? '';
 		$arguments = $params['arguments'] ?? [];
 
@@ -454,6 +463,12 @@ class IATO_MCP_Server {
 					'content' => [ [ 'type' => 'text', 'text' => $cap_check->get_error_message() ] ],
 				];
 			}
+		}
+
+		// 1.15.1: not for reads, which store nothing, or for a user allowed to store
+		// unfiltered HTML, who needs no shortcode.
+		if ( ! IATO_MCP_Element_Cache_Guard::is_read_tool( $name ) && ! IATO_MCP_Auth::unfiltered_html_allowed() && IATO_MCP_Element_Cache_Guard::holds_shortcode( $arguments ) ) {
+			return IATO_MCP_Element_Cache_Guard::refusal();
 		}
 
 		$handler = self::$tools[ $name ]['handler'];

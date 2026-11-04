@@ -150,9 +150,11 @@ PRISTINE_TREE = json.loads(PRISTINE)
 # ── A. the generic meta tool ─────────────────────────────────────────────
 print('# A. update_post_meta and Elementor keys')
 for who in ('key', 'admin'):
-    for k in ('_elementor_data', '_elementor_element_cache', '_elementor_css', '_elementor_anything_new'):
+    for k in ('_elementor_data', '_elementor_css', '_elementor_anything_new'):
         r = call(who, 'update_post_meta', {'id': PAGE, 'key': k, 'value': [{'id': 'x', 'settings': {'title': PAYLOAD}}], 'force': True})
         record(f'{who}: {k} refused with elementor_content_key', r.get('isError') and 'update_elementor_data' in r.get('text', ''), r)
+    r = call(who, 'update_post_meta', {'id': PAGE, 'key': '_elementor_element_cache', 'value': [{'id': 'x', 'settings': {'title': PAYLOAD}}], 'force': True})
+    record(f'{who}: _elementor_element_cache refused by the denylist', r.get('isError') and 'denylist' in r.get('text', ''), r)
 record('meta unchanged after the refusals', meta_text() == PRISTINE)
 r = call('key', 'update_post_meta', {'id': PAGE, 'key': '_elementor_edit_mode', 'value': 'builder'})
 record('_elementor_edit_mode still writable', not r.get('isError') and r.get('after_value') == 'builder', r)

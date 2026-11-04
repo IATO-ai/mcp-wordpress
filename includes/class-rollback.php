@@ -110,7 +110,7 @@ class IATO_MCP_Rollback {
 			$result['cache'] = $cache;
 		}
 
-		return new WP_REST_Response( $result, 200 );
+		return new WP_REST_Response( IATO_MCP_Element_Cache_Guard::scrub( $result ), 200 );
 	}
 
 	/**
@@ -978,7 +978,7 @@ class IATO_MCP_Rollback {
 				'success'   => false,
 				'error'     => $error,
 				'change_id' => $change_id,
-			], $extra ),
+			], IATO_MCP_Element_Cache_Guard::scrub( $extra ) ),
 			$status
 		);
 	}

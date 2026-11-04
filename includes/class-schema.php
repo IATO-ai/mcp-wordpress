@@ -25,7 +25,7 @@ class IATO_MCP_Schema {
 	public const OPTION = 'iato_mcp_schema_version';
 
 	/** The schema version this code expects. Bump when adding a step. */
-	public const VERSION = 5;
+	public const VERSION = 6;
 
 	/** Last step failure, for diagnostics ("step N: message"). */
 	private static string $last_error = '';
@@ -50,6 +50,7 @@ class IATO_MCP_Schema {
 			3 => [ self::class, 'step_oauth_grants' ],
 			4 => [ self::class, 'step_receipt_actors' ],
 			5 => [ self::class, 'step_receipt_retention' ],
+			6 => [ self::class, 'step_element_cache_refresh' ],
 		];
 	}
 
@@ -170,5 +171,10 @@ class IATO_MCP_Schema {
 	 */
 	public static function step_receipt_retention(): void {
 		IATO_MCP_Change_Receipt::create_table();
+	}
+
+	/** 6 (1.15.1): refresh Elementor's element cache (IATO_MCP_Element_Cache_Guard::refresh()). */
+	public static function step_element_cache_refresh(): void {
+		IATO_MCP_Element_Cache_Guard::refresh();
 	}
 }

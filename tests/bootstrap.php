@@ -132,6 +132,7 @@ if ( ! function_exists( 'get_permalink' ) ) {
 require_once __DIR__ . '/stubs-abilities.php';
 require_once __DIR__ . '/stubs-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-cache.php';
+require_once IATO_MCP_DIR . 'includes/class-element-cache-guard.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-sanitize-report.php';
 require_once IATO_MCP_DIR . 'includes/class-inline-markup.php';
