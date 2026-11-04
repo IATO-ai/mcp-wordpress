@@ -33,12 +33,15 @@ delete_option( 'iato_mcp_schema_version' );
 delete_option( 'iato_mcp_receipt_prune_last' );
 wp_clear_scheduled_hook( 'iato_mcp_prune_receipts' );
 delete_option( 'iato_mcp_abilities_enabled' );
+delete_option( 'iato_mcp_cache_purge_enabled' );
+delete_option( 'iato_mcp_inline_markup_enabled' );
 delete_option( 'iato_mcp_media_url_source_enabled' );
 delete_option( 'iato_mcp_media_url_host_allowlist' );
 delete_option( 'iato_mcp_media_max_upload_size' );
 delete_option( 'iato_mcp_media_upload_rate_limit' );
 
 // Transients.
+delete_transient( 'iato_mcp_cache_edge' );
 delete_transient( 'iato_mcp_oauth_pkce' ); // pre-1.13.0
 
 // Drop change receipts, call log and OAuth tables.

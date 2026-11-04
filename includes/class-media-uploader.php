@@ -317,7 +317,15 @@ class IATO_MCP_Media_Uploader {
 
 		$log( 'returning', [ 'total' => sprintf( '%.3fs', microtime( true ) - $t_start ), 'deferred' => $defer_subsizes ? 1 : 0 ] );
 
-		return [
+		$sanitized = [];
+		if ( isset( $args['description'] ) ) {
+			$entry = IATO_MCP_Sanitize_Report::for_value( 'description', 'html', (string) $args['description'], (string) get_post_field( 'post_content', $attachment_id ) );
+			if ( null !== $entry ) {
+				IATO_MCP_Sanitize_Report::add_to( $sanitized, [ $entry ] );
+			}
+		}
+
+		return $sanitized + [
 			'attachment_id'      => $attachment_id,
 			'url'                => wp_get_attachment_url( $attachment_id ),
 			'filename'           => basename( $sideloaded['file'] ),

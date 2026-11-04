@@ -457,6 +457,9 @@ class IATO_MCP_Server {
 		}
 
 		$handler = self::$tools[ $name ]['handler'];
+		// 1.15.0: what this call writes is purged from page caches below, whatever
+		// the outcome: an error result can follow a write that already happened.
+		IATO_MCP_Cache::begin();
 		// 1.14.0: an uncaught Throwable from a tool handler (or from code it calls
 		// in WordPress or another plugin) becomes a clear tool error instead of a
 		// PHP fatal, which WordPress answers with a non-JSON-RPC HTTP 500 and no
@@ -464,10 +467,12 @@ class IATO_MCP_Server {
 		try {
 			$result = call_user_func( $handler, $arguments );
 		} catch ( \Throwable $e ) {
+			IATO_MCP_Cache::flush();
 			return self::tool_exception_result( (string) $name, $e );
 		}
 
 		if ( is_wp_error( $result ) ) {
+			IATO_MCP_Cache::flush();
 			$err_msg = $result->get_error_message();
 			// MCP spec requires text to be a string — IATO API errors can leak objects.
 			if ( ! is_string( $err_msg ) ) {
@@ -482,7 +487,7 @@ class IATO_MCP_Server {
 			];
 		}
 
-		return $result;
+		return is_array( $result ) ? IATO_MCP_Cache::finish( (string) $name, $arguments, $result ) : $result;
 	}
 
 	// ── Helpers ────────────────────────────────────────────────────────────────

@@ -247,6 +247,7 @@ class IATO_MCP_Change_Receipt {
 			'elementor_atomic' => 'edit_posts',
 			'menu_item'        => 'edit_theme_options',
 			'redirect'         => 'manage_options',
+			'site_setting'     => 'manage_options',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -351,6 +352,7 @@ class IATO_MCP_Change_Receipt {
 
 			case 'menu_item':
 			case 'redirect':
+			case 'site_setting':
 				return $typed( $type_cap, 'type-by-design' );
 
 			default:
@@ -385,8 +387,8 @@ class IATO_MCP_Change_Receipt {
 	 * Record a change receipt after a successful write.
 	 *
 	 * @param int|null $post_id     WordPress post/attachment/menu-item ID, or null for non-post targets.
-	 * @param string   $target_type One of: post, page, image, menu_item, taxonomy, redirect, structured_data,
-	 *                              elementor_widget, post_meta, attachment.
+	 * @param string   $target_type One of: post, page, image, menu_item, taxonomy, redirect, site_setting,
+	 *                              elementor_widget, elementor_atomic, post_meta, attachment.
 	 * @param string   $field       The field that was changed (for target_type=post_meta this is the meta key).
 	 * @param mixed    $before      Value before the write. null if field was unset. Arrays are JSON-encoded.
 	 * @param mixed    $after       Value after the write. null if field was deleted. Arrays are JSON-encoded.
@@ -433,6 +435,11 @@ class IATO_MCP_Change_Receipt {
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate, insert is the canonical source of truth.
 		$wpdb->insert( self::table_name(), $row, $format );
+
+		// 1.15.0: a recorded change is what purges page caches (IATO_MCP_Cache).
+		if ( class_exists( 'IATO_MCP_Cache' ) ) {
+			IATO_MCP_Cache::note_write( $target_type, $post_id, $field, $before, $after );
+		}
 
 		// Retention: if the daily cleanup of old Elementor page copies is overdue
 		// (WP-Cron not running), run one batch at the end of this request.

@@ -400,7 +400,8 @@ IATO_MCP_Server::register_tool(
 						: IATO_MCP_Meta_Policy::sanitize_array_value( $key, $after, is_array( $target_value ) ? $target_value : null );
 					$entry['after'] = $s['value'];
 					if ( ! empty( $s['changed'] ) ) {
-						$entry['sanitized_paths'] = $s['changed'];
+						$entry['sanitized_paths']  = $s['changed'];
+						$entry['sanitized_report'] = $s['report'];
 					}
 				}
 				$inherit_plan[] = $entry;
@@ -413,14 +414,16 @@ IATO_MCP_Server::register_tool(
 			if ( null !== $refusal ) {
 				return IATO_MCP_Elementor_Adapter::tool_error( $refusal );
 			}
-			return IATO_MCP_Server::ok( [
+			$preview = [
 				'dry_run'           => true,
 				'post_id'           => $post_id,
 				'action'            => 'would_update',
 				'json_valid'        => true,
 				'inherit_planned'   => $inherit_plan,
 				'inherited_skipped' => $inherit_skipped,
-			] + $atomic_check['report'] + ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ? [ 'elementor_save' => 'skipped', 'skipped_reason' => $atomic_check['pipeline_opts']['skip_save'] ] : [] ) + IATO_MCP_Elementor_Adapter::preview_report( $decoded, $stored_elements ) );
+			] + $atomic_check['report'] + ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ? [ 'elementor_save' => 'skipped', 'skipped_reason' => $atomic_check['pipeline_opts']['skip_save'] ] : [] ) + IATO_MCP_Elementor_Adapter::preview_report( $decoded, $stored_elements );
+			IATO_MCP_Sanitize_Report::add_to( $preview, $atomic_check['sanitized_report'] ?? [] );
+			return IATO_MCP_Server::ok( $preview );
 		}
 
 		// The shared pipeline (IATO_MCP_Elementor_Adapter::write_pipeline): sanitise
@@ -461,11 +464,8 @@ IATO_MCP_Server::register_tool(
 				$inherit_receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after );
 			}
 			clean_post_cache( $post_id );
-			if ( $touched_elementor_meta && class_exists( '\Elementor\Plugin' ) ) {
-				$plugin = \Elementor\Plugin::$instance;
-				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
-					$plugin->files_manager->clear_cache();
-				}
+			if ( $touched_elementor_meta ) {
+				IATO_MCP_Elementor_Adapter::clear_post_css( $post_id );
 			}
 		}
 
@@ -480,6 +480,7 @@ IATO_MCP_Server::register_tool(
 			'input_length'         => strlen( $elementor_data ),
 			'current_revision'     => $pipeline['current_revision'],
 		] + $atomic_check['report'] + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
+		IATO_MCP_Sanitize_Report::add_to( $response, $atomic_check['sanitized_report'] ?? [] );
 		$response['change_receipt'] = [
 			'change_id'   => $receipt['change_id'],
 			'target_type' => $receipt['target_type'],
@@ -489,7 +490,8 @@ IATO_MCP_Server::register_tool(
 		];
 		$inherit_sanitized = array_merge( ...array_map( fn( $st ) => $st['sanitized_paths'] ?? [], $inherit_plan ?: [ [] ] ) );
 		if ( ! empty( $inherit_sanitized ) ) {
-			$response['inherited_sanitized_paths'] = $inherit_sanitized;
+			$response['inherited_sanitized_paths']  = $inherit_sanitized;
+			$response['inherited_sanitized_report'] = array_merge( ...array_map( fn( $st ) => $st['sanitized_report'] ?? [], $inherit_plan ) );
 		}
 		if ( ! empty( $inherit_receipts ) ) {
 			$response['change_receipts'] = $inherit_receipts;

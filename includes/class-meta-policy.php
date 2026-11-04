@@ -103,19 +103,19 @@ class IATO_MCP_Meta_Policy {
 	 * returned as given (the meta tools already run sanitize_text_field on
 	 * strings).
 	 *
-	 * @return array{value:mixed,changed:string[]}
+	 * @return array{value:mixed,changed:string[],report:array}
 	 */
 	public static function sanitize_elementor_value( string $key, mixed $value, mixed $stored ): array {
 		if ( ! is_array( $value ) && ! is_object( $value ) ) {
-			return [ 'value' => $value, 'changed' => [] ];
+			return [ 'value' => $value, 'changed' => [], 'report' => [] ];
 		}
 		$value  = json_decode( (string) wp_json_encode( $value ), true );
 		$stored = is_array( $stored ) ? $stored : ( is_object( $stored ) ? json_decode( (string) wp_json_encode( $stored ), true ) : null );
 		if ( ! is_array( $value ) || ! class_exists( 'IATO_MCP_Elementor_Sanitizer' ) ) {
-			return [ 'value' => $value, 'changed' => [] ];
+			return [ 'value' => $value, 'changed' => [], 'report' => [] ];
 		}
 		$r = IATO_MCP_Elementor_Sanitizer::diff_settings( $value, $stored, $key );
-		return [ 'value' => $r['value'], 'changed' => $r['changed'] ];
+		return [ 'value' => $r['value'], 'changed' => $r['changed'], 'report' => $r['report'] ];
 	}
 
 	/**
@@ -139,33 +139,37 @@ class IATO_MCP_Meta_Policy {
 	 * there is not altered. Plain string values are not handled here (the meta
 	 * tools run sanitize_text_field on them).
 	 *
-	 * @return array{value:mixed,changed:string[]}
+	 * @return array{value:mixed,changed:string[],report:array}
 	 */
 	public static function sanitize_array_value( string $key, mixed $value, mixed $stored ): array {
 		if ( ( ! is_array( $value ) && ! is_object( $value ) ) || ! class_exists( 'IATO_MCP_Elementor_Sanitizer' ) ) {
-			return [ 'value' => $value, 'changed' => [] ];
+			return [ 'value' => $value, 'changed' => [], 'report' => [] ];
 		}
 		$value  = json_decode( (string) wp_json_encode( $value ), true );
 		$stored = is_array( $stored ) ? $stored : ( is_object( $stored ) ? json_decode( (string) wp_json_encode( $stored ), true ) : null );
 		if ( ! is_array( $value ) ) {
-			return [ 'value' => $value, 'changed' => [] ];
+			return [ 'value' => $value, 'changed' => [], 'report' => [] ];
 		}
 		$changed = [];
-		$value   = self::filter_changed_markup( $value, is_array( $stored ) ? $stored : null, [ $key ], $changed );
+		$report  = [];
+		$value   = self::filter_changed_markup( $value, is_array( $stored ) ? $stored : null, [ $key ], $changed, $report );
 		if ( count( $changed ) > IATO_MCP_Elementor_Sanitizer::MAX_PATHS ) {
 			$more    = count( $changed ) - IATO_MCP_Elementor_Sanitizer::MAX_PATHS;
 			$changed = array_merge( array_slice( $changed, 0, IATO_MCP_Elementor_Sanitizer::MAX_PATHS ), [ '… and ' . $more . ' more' ] );
 		}
-		return [ 'value' => $value, 'changed' => $changed ];
+		return [ 'value' => $value, 'changed' => $changed, 'report' => IATO_MCP_Sanitize_Report::cap( $report ) ];
 	}
 
-	/** @param string[] $changed */
-	private static function filter_changed_markup( array $new, ?array $stored, array $path, array &$changed ): array {
+	/**
+	 * @param string[] $changed
+	 * @param array    $report
+	 */
+	private static function filter_changed_markup( array $new, ?array $stored, array $path, array &$changed, array &$report ): array {
 		foreach ( $new as $k => $v ) {
 			$old  = ( null !== $stored && array_key_exists( $k, $stored ) ) ? $stored[ $k ] : null;
 			$here = array_merge( $path, [ (string) $k ] );
 			if ( is_array( $v ) ) {
-				$new[ $k ] = self::filter_changed_markup( $v, is_array( $old ) ? $old : null, $here, $changed );
+				$new[ $k ] = self::filter_changed_markup( $v, is_array( $old ) ? $old : null, $here, $changed, $report );
 				continue;
 			}
 			if ( ! is_string( $v ) || $v === $old || ! str_contains( $v, '<' ) ) {
@@ -176,6 +180,7 @@ class IATO_MCP_Meta_Policy {
 			if ( $clean !== $v ) {
 				$new[ $k ]  = $clean;
 				$changed[] = implode( '/', $here );
+				$report[]  = IATO_MCP_Sanitize_Report::entry( implode( '/', $here ), 'html', $v, $clean );
 			}
 		}
 		return $new;

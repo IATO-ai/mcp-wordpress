@@ -91,6 +91,55 @@ namespace {
 			return $t;
 		}
 
+		public function test_a_classic_write_never_clears_every_pages_css(): void {
+			\Elementor\FakeFilesManager::$cleared = 0;
+			IATO_MCP_Cache::begin();
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$this->assertSame( 'elementor', $r['stored_by'] );
+			$this->assertSame( 0, \Elementor\FakeFilesManager::$cleared );
+			$this->assertTrue( IATO_MCP_Cache::has_pending(), 'this post is queued for its CSS and a purge' );
+			IATO_MCP_Cache::begin();
+		}
+
+		public function test_the_report_reaches_the_result_and_the_tool_response(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->edited(), 'sha256:prev', $this->stored() );
+			$this->assertSame( 'w1/settings/title', $r['sanitized_report'][0]['path'] );
+			$this->assertSame( [ 'b', 'script', 'span' ], $r['sanitized_report'][0]['removed_tags'] );
+			$this->assertSame( $r['sanitized_report'], IATO_MCP_Elementor_Adapter::pipeline_report( $r )['sanitized_report'] );
+		}
+
+		public function test_nothing_sanitised_means_no_report_key(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->stored(), 'sha256:prev', $this->stored() );
+			$this->assertArrayNotHasKey( 'sanitized_report', $r );
+			$this->assertArrayNotHasKey( 'sanitized_report', IATO_MCP_Elementor_Adapter::pipeline_report( $r ) );
+		}
+
+		public function test_what_elementors_own_save_strips_is_reported_for_a_user_without_the_capability(): void {
+			\Elementor\FakeDocument::$kses = fn( string $v ) => strip_tags( $v, '<b>' );
+			$saved = IATO_Test_Abilities_State::$caps;
+			try {
+				IATO_Test_Abilities_State::$caps['unfiltered_html'] = false;
+				IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+				$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->stored(), 'sha256:prev', $this->stored() );
+				$this->assertTrue( $r['sanitized'] );
+				$this->assertSame( [ 'w2/settings/html' ], $r['sanitized_paths'], 'the widget this write never touched' );
+				$this->assertSame( 'elementor', $r['sanitized_report'][0]['source'] );
+				$this->assertSame( [ 'iframe', 'script' ], $r['sanitized_report'][0]['removed_tags'] );
+
+				IATO_Test_Abilities_State::$caps['unfiltered_html'] = true;
+				IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+				\Elementor\FakeDocument::$kses = null;
+				$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->stored(), 'sha256:prev', $this->stored() );
+				$this->assertArrayNotHasKey( 'sanitized_report', $r, 'nothing to compare for a user who holds it' );
+			} finally {
+				\Elementor\FakeDocument::$kses = null;
+				IATO_Test_Abilities_State::$caps = $saved;
+			}
+		}
+
 		private function meta_writes_of( string $key ): array {
 			return array_values( array_filter( IATO_Test_WP::$writes, fn( $w ) => $w[1] === $key ) );
 		}
@@ -163,7 +212,10 @@ namespace {
 		}
 
 		public function test_dry_run_preview_reports_the_same_paths(): void {
-			$this->assertSame( [ 'sanitized' => true, 'sanitized_paths' => [ 'w1/settings/title' ] ], IATO_MCP_Elementor_Adapter::sanitize_preview( $this->edited(), $this->stored() ) );
+			$preview = IATO_MCP_Elementor_Adapter::sanitize_preview( $this->edited(), $this->stored() );
+			$this->assertTrue( $preview['sanitized'] );
+			$this->assertSame( [ 'w1/settings/title' ], $preview['sanitized_paths'] );
+			$this->assertSame( 'w1/settings/title', $preview['sanitized_report'][0]['path'] );
 			$this->assertSame( [], IATO_MCP_Elementor_Adapter::sanitize_preview( $this->stored(), $this->stored() ) );
 			self::allow_unfiltered( true );
 			$this->assertSame( [], IATO_MCP_Elementor_Adapter::sanitize_preview( $this->edited(), $this->stored() ) );

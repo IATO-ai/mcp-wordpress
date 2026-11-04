@@ -248,6 +248,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 
 		// 6. What Elementor kept of each requested value.
 		$sanitized = [];
+		$report    = [];
 		foreach ( $leaves as [ $path, $resolved ] ) {
 			$got = self::at_path( $final, $path );
 			$dot = implode( '.', $path );
@@ -259,6 +260,9 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			}
 			if ( self::canon_text( $resolved ) !== self::canon_text( $got ) ) {
 				$sanitized[] = $id . '/settings/' . implode( '/', $path );
+				$was         = IATO_MCP_Elementor_Atomic::unwrap( $resolved );
+				$now         = IATO_MCP_Elementor_Atomic::unwrap( $got );
+				$report[]    = IATO_MCP_Sanitize_Report::entry( $id . '/settings/' . implode( '/', $path ), 'html', is_string( $was ) ? $was : '', is_string( $now ) ? $now : '' );
 			}
 		}
 		foreach ( $canon as $key => $value ) {
@@ -296,6 +300,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			'after'           => $after,
 			'applied'         => $applied,
 			'sanitized_paths' => $sanitized,
+			'sanitized_report' => $report,
 			'aliases'         => $used,
 			'noop'            => $noop,
 		];
@@ -718,6 +723,8 @@ class IATO_MCP_Elementor_Atomic_Writer {
 		if ( $dry_run ) {
 			$page['dry_run']          = true;
 			$page['current_revision'] = null;
+			// What the write's sanitising pass would report for the whole page (1.15.0).
+			$page += IATO_MCP_Elementor_Adapter::sanitize_preview( $working, $tree );
 			if ( ! $check['save'] ) {
 				$page['elementor_save'] = 'skipped';
 				$page['skipped_reason'] = $check['reason'];
@@ -883,6 +890,10 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			$out['sanitized']       = true;
 			$out['sanitized_paths'] = $sanitized;
 		}
+		$report = IATO_MCP_Sanitize_Report::merge( (array) ( $row['sanitized_report'] ?? [] ), (array) ( $page['sanitized_report'] ?? [] ) );
+		if ( $report ) {
+			$out['sanitized_report'] = $report;
+		}
 		if ( ! empty( $row['aliases'] ) ) {
 			$out['aliases'] = $row['aliases'];
 		}
@@ -946,6 +957,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 		$resolved = [];
 		$keys     = [];
 		$why      = null;
+		$removed  = [];
 
 		foreach ( self::nodes_with_paths( $new ) as [ $path, $node ] ) {
 			if ( ! self::is_target( $node ) ) {
@@ -1006,6 +1018,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			$node['settings'] = $plan['settings'];
 			IATO_MCP_Elementor_Adapter::pointer_set( $new, $path, $node, false );
 			$resolved[] = $id;
+			$removed    = array_merge( $removed, $plan['sanitized_report'] );
 		}
 
 		$guard = IATO_MCP_Elementor_Adapter::check_atomic_tree( $stored, $new, $why );
@@ -1059,7 +1072,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 		if ( ! $classic_changed && $resolved ) {
 			$opts['atomic'] = true;
 		}
-		return [ 'tree' => $new, 'atomic_ids' => $atomic_ids, 'resolved_ids' => $resolved, 'pipeline_opts' => $opts, 'report' => $report ];
+		return [ 'tree' => $new, 'atomic_ids' => $atomic_ids, 'resolved_ids' => $resolved, 'pipeline_opts' => $opts, 'report' => $report, 'sanitized_report' => $removed ];
 	}
 
 	/** [json pointer path, node] for every element of a tree, depth first. */
@@ -1148,6 +1161,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			return $base + [ 'dry_run' => true ];
 		}
 		$receipt = self::write_attachment_alt( $attachment_id, $alt );
+		IATO_MCP_Cache::note_post( $post_id ); // the page the caller asked about shows this alt text
 		return $base + [ 'applied' => [ [ 'key' => $plan['route']['key'] . '.src.alt', 'from' => $before, 'to' => $receipt['after_value'] ?? $alt ] ], 'receipt' => $receipt ];
 	}
 

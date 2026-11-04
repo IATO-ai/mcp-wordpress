@@ -258,7 +258,7 @@ Partial-merges a settings patch into a single widget.
 }
 ```
 
-Fields since 1.13.0: `elementor_save` (`true` = Elementor's `Document::save()` stored the tree; `false` = Elementor refused; `"error"` = it threw, with `elementor_save_error`; `"skipped"` = not called, with `skipped_reason`), `stored_by` (`elementor` | `plugin`), `sanitized: true` and `sanitized_paths` (`<element id>/settings/<path>`, only when a value was altered), `change_receipt`. Since 1.13.1: `invalid_elements`, `skipped_reason: "unregistered_element_types"` with `unregistered_element_types`, `cache_cleared`, `verification`. Since 1.14.0: `applied_via`, `schema`, `state`; when the plugin stored a classic page because Elementor's save failed, `cache_cleared`, `css_regenerated: false` and `css_note`. Atomic targets: see [Atomic (Editor V4) writes](#atomic-editor-v4-writes-1140).
+Fields since 1.13.0: `elementor_save` (`true` = Elementor's `Document::save()` stored the tree; `false` = Elementor refused; `"error"` = it threw, with `elementor_save_error`; `"skipped"` = not called, with `skipped_reason`), `stored_by` (`elementor` | `plugin`), `sanitized: true` and `sanitized_paths` (`<element id>/settings/<path>`, only when a value was altered), `change_receipt`. Since 1.13.1: `invalid_elements`, `skipped_reason: "unregistered_element_types"` with `unregistered_element_types`, `cache_cleared`, `verification`. Since 1.14.0: `applied_via`, `schema`, `state`; when the plugin stored a classic page because Elementor's save failed, `cache_cleared`, `css_regenerated: false` and `css_note`. Since 1.15.0: `sanitized_report` and `cache`, see [Reports on every write](#reports-on-every-write-1150). Atomic targets: see [Atomic (Editor V4) writes](#atomic-editor-v4-writes-1140).
 
 **Errors:** `not_elementor`, `widget_not_found`, `revision_conflict`, `schema_violation`, `auth_denied`, `idempotency_replay`.
 
@@ -478,6 +478,41 @@ Elementor Atomic Editor elements (`e-heading`, `e-paragraph`, `e-button`, `e-ima
 **Sequence.** Bound user (`iato_mcp_token_unbound`), Elementor's code available (`atomic_write_unavailable`), the element's type registered (`atomic_write_unavailable`: with the Atomic Editor off nothing can validate or show the element, so typed values are refused too), the editor not holding unsaved changes (`elementor_editor_unsaved_changes`, 409), `if_revision`; Elementor's load migrations, captured in memory and stored together with the change in the one write (`migrated_by_elementor: true`; `"would_migrate"` when nothing is written: dry run, no-op, refusal); build and validate; the page check: Elementor's per-element save transform over every atomic element and, for users without `unfiltered_html`, the kses pass Elementor's save applies, over every element including the untouched settings of the edited one. When the save would reject or alter an element the call does not change, the plugin stores the page itself so that element keeps its bytes (`elementor_save: "skipped"`, `skipped_reason: "invalid_elements_on_page"` with `invalid_elements`, or `"elementor_would_alter_untouched"` with `skipped_for_elements`). Otherwise Elementor's `Document::save()`: `false` → `elementor_cannot_edit`, a "Settings validation failed" throw → `elementor_validation_failed` (nothing written), any other throw → the plugin's write of the validated tree. Receipts right after the write; this post's caches only (Post CSS, element cache, atomic styles; no global flush); a re-read verifies the result.
 
 **Result fields (atomic).** `applied_via: "iato-native"`, `schema: "atomic"`, `state: "live"`, `applied: [{key, from, to}]` (plain values, `to` as read back), `applied_patch` (ops on `…/settings/<key>` with the stored typed value and, for `replace` / `remove`, `previous_value`), `render_error` (an addon threw while the page rendered after the write; the change and its receipt stand), `verified` (and `verification_diff`), `elementor_save`, `stored_by`, `skipped_reason`, `sanitized` / `sanitized_paths` (only when Elementor's sanitising changed a value beyond entity encoding), `migrated_by_elementor`, `editor_autosave_pending` and `editor_autosave` (`{user, user_id, modified, note}`: an autosave by any user newer than the page), `css: {scope: "post", post_css, element_cache, atomic_styles}`, `save_check`, `change_receipt` (`elementor_atomic`). Dry runs: `would_apply`, `would_store`, `save_check`; nothing written, no caches touched.
+
+---
+
+## Reports on every write (1.15.0)
+
+**`cache`.** On every write tool's response; never on a dry run or a read. `{detected: string[], purged: true|false|null, scope: "post"|"all"|null, notes: string[], post_ids?: int[]}`. `detected` lists cache plugins found (`litespeed`, `wp-rocket`, `w3-total-cache`, `wp-super-cache`, `wp-fastest-cache`, `sg-optimizer`). `purged` is `true` when every detected plugin was asked to purge without an error, `false` when one failed or purging is off or filtered, `null` when none was found or nothing was written. `notes` names caches the plugin cannot reach; they never change `purged`. A call that wrote nothing (a no-op, an idempotency replay) has `purged: null, scope: null`. A tool error has no `cache`, but what was written before it is still purged. Elementor CSS: a write to one page clears and rebuilds that page's file (no global clear); a write to `elementor_library` content clears everything; when the per-page clear cannot be confirmed the whole site is cleared and `scope` is `all`.
+
+**`sanitized_report`.** Next to `sanitized` and `sanitized_paths`, on real writes and dry runs:
+
+```json
+"sanitized": true,
+"sanitized_paths": ["ab00069/settings/html"],
+"sanitized_report": [
+  {
+    "path": "ab00069/settings/html",
+    "rule": "html",
+    "removed_tags": ["style", "svg", "path", "rect"],
+    "removed_attributes": [],
+    "inline_markup": "stripped_setting_off",
+    "note": "The contents of removed <style> and <script> tags stay on the page as visible text; ..."
+  }
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `path` | Where the value lives: `<element id>/settings/<path>`, a meta key path, or `title`, `content`, `excerpt`, `description` |
+| `rule` | `html` (`wp_kses_post`), `url` (`esc_url_raw`), `css` (`sanitize_textarea_field`), `text` (`sanitize_text_field`). A `url` or `css` entry can have empty lists: the value changed without losing a tag |
+| `removed_tags`, `removed_attributes` | Compared from input and output, lowercased. Attributes of a removed tag are not listed |
+| `source` | `elementor` when Elementor's own save removed it, for a user without `unfiltered_html` |
+| `inline_markup` | Only for `<style>` or `<svg>` in the `html` setting of a classic `html` widget. `kept`, `stripped_setting_off`, `stripped_no_capability`, `stripped_wp_version`, `stripped_unsafe` |
+| `kept_tags`, `removed_css` | With `kept`: the tags kept, and what left the CSS (`@import`, off-site `url()`, or the whole block) |
+| `note` | Plain language to pass on |
+
+Capped at 50 entries, then `… and N more`. `sanitized_report` can come without `sanitized` when markup was kept and the value did not change. Kept markup can still report `sanitized: true` with no removals, because kses normalises it (`viewBox` to `viewbox`, which browsers read correctly). `inherited_sanitized_report` covers `inherit_settings_from`.
 
 ---
 

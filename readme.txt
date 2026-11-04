@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.14.0
+Stable tag: 1.15.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-**Without an IATO account (45 WordPress tools):**
+**Without an IATO account (47 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -47,9 +47,10 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Clone the styling of an existing Elementor post in one call via `update_elementor_data(..., inherit_settings_from: <id>)`
 * Resolve URLs to their rendering post (Theme Builder shadowing detection)
 * Search content across the site
-* Read site info and settings
+* Read site info and settings, and set the site title, tagline and home page
 * Read and filter comments
 * One-call rollback for any tracked write — every change emits a receipt with a stable `change_id`; pass it back to the `rollback` tool and the original value is restored
+* Purge page caches after every change (LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache, SiteGround Optimizer) and say so in the response, including any cache IATO cannot reach, such as a CDN
 
 **With an [IATO account](https://iato.ai) (12 bridge tools — full analyze-and-fix pipeline):**
 
@@ -112,7 +113,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 40 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
+No. The plugin works standalone for reading and editing WordPress content with 47 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
 
 = Which WordPress version is required? =
 
@@ -156,6 +157,14 @@ Yes, from 1.14.0, with Elementor 4.3.0 or later and the Atomic Editor turned on.
 
 The alt text of an image from the Media Library belongs to the attachment, so IATO changes it there, and the change applies everywhere that image is used. Global classes and component instances are not edited by IATO yet. On sites with an older Elementor, IATO accepts only typed values for atomic elements and says what is missing. While the Atomic Editor is off, IATO does not change atomic elements at all, because Elementor cannot check them; the rest of the page can still be edited.
 
+= Why do visitors still see the old page after a change? =
+
+IATO purges the cache plugins it finds after each change and says what happened in the tool's `cache` object. A cache in front of WordPress, such as Cloudflare or a host's CDN, is out of its reach: the response names it in `cache.notes` so the AI client can tell you to purge it from that service's dashboard. On Hostinger, LiteSpeed's full purge also clears hCDN when Hostinger Tools 3.0.79 or later is active. A single-page purge cleared it too on the Hostinger site we tested, but IATO does not control that, so if a page still looks stale, purge hCDN in hPanel.
+
+= Why was a style block or an SVG removed from my HTML widget? =
+
+Content written through MCP is filtered, whatever the role of the user behind the connection, and `<style>` and `<svg>` are not on the list of allowed tags. The response's `sanitized_report` says what was removed from each value. To keep them in Elementor HTML widgets, turn on "Allow inline SVG and style blocks in HTML widgets for administrators" under Settings > IATO MCP. It applies only to a WordPress user who holds both `unfiltered_html` and `manage_options`, and needs WordPress 6.5 or later. Scripts, event attributes, `javascript:` URLs, `foreignObject`, `@import` and off-site `url()` are still removed.
+
 = Can I control which tools are available? =
 
 Yes. Go to Settings > IATO MCP to enable or disable individual tools. You can turn off any tool you don't want AI clients to access.
@@ -172,6 +181,16 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.15.0 =
+* New: Changes made through MCP now purge page caches: LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache and SiteGround Optimizer. A change to one page purges that page, plus the home URL for the front page or posts page. A change to the Elementor kit, Theme Builder templates, global widgets, saved templates, menus, terms, redirects or site settings purges the whole site. Turn it off under Settings > IATO MCP.
+* New: Write tools return a cache object (detected, purged, scope, notes) saying what was purged and naming caches IATO cannot reach, such as Cloudflare or a host's CDN. get_site_info lists what it found. Dry runs and reads have no cache object.
+* New: update_site_settings sets the site title, the tagline and what the home page shows. It accepts dry_run, and each option changed has its own rollback. get_site_settings also returns show_on_front, page_on_front and page_for_posts.
+* New: sanitized_report says what sanitizing removed from each value: which tags and attributes, and which rule applied. create_post, update_post, the create_media description and plain text values in update_post_meta and set_page_settings report removals too; they reported nothing before. sanitized and sanitized_paths are unchanged.
+* New: Setting "Allow inline SVG and style blocks in HTML widgets for administrators", off by default, needs WordPress 6.5 or later. When on, the Elementor HTML widget keeps style blocks and a small SVG subset for a WordPress user who holds both unfiltered_html and manage_options. Scripts, event attributes, javascript: URLs, foreignObject, @import and off-site url() are still removed, and the report says what was kept and what was not.
+* New: Developer hooks iato_mcp_cache_purge (filter, skip a purge) and iato_mcp_after_cache_purge (action, add your own).
+* Change: Editing a classic Elementor page now clears and rebuilds only that page's CSS, as Elementor's own editor does. Every edit used to delete every page's CSS file, which could leave other cached pages unstyled. Writes that other pages render still clear all of it.
+* Fix: When Elementor's own save removes content for a user without unfiltered_html, including from widgets the write did not touch, the result now says so.
 
 = 1.14.0 =
 * New: Heading level, text, link and external-image alt fixes now work on Elementor Atomic Editor (V4) elements through the existing tools (set_heading_level, set_widget_setting, update_elementor_widget, update_elementor_widgets_bulk, update_elementor_patch, update_alt_text). IATO converts and validates values with Elementor's own code (Elementor 4.3.0 or later), and edits go live like classic edits.
@@ -453,6 +472,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.15.0 =
+Changes made through MCP now purge page caches and say so, a new tool sets the site title and home page, and responses say exactly what sanitizing removed. Classic Elementor edits now rebuild only the edited page's CSS.
 
 = 1.14.0 =
 Heading, text, link and image alt fixes now work on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later), validated with Elementor's own code and with a rollback for each change. Sending a setting again repairs elements damaged by IATO 1.13.0 or earlier.

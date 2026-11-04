@@ -189,8 +189,13 @@ IATO_MCP_Server::register_tool(
 		// under an `_elementor_` key, where the strings inside are sanitised by
 		// shape unless the request may store unfiltered HTML.
 		$sanitized_paths = [];
+		$removed         = [];
 		if ( is_string( $after_raw ) ) {
 			$after_val = sanitize_text_field( $after_raw );
+			$entry     = IATO_MCP_Sanitize_Report::for_value( $key, 'text', $after_raw, $after_val );
+			if ( null !== $entry ) {
+				$removed = [ $entry ];
+			}
 		} elseif ( is_array( $after_raw ) || is_object( $after_raw ) ) {
 			$after_val = $after_raw;
 			if ( ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
@@ -201,12 +206,14 @@ IATO_MCP_Server::register_tool(
 					: IATO_MCP_Meta_Policy::sanitize_array_value( $key, $after_raw, $before );
 				$after_val       = $s['value'];
 				$sanitized_paths = $s['changed'];
+				$removed         = $s['report'];
 			}
 		} else {
 			// bool, int, float, null pass straight through.
 			$after_val = $after_raw;
 		}
 		$sanitized_report = empty( $sanitized_paths ) ? [] : [ 'sanitized' => true, 'sanitized_paths' => $sanitized_paths ];
+		IATO_MCP_Sanitize_Report::add_to( $sanitized_report, $removed );
 
 		if ( $dry_run ) {
 			return IATO_MCP_Server::ok( [
@@ -239,15 +246,8 @@ IATO_MCP_Server::register_tool(
 
 		// Elementor cache invalidation for any _elementor_* meta write.
 		if ( 0 === stripos( $key, '_elementor_' ) ) {
-			delete_post_meta( $post_id, '_elementor_css' );
-			wp_cache_delete( $post_id, 'post_meta' );
 			wp_cache_delete( $post_id, 'posts' );
-			if ( class_exists( '\Elementor\Plugin' ) ) {
-				$plugin = \Elementor\Plugin::$instance;
-				if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
-					$plugin->files_manager->clear_cache();
-				}
-			}
+			IATO_MCP_Elementor_Adapter::clear_post_css( $post_id );
 		}
 
 		$receipt = IATO_MCP_Change_Receipt::record( $post_id, 'post_meta', $key, $before, $after_stored );

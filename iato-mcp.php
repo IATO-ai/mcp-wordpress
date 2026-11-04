@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.14.0
+ * Version:     1.15.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.14.0' );
+define( 'IATO_MCP_VERSION', '1.15.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -54,6 +54,7 @@ require_once IATO_MCP_DIR . 'includes/class-iato-client.php';
 require_once IATO_MCP_DIR . 'includes/class-seo-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-theme-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-meta-policy.php';
+require_once IATO_MCP_DIR . 'includes/class-cache.php';
 require_once IATO_MCP_DIR . 'includes/class-change-receipt.php';
 require_once IATO_MCP_DIR . 'includes/class-call-log.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback.php';
@@ -69,6 +70,8 @@ require_once IATO_MCP_DIR . 'includes/class-diagnostics.php';
 require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-abilities.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
+require_once IATO_MCP_DIR . 'includes/class-sanitize-report.php';
+require_once IATO_MCP_DIR . 'includes/class-inline-markup.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-engine.php';
@@ -278,6 +281,12 @@ Never assume a page builder. Always check first.
 Every write tool returns a change_receipt with a unique rollback ID.
 Store these and offer rollback to the user if anything looks wrong.
 Use dry_run=true to preview any edit before committing it.
+
+Write tools also return a cache object: the page cache plugins found
+(detected), whether they were purged (purged), and notes about caches
+that could not be reached, such as a CDN. When purged is not true or
+notes name a cache, tell the user visitors may still see the old page.
+When a response has sanitized_report, tell the user what was removed.
 END_UNIVERSAL;
 
 	// New-post workflow: fires whenever any non-Gutenberg builder is active.

@@ -913,15 +913,16 @@ class IATO_MCP_Elementor_Adapter {
 	// ── Write pipeline ────────────────────────────────────────────────────
 
 	/**
-	 * Persist a modified element tree back into the post. Mirrors the v1
-	 * update_elementor_data flow (tool-page-builder.php:179-247):
+	 * Persist a modified element tree back into the post:
 	 *
-	 *   1. wp_slash + json_encode + update_post_meta('_elementor_data')
-	 *   2. update_post_meta('_elementor_edit_mode', 'builder')
-	 *   3. delete _elementor_css meta + cache invalidation + Elementor cache clear
-	 *   4. \Elementor\Plugin::$instance->documents->get($id)->save(['elements' => $decoded])
-	 *   5. If post_content didn't update, force via Frontend::get_builder_content
-	 *   6. Verify meta length matches input
+	 *   0. Sanitise the values the request changed
+	 *   1. Delete this post's CSS meta and element cache
+	 *   2. \Elementor\Plugin::$instance->documents->get($id)->save(['elements' => $decoded])
+	 *   3. Only when Elementor did not store it: the plugin writes the tree itself
+	 *   4. If post_content didn't update, force via Frontend::get_builder_content
+	 *   5. Clear this post's Elementor caches and queue its CSS and the page purge
+	 *      (IATO_MCP_Elementor_Adapter::clear_post_css(), IATO_MCP_Cache)
+	 *   6. Verify the stored tree has the same elements
 	 *
 	 * Returns a status array. Caller is responsible for revision computation
 	 * — both `previous_revision` (compared on entry) and `current_revision`
@@ -948,12 +949,10 @@ class IATO_MCP_Elementor_Adapter {
 	 *                                      checked, not other nodes with its id.
 	 *                                      1.14.0 (IATO_MCP_Elementor_Atomic_Writer):
 	 *                                      `atomic` — the tree was built and
-	 *                                      validated by the atomic writer: the
-	 *                                      global CSS flush is skipped, this
-	 *                                      post's caches are cleared after the
-	 *                                      write, Elementor refusing the save
-	 *                                      (false) or rejecting the settings is
-	 *                                      a refusal, not a fallback write.
+	 *                                      validated by the atomic writer:
+	 *                                      Elementor refusing the save (false)
+	 *                                      or rejecting the settings is a
+	 *                                      refusal, not a fallback write.
 	 *                                      `skip_save` — reason to store the tree
 	 *                                      with the plugin's own write instead of
 	 *                                      Elementor's save (the writer's page
@@ -974,7 +973,8 @@ class IATO_MCP_Elementor_Adapter {
 	 *   elementor_save:bool|string|null,
 	 *   stored_by:string,
 	 *   sanitized?:bool,
-	 *   sanitized_paths?:string[]
+	 *   sanitized_paths?:string[],
+	 *   sanitized_report?:array
 	 * }|WP_Error
 	 */
 	public static function write_pipeline(
@@ -1000,6 +1000,7 @@ class IATO_MCP_Elementor_Adapter {
 		// iato_mcp_allow_unfiltered_html). Elementor's own save, below, adds
 		// its blanket kses pass on top for users without unfiltered_html.
 		$changed = [];
+		$report  = [];
 		// 1.14.0: `verbatim` (an atomic rollback restoring values recorded from
 		// Elementor's own sanitisers) skips this pass.
 		if ( empty( $opts['verbatim'] ) && ! IATO_MCP_Auth::unfiltered_html_allowed() ) {
@@ -1009,6 +1010,7 @@ class IATO_MCP_Elementor_Adapter {
 			$diff             = IATO_MCP_Elementor_Sanitizer::diff_tree( $decoded_elements, $stored_elements );
 			$decoded_elements = $diff['elements'];
 			$changed          = $diff['changed'];
+			$report           = $diff['report'];
 		}
 
 		$encoded = wp_json_encode( $decoded_elements );
@@ -1029,22 +1031,15 @@ class IATO_MCP_Elementor_Adapter {
 		$atomic    = ! empty( $opts['atomic'] );
 		$skip_save = isset( $opts['skip_save'] ) && is_string( $opts['skip_save'] ) && '' !== $opts['skip_save'] ? $opts['skip_save'] : null;
 
-		// 1. Cache clear before the save so Elementor renders fresh. The element
-		// cache is cleared for this post too (1.13.1): Elementor's global clear
-		// below runs once per request with optimized CSS files on, so in a bulk
-		// write later pages would otherwise render cached HTML in step 5.
-		// Atomic writes (1.14.0) clear this post's caches only, after the write.
+		// 1. Cache clear before the save so Elementor renders fresh. Only this
+		// post's: since 1.15.0 no write here clears every page's CSS, which is
+		// what Elementor's own editor does on a page save too. A write that other
+		// pages render (kit, Theme Builder, global widgets, saved templates) clears
+		// all of it afterwards, in IATO_MCP_Cache.
 		delete_post_meta( $post_id, '_elementor_css' );
 		delete_post_meta( $post_id, '_elementor_element_cache' );
 		wp_cache_delete( $post_id, 'post_meta' );
 		wp_cache_delete( $post_id, 'posts' );
-
-		if ( ! $atomic && class_exists( '\Elementor\Plugin' ) ) {
-			$plugin = \Elementor\Plugin::$instance;
-			if ( isset( $plugin->files_manager ) && method_exists( $plugin->files_manager, 'clear_cache' ) ) {
-				$plugin->files_manager->clear_cache();
-			}
-		}
 
 		// 2. Elementor's own Document::save() first: it validates and stores the
 		// elements through their classes and renders post_content. Guarded: it
@@ -1079,7 +1074,10 @@ class IATO_MCP_Elementor_Adapter {
 			}
 			if ( $document ) {
 				try {
-					$elementor_save = IATO_MCP_Auth::write_unlocked( fn() => (bool) $document->save( [ 'elements' => $decoded_elements ] ) );
+					$elementor_save = IATO_MCP_Inline_Markup::write_without_style_in_content(
+						$encoded,
+						fn() => IATO_MCP_Auth::write_unlocked( fn() => (bool) $document->save( [ 'elements' => $decoded_elements ] ) )
+					);
 				} catch ( \Throwable $e ) {
 					$elementor_save = 'error';
 					$save_error     = $e->getMessage();
@@ -1180,10 +1178,13 @@ class IATO_MCP_Elementor_Adapter {
 				if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
 					$rendered = $frontend->get_builder_content( $post_id, true );
 					if ( ! empty( $rendered ) && $rendered !== $old_content ) {
-						wp_update_post( wp_slash( [ // wp_update_post() unslashes
-							'ID'           => $post_id,
-							'post_content' => $rendered,
-						] ) );
+						IATO_MCP_Inline_Markup::write_without_style_in_content(
+							$encoded,
+							fn() => wp_update_post( wp_slash( [ // wp_update_post() unslashes
+								'ID'           => $post_id,
+								'post_content' => $rendered,
+							] ) )
+						);
 						$new_content     = $rendered;
 						$content_updated = true;
 					}
@@ -1193,12 +1194,12 @@ class IATO_MCP_Elementor_Adapter {
 			}
 		}
 
-		// Elementor's save did not run, so it did not clear this post's caches.
-		// Cleared after the frontend render above, which would otherwise keep
-		// CSS and element HTML rendered while some types could not be loaded.
-		// 1.14.0: also after a classic fallback write (Elementor's save failed)
-		// and after every atomic write, which skips the global flush.
-		$cache_cleared = ( 'skipped' === $elementor_save || 'plugin' === $stored_by || $atomic ) ? self::clear_post_caches( $post_id ) : null;
+		// This post's caches are cleared after the frontend render above, which
+		// would otherwise keep CSS and element HTML rendered while some types could
+		// not be loaded. 1.15.0: after every write. The CSS file is rebuilt only
+		// when Elementor stored the page, which means it could load every element;
+		// the atomic path keeps rebuilding on the next page view.
+		$cache_cleared = self::clear_post_css( $post_id, true === $elementor_save && ! $atomic );
 
 		// 6. Verify meta persisted. Structural, not byte-length: when Elementor's
 		// own save ran it re-encodes the tree (defaults, key order, version
@@ -1208,6 +1209,17 @@ class IATO_MCP_Elementor_Adapter {
 		$persisted_meta   = (string) get_post_meta( $post_id, '_elementor_data', true );
 		$meta_persisted   = self::same_element_tree( $persisted_meta, $decoded_elements );
 		$current_revision = self::compute_revision( $persisted_meta );
+
+		// 1.15.0: Elementor's own kses pass runs over the whole document for a user
+		// without unfiltered_html (Author, every role on multisite or under
+		// DISALLOW_UNFILTERED_HTML), widgets this write did not touch included.
+		// Nothing else reports what it removed.
+		if ( true === $elementor_save && ! IATO_MCP_Auth::unfiltered_html_allowed() && ! IATO_MCP_Auth::write_unlocked( fn() => current_user_can( 'unfiltered_html' ) ) ) {
+			$persisted_tree = json_decode( $persisted_meta, true );
+			$lost           = is_array( $persisted_tree ) ? IATO_MCP_Elementor_Sanitizer::compare_stored( $decoded_elements, self::force_arrays( $persisted_tree ) ) : [];
+			$report         = IATO_MCP_Sanitize_Report::merge( $report, $lost );
+			$changed        = array_values( array_unique( array_merge( $changed, array_column( $lost, 'path' ) ) ) );
+		}
 
 		$result = [
 			'previous_revision'   => $previous_revision,
@@ -1251,6 +1263,9 @@ class IATO_MCP_Elementor_Adapter {
 		if ( ! empty( $changed ) ) {
 			$result['sanitized']       = true;
 			$result['sanitized_paths'] = $changed;
+		}
+		if ( ! empty( $report ) ) {
+			$result['sanitized_report'] = $report; // can come alone: markup kept by the opt-in changed no value
 		}
 		return $result;
 	}
@@ -1327,10 +1342,40 @@ class IATO_MCP_Elementor_Adapter {
 	}
 
 	/**
-	 * Clear one post's Elementor caches after the plugin stored the page itself
-	 * (Elementor's save, which would have done it, did not run): its CSS file
-	 * and meta, its element cache and its atomic styles. Rebuilt on the next
-	 * page view. Reports what was cleared.
+	 * Clear one post's Elementor caches after a write and queue what comes next
+	 * (rebuilding its CSS, purging the page) in IATO_MCP_Cache. Replaces the
+	 * global files_manager->clear_cache() every classic write made until 1.15.0,
+	 * which deleted every page's CSS file while pages cached by a plugin that
+	 * does not listen for it (W3 Total Cache, WP Super Cache, WP Fastest Cache,
+	 * SiteGround Optimizer) still linked to those files.
+	 *
+	 * The clear counts as reliable only when it can be seen to have worked: when
+	 * it cannot, IATO_MCP_Cache falls back to the global clear and a full purge.
+	 *
+	 * @param bool $regenerate Rebuild the CSS file now rather than on the next page
+	 *                         view. Never for a page holding elements Elementor cannot
+	 *                         load right now: the file would miss their styles, and
+	 *                         Elementor would keep it after they come back.
+	 * @return array{post_css:bool,element_cache:bool,atomic_styles:bool}
+	 */
+	public static function clear_post_css( int $post_id, bool $regenerate = true ): array {
+		$cleared = self::clear_post_caches( $post_id );
+		if ( class_exists( '\Elementor\Plugin' ) ) {
+			$reliable = class_exists( '\Elementor\Core\Files\CSS\Post' )
+				&& ! empty( $cleared['post_css'] )
+				&& empty( get_post_meta( $post_id, '_elementor_css', true ) );
+			if ( $regenerate && [] !== self::unregistered_element_types( self::stored_elements( $post_id ) ?? [] ) ) {
+				$regenerate = false;
+			}
+			IATO_MCP_Cache::queue_post_css( $post_id, $reliable, $regenerate );
+		}
+		return $cleared;
+	}
+
+	/**
+	 * Clear one post's Elementor caches: its CSS file and meta, its element cache
+	 * and its atomic styles. Rebuilt on the next page view. Reports what was
+	 * cleared.
 	 */
 	private static function clear_post_caches( int $post_id ): array {
 		$cleared = [ 'post_css' => false, 'element_cache' => false, 'atomic_styles' => false ];
@@ -1771,6 +1816,9 @@ class IATO_MCP_Elementor_Adapter {
 			$out['sanitized']       = true;
 			$out['sanitized_paths'] = $pipeline['sanitized_paths'];
 		}
+		if ( ! empty( $pipeline['sanitized_report'] ) ) {
+			$out['sanitized_report'] = $pipeline['sanitized_report'];
+		}
 		return $out;
 	}
 
@@ -1780,7 +1828,9 @@ class IATO_MCP_Elementor_Adapter {
 			return [];
 		}
 		$r = IATO_MCP_Elementor_Sanitizer::preview( self::force_arrays( $new_elements ), $stored_elements );
-		return $r['sanitized'] ? [ 'sanitized' => true, 'sanitized_paths' => $r['sanitized_paths'] ] : [];
+		$sanitized = ! empty( $r['sanitized'] );
+		unset( $r['sanitized'] );
+		return ( $sanitized ? [ 'sanitized' => true ] : [] ) + $r;
 	}
 
 	/**

@@ -222,6 +222,7 @@ IATO_MCP_Server::register_tool(
 			'url' => get_permalink( $post_id ),
 		];
 		IATO_MCP_Change_Receipt::append( $data, $receipt );
+		IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, $created ) );
 
 		$notice = iato_mcp_page_builder_notice( 'create' );
 		if ( null !== $notice ) {
@@ -231,6 +232,30 @@ IATO_MCP_Server::register_tool(
 		return IATO_MCP_Server::ok( $data );
 	}
 );
+
+/**
+ * What sanitising removed from a post's fields: what was sent against what is
+ * stored, read back, because WordPress' content filters run on save as well.
+ *
+ * @param array        $args The tool arguments.
+ * @param WP_Post|null $post The post as stored.
+ * @return array Report entries.
+ */
+function iato_mcp_post_sanitize_report( array $args, $post ): array {
+	if ( ! $post ) {
+		return [];
+	}
+	$report = [];
+	foreach ( [ 'title' => [ 'post_title', 'text' ], 'content' => [ 'post_content', 'html' ], 'excerpt' => [ 'post_excerpt', 'text' ] ] as $arg => [ $field, $rule ] ) {
+		if ( isset( $args[ $arg ] ) ) {
+			$entry = IATO_MCP_Sanitize_Report::for_value( $arg, $rule, $args[ $arg ], (string) ( $post->{$field} ?? '' ) );
+			if ( null !== $entry ) {
+				$report[] = $entry;
+			}
+		}
+	}
+	return $report;
+}
 
 // ── update_post ───────────────────────────────────────────────────────────────
 
@@ -355,6 +380,7 @@ IATO_MCP_Server::register_tool(
 		} elseif ( count( $receipts ) > 1 ) {
 			$data['change_receipts'] = $receipts;
 		}
+		IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, $fresh ) );
 
 		// Surface a builder-aware notice if content was rewritten on a builder-driven site.
 		if ( isset( $args['content'] ) ) {
