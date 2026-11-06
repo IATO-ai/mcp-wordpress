@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.16.0
+ * Version:     1.17.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.16.0' );
+define( 'IATO_MCP_VERSION', '1.17.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -78,6 +78,7 @@ require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-engine.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-writer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
+require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 
@@ -292,6 +293,13 @@ Write tools also return a cache object: the page cache plugins found
 that could not be reached, such as a CDN. When purged is not true or
 notes name a cache, tell the user visitors may still see the old page.
 When a response has sanitized_report, tell the user what was removed.
+
+NAVIGATION MENUS:
+To build a menu: create_menu, then create_menu_item for each link (a url for
+a custom link, including #anchor links, or a post_id for a page; position and
+parent_id set the order and nesting). get_menus lists the theme's locations
+under locations; pass one as location to create_menu, or use
+assign_menu_location to put a menu in one.
 END_UNIVERSAL;
 
 	// New-post workflow: fires whenever any non-Gutenberg builder is active.
@@ -346,6 +354,30 @@ Elementor data but Elementor is turned off for it, so visitors see its
 post_content. Elementor writes are refused there. Ask the user before calling
 update_elementor_data with activate_builder: true, which switches the page to
 Elementor and replaces that content. Rollback restores it.
+
+To build a site-wide header or footer (Elementor Pro): create_elementor_template
+with template_type header or footer and conditions
+[{"type":"include","name":"general"}], then fill it with update_elementor_data,
+then publish it with update_post status publish. Or pass elementor_data and
+status publish to create_elementor_template, which publishes last. A draft shows
+nowhere. Then read theme_locations from resolve_url on the home page. A template
+with a built-in header and footer on the page itself, or a page using the
+elementor_canvas template, shows no Theme Builder header or footer: switch that
+page to elementor_header_footer with set_page_settings (page_template), and take
+its own header and footer out of its content.
+
+Rolling back a template you have since filled needs force: true, because it
+removes what visitors see on every page it shows on. Ask the user first.
+
+Elementor Pro's Nav Menu widget needs a WordPress menu: create_menu, then
+create_menu_item for each link, then set the widget's menu setting to the
+menu's slug.
+
+To see which Theme Builder header and footer a URL gets, call resolve_url and
+read theme_locations. A template named there renders around the page and is
+not what you edit to change the page itself. theme_locations is null when
+Elementor Pro's Theme Builder is not active. not_evaluated lists conditions
+this plugin could not judge for that URL: check those in the Theme Builder.
 END_ELEMENTOR;
 	}
 
@@ -469,7 +501,7 @@ function iato_mcp_validate_post_slug( mixed $raw, int $post_id ): string|WP_Erro
  * @param string $context 'create' or 'update'. Influences phrasing only.
  * @return string|null Notice text, or null when no notice should be surfaced.
  */
-function iato_mcp_page_builder_notice( string $context = 'create' ): ?string {
+function iato_mcp_page_builder_notice( string $context = 'create', int $post_id = 0 ): ?string {
 	$builders = iato_mcp_detect_active_builders();
 	// Gutenberg-only is the normal case — no notice.
 	$active = array_filter( [
@@ -492,6 +524,10 @@ function iato_mcp_page_builder_notice( string $context = 'create' ): ?string {
 
 	if ( 'elementor' === $builder ) {
 		if ( 'update' === $context ) {
+			// Elementor renders only the posts it is on. Visitors of any other see this content.
+			if ( $post_id > 0 && 'active' !== IATO_MCP_Elementor_Adapter::builder_state( $post_id ) ) {
+				return "This site uses Elementor, but Elementor is not on for this post, so visitors do see update_post's content. It will not match the layout of posts built with Elementor.";
+			}
 			return "This site uses Elementor. update_post's content field will NOT change what visitors see on this post — Elementor renders from _elementor_data, not post_content. Use update_elementor_widget for single-widget edits, or update_elementor_data for full-document replacements. If you intended to write fresh content, ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and apply it via update_elementor_data.";
 		}
 		return "This site uses Elementor. The post was created with plain HTML in post_content and will not match your site's existing post format. Recommended: ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and call update_elementor_data on this new post to match. That call turns Elementor on for the post.";

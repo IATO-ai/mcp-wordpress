@@ -38,7 +38,16 @@ namespace Elementor {
 			return true;
 		}
 	}
-	final class FakeDocuments { public static bool $absent = false; public function get( int $id ) { return self::$absent ? null : new FakeDocument(); } }
+	final class FakeDocuments {
+		public static bool $absent = false;
+		public function get( int $id ) { return self::$absent ? null : new FakeDocument(); }
+		/** @var array<string,string> type => document class, what get_document_types() answers */
+		public static array $types = [];
+		/** @var callable|null what create() does, for tests of IATO_MCP_Theme_Builder */
+		public static $on_create = null;
+		public function get_document_types(): array { return self::$types; }
+		public function create( string $type, array $post_data = [], array $meta_data = [] ) { return ( self::$on_create )( $type, $post_data, $meta_data ); }
+	}
 	final class FakeFilesManager {
 		public static int $cleared = 0;
 		public function clear_cache(): void {
@@ -90,6 +99,8 @@ namespace Elementor {
 		public FakeFrontend $frontend;
 		public FakeDb $db;
 		public FakeDynamicTags $dynamic_tags;
+		/** @var object|null what get_current_settings( 'default_page_template' ) comes from */
+		public ?object $kits_manager = null;
 		public function __construct() { $this->db = new FakeDb(); $this->dynamic_tags = new FakeDynamicTags(); $this->documents = new FakeDocuments(); $this->files_manager = new FakeFilesManager(); $this->frontend = new FakeFrontend(); }
 		public static function instance(): Plugin { return self::$instance ??= new Plugin(); }
 	}
@@ -173,7 +184,28 @@ namespace {
 		function wp_strip_all_tags( string $text ): string { return trim( strip_tags( $text ) ); }
 	}
 	if ( ! function_exists( 'wp_update_post' ) ) {
-		function wp_update_post( array $postarr ): int { IATO_Test_WP::$posts[ $postarr['ID'] ]['post_content'] = stripslashes( (string) ( $postarr['post_content'] ?? '' ) ); return $postarr['ID']; } // core unslashes
+		function wp_update_post( array $postarr, bool $wp_error = false ): int|WP_Error {
+			if ( null !== IATO_Test_WP::$update_post_error ) {
+				return IATO_Test_WP::$update_post_error;
+			}
+			if ( IATO_Test_WP::$update_post_throws && array_key_exists( 'post_status', $postarr ) ) {
+				IATO_Test_WP::$posts[ $postarr['ID'] ]['post_status'] = $postarr['post_status'];
+				if ( class_exists( 'IATO_Test_Roles' ) && isset( IATO_Test_Roles::$posts[ $postarr['ID'] ] ) ) {
+					IATO_Test_Roles::$posts[ $postarr['ID'] ]['post_status'] = $postarr['post_status'];
+				}
+				throw new \RuntimeException( 'an addon failed in save_post' );
+			}
+			if ( array_key_exists( 'post_content', $postarr ) || ! array_key_exists( 'post_status', $postarr ) ) {
+				IATO_Test_WP::$posts[ $postarr['ID'] ]['post_content'] = stripslashes( (string) ( $postarr['post_content'] ?? '' ) );
+			}
+			if ( array_key_exists( 'post_status', $postarr ) ) {
+				IATO_Test_WP::$posts[ $postarr['ID'] ]['post_status'] = $postarr['post_status'];
+				if ( class_exists( 'IATO_Test_Roles' ) && isset( IATO_Test_Roles::$posts[ $postarr['ID'] ] ) ) {
+					IATO_Test_Roles::$posts[ $postarr['ID'] ]['post_status'] = $postarr['post_status'];
+				}
+			}
+			return $postarr['ID'];
+		}
 	}
 
 	/**

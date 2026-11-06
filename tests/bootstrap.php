@@ -61,6 +61,10 @@ final class IATO_Test_WP {
 	public static array $meta = [];
 	/** @var array<int,array<string,mixed>> fake posts: [post_id] => [ 'post_content' => ... ] */
 	public static array $posts = [];
+	/** What wp_update_post() answers with instead of saving, when set. */
+	public static ?WP_Error $update_post_error = null;
+	/** wp_update_post() saves the row, then another plugin's save_post hook throws. */
+	public static bool $update_post_throws = false;
 	/** @var array<int,array{0:int,1:string,2:mixed}> every update_post_meta() call, in order */
 	public static array $writes = [];
 	/** @var array<int,array{0:string,1:int}> (meta key, number of live elementor meta hooks) at each update_post_meta() call */

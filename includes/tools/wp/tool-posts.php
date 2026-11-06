@@ -338,6 +338,12 @@ IATO_MCP_Server::register_tool(
 			if ( 'publish' === $args['status'] ) {
 				$publish_check = IATO_MCP_Auth::require_publish_cap( $post->post_type );
 				if ( is_wp_error( $publish_check ) ) return $publish_check;
+				if ( 'elementor_library' === $post->post_type && 'publish' !== $post->post_status ) {
+					$empty = IATO_MCP_Theme_Builder::empty_publish_refusal( $post_id );
+					if ( null !== $empty ) {
+						return $empty;
+					}
+				}
 			}
 			$postarr['post_status'] = $args['status'];
 			$before['status']       = $post->post_status;
@@ -388,7 +394,7 @@ IATO_MCP_Server::register_tool(
 			];
 			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, (object) ( $postarr + [ 'post_title' => $post->post_title, 'post_content' => $post->post_content, 'post_excerpt' => $post->post_excerpt ] ) ) );
 			if ( isset( $args['content'] ) ) {
-				$notice = iato_mcp_page_builder_notice( 'update' );
+				$notice = iato_mcp_page_builder_notice( 'update', $post_id );
 				if ( null !== $notice ) {
 					$data['notice'] = $notice;
 				}
@@ -432,7 +438,7 @@ IATO_MCP_Server::register_tool(
 
 		// Surface a builder-aware notice if content was rewritten on a builder-driven site.
 		if ( isset( $args['content'] ) ) {
-			$notice = iato_mcp_page_builder_notice( 'update' );
+			$notice = iato_mcp_page_builder_notice( 'update', $post_id );
 			if ( null !== $notice ) {
 				$data['notice'] = $notice;
 			}

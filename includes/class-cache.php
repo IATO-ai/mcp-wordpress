@@ -50,6 +50,10 @@ class IATO_MCP_Cache {
 		'create_menu_item',
 		'delete_menu_item',
 		'update_menu_item_details',
+		'create_menu',
+		'assign_menu_location',
+		'create_elementor_template',
+		'set_elementor_template_conditions',
 		'assign_term',
 		'create_term',
 		'update_term',
@@ -72,7 +76,7 @@ class IATO_MCP_Cache {
 	];
 
 	/** Receipt types whose change shows on every page. */
-	private const SITE_WIDE_TARGETS = [ 'menu_item', 'taxonomy', 'redirect', 'site_setting' ];
+	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting' ];
 
 	/**
 	 * Post types other pages render, so their own URL says nothing about what is

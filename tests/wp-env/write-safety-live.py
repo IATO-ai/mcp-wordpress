@@ -462,6 +462,17 @@ record('rollback restores them', x.get('success') is True and wp('post', 'meta',
 read = call('get_seo_data', {'id': seo})
 record('and the read shows them', read.get('title') == CLEAN or CLEAN in json.dumps(read), read)
 
+print('# what update_post says about visitors')
+classic = page()
+d = call('update_post', {'id': classic, 'content': '<p>Edited</p>'})
+record('with Elementor off for the post, it says visitors see the edit', 'do see' in d.get('notice', '') and 'will NOT' not in d.get('notice', ''), d)
+built2 = page()
+call('update_elementor_data', {'id': built2, 'elementor_data': json.dumps(tree('Notice'))})
+d = call('update_post', {'id': built2, 'content': '<p>Edited</p>'})
+record('with Elementor on, it says they do not', 'will NOT' in d.get('notice', ''), d)
+for pid in (classic, built2):
+    wp('post', 'delete', str(pid), '--force')
+
 fails = [n for n, ok in results if not ok]
 print(f'# {len(results) - len(fails)} passed, {len(fails)} failed')
 if fails:

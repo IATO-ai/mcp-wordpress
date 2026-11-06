@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.16.0
+Stable tag: 1.17.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-**Without an IATO account (47 WordPress tools):**
+**Without an IATO account (51 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -37,7 +37,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Set and clear the featured image on any post
 * Read and write arbitrary post meta with a credential-key denylist and a known-safe theme/builder/SEO allowlist (force=true required outside the allowlist)
 * Set per-post theme + builder page settings (hide title, sidebar layout, content layout, etc.) on Astra, Kadence, GeneratePress, and Elementor in one call
-* Read and edit navigation menus
+* Read and edit navigation menus, create menus and assign them to theme locations
 * Manage categories, tags, and taxonomy terms
 * Manage JSON-LD structured data
 * Manage redirect rules
@@ -45,7 +45,8 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Widget-grained Elementor edits with optimistic concurrency, idempotency, and bulk operations
 * Fix heading levels, text, links and image alt text on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later), converted and validated with Elementor's own code, each change with its own rollback
 * Clone the styling of an existing Elementor post in one call via `update_elementor_data(..., inherit_settings_from: <id>)`
-* Resolve URLs to their rendering post (Theme Builder shadowing detection)
+* Create Elementor Pro Theme Builder templates and set their display conditions, such as a site-wide header and footer
+* Resolve URLs to their rendering post, and to the Theme Builder header and footer they get
 * Search content across the site
 * Read site info and settings, and set the site title, tagline and home page
 * Read and filter comments
@@ -113,7 +114,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 47 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
+No. The plugin works standalone for reading and editing WordPress content with 51 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
 
 = Which WordPress version is required? =
 
@@ -181,6 +182,22 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.17.0 =
+* New: `create_elementor_template` creates a template the way Add New Template does: header, footer, single post and page, archive, search results, 404, popup, section, container or page. Theme Builder types need Elementor Pro. It builds a draft, fills it, sets its conditions and publishes last, so a failure on the way leaves nothing showing. A header or footer with conditions cannot be published empty, because it would replace the theme's with nothing. Administrators only.
+* New: `set_elementor_template_conditions` sets where a template shows, through Elementor Pro's own conditions manager, which rebuilds the cache that decides what renders. It returns before, after and `verified`, and warns when another published template may show on the same pages. The same conditions again rebuild the cache if it has gone stale. Administrators only.
+* New: `create_menu` creates a navigation menu, optionally in a theme location, and `assign_menu_location` puts a menu in a location or clears it. Rollback of `create_menu` deletes the menu and gives the location back; a menu that has items needs `force`, because deleting a menu deletes its items for good, and one given a location afterwards needs that change rolled back first.
+* New: `get_menus` lists every location the theme registers, with the menu in it (`locations`).
+* New: `resolve_url` says which Theme Builder header and footer a URL gets (`theme_locations`), by Elementor Pro's own rules applied to that URL. A page on Elementor Canvas gets neither, and says so (`hidden_by_page_template`). Another host gives null, and what it cannot judge goes under `not_evaluated`.
+* New: `list_elementor_templates` returns `conditions_revision`, for `if_revision`.
+* New: Server instructions describe the header and footer workflow, menus, and `elementor_header_footer`.
+* Fix: `resolve_url` and `get_post` with `include_shadowing` reported a header, footer, popup or section on Entire Site as what renders every page, so a request to edit a page could end up editing the site header. Only templates that replace a page's content count now.
+* Fix: `resolve_url` follows Elementor Pro's rules for the blog, archives, the front page and author archives. A blog archive template was reported as shadowing ordinary pages.
+* Fix: `resolve_url` decides what kind of page a URL is from WordPress's own rewrite rules and query, instead of guessing from its path. Later pages of the blog and of archives, pretty search URLs, custom taxonomies and plain-permalink query strings were read as not found or as the front page, and terms and authors that do not exist as archives. `route_type` gains `taxonomy_archive`, `date_archive`, `search_results` and `blog_home` for pages it called `404`.
+* Fix: A singular template is no longer reported as shadowing the blog index or a search.
+* Fix: `update_post` refuses to publish an empty header or footer that has display conditions, which would remove the theme's from those pages.
+* Fix: On a post with Elementor off, `update_post` no longer says a content edit will not reach visitors.
+* Fix: The result of Save Settings now appears next to the button. It appeared at the top of a long page, out of sight, and a failed save looked the same as a successful one.
 
 = 1.16.0 =
 * Security: Hardened which stored data a post meta write can reach, and how a rollback treats stored data. Update recommended.
@@ -496,6 +513,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.17.0 =
+Adds tools to create Theme Builder templates, set their display conditions, create menus and assign them to locations. resolve_url no longer reports a site-wide header as what renders each page, and says which header and footer a URL gets.
 
 = 1.16.0 =
 Security update; update recommended. Also fixes undo records that were never saved, title edits removing iframes from content, and Elementor writes overwriting classic pages (now refused unless activate_builder is passed). dry_run works on seven more tools.

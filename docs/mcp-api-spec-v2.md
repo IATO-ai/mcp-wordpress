@@ -412,7 +412,26 @@ Walks the WordPress rewrite cascade and Elementor Theme Builder conditions to an
 }
 ```
 
-`route_type` is one of: `page`, `category_archive`, `tag_archive`, `cpt_archive`, `theme_builder`, `404`.
+**`theme_locations` (1.17.0).** Which Elementor Pro Theme Builder header and footer the URL gets, on every response:
+
+```json
+"theme_locations": {
+  "header": { "template_id": 412, "condition_matched": "include/general" },
+  "footer": null,
+  "not_evaluated": [ { "location": "footer", "template_id": 415, "condition": "include/singular/child_of/5" } ]
+}
+```
+
+| Value | Meaning |
+|---|---|
+| `theme_locations: null` | Elementor Pro's Theme Builder is not active, reading it failed, the URL is on another host, or the caller may not read the post at this URL |
+| `header` / `footer: null` | No published template in Pro's conditions cache applies to this URL |
+| `hidden_by_page_template` | Only on a page using Elementor Canvas, its own or the kit's default: `header` and `footer` are null because the page template prints neither, whatever the conditions say |
+| `not_evaluated` | Only when not empty: conditions that depend on something the plugin does not look at (child of, by author, in a term), and every condition but Entire Site on a URL it cannot judge (a feed, WooCommerce's shop page and product archives). The answer above may be incomplete. Without `manage_options`, entries carry `location` alone |
+
+A header, footer, popup or section renders around or over a page, so since 1.17.0 none of them counts as shadowing it: `rendering_template_id`, `effective_render_id`, `template` and `get_post`'s `is_shadowed_by` report only templates that replace the content (`single`, `single-post`, `single-page`, `error-404`, `archive`, `search-results`, `product`, `product-post`, `product-archive`).
+
+`route_type` is one of: `page`, `category_archive`, `tag_archive`, `author_archive`, `cpt_archive`, `taxonomy_archive`, `date_archive`, `search_results`, `blog_home`, `theme_builder`, `404`, or a post type. The four before `theme_builder` are new in 1.17.0, for pages that used to come back as `404`. What a URL is comes from WordPress's own rewrite rules and `WP_Query::parse_query()`: a term or author that does not exist is `404`, and so is a date or later page with no posts. `rendering_post_id` is null where `url_to_postid()` answers with the front page for a query string that shows something else, such as `/?cat=7`.
 
 The `shadowed_post_id` field is populated when a higher-priority rule overrides what the slug would normally resolve to. In today's session this is the `/build/` case: the page with slug `build` (post 204) was shadowed by a Theme Builder template (post 309) that registered an "Include: All Pages" condition. The model spent ~10 minutes editing post 204 before realizing post 309 was the actual rendering surface.
 
@@ -491,6 +510,105 @@ Elementor Atomic Editor elements (`e-heading`, `e-paragraph`, `e-button`, `e-ima
 **Sequence.** Bound user (`iato_mcp_token_unbound`), Elementor's code available (`atomic_write_unavailable`), the element's type registered (`atomic_write_unavailable`: with the Atomic Editor off nothing can validate or show the element, so typed values are refused too), the editor not holding unsaved changes (`elementor_editor_unsaved_changes`, 409), `if_revision`; Elementor's load migrations, captured in memory and stored together with the change in the one write (`migrated_by_elementor: true`; `"would_migrate"` when nothing is written: dry run, no-op, refusal); build and validate; the page check: Elementor's per-element save transform over every atomic element and, for users without `unfiltered_html`, the kses pass Elementor's save applies, over every element including the untouched settings of the edited one. When the save would reject or alter an element the call does not change, the plugin stores the page itself so that element keeps its bytes (`elementor_save: "skipped"`, `skipped_reason: "invalid_elements_on_page"` with `invalid_elements`, or `"elementor_would_alter_untouched"` with `skipped_for_elements`). Otherwise Elementor's `Document::save()`: `false` → `elementor_cannot_edit`, a "Settings validation failed" throw → `elementor_validation_failed` (nothing written), any other throw → the plugin's write of the validated tree. Receipts right after the write; this post's caches only (Post CSS, element cache, atomic styles; no global flush); a re-read verifies the result.
 
 **Result fields (atomic).** `applied_via: "iato-native"`, `schema: "atomic"`, `state: "live"`, `applied: [{key, from, to}]` (plain values, `to` as read back), `applied_patch` (ops on `…/settings/<key>` with the stored typed value and, for `replace` / `remove`, `previous_value`), `render_error` (an addon threw while the page rendered after the write; the change and its receipt stand), `verified` (and `verification_diff`), `elementor_save`, `stored_by`, `skipped_reason`, `sanitized` / `sanitized_paths` (only when Elementor's sanitising changed a value beyond entity encoding), `migrated_by_elementor`, `editor_autosave_pending` and `editor_autosave` (`{user, user_id, modified, note}`: an autosave by any user newer than the page), `css: {scope: "post", post_css, element_cache, atomic_styles}`, `save_check`, `change_receipt` (`elementor_atomic`). Dry runs: `would_apply`, `would_store`, `save_check`; nothing written, no caches touched.
+
+---
+
+## Menus and theme locations (1.17.0)
+
+Both need `edit_theme_options` and honour `dry_run`. Refusals are JSON error text, `{error, message, ...}`.
+
+**`create_menu`**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Must not be in use by another menu |
+| `location` | string | No | Theme location slug from `get_menus`. A menu already there is replaced in that location and kept |
+| `dry_run` | boolean | No | `{dry_run: true, action: "would_create", name, slug, location, would_replace_menu_id?, not_checked}` |
+
+Returns `{menu_id, name, slug, location, replaced_menu_id?, change_receipt, cache}`, with the name and slug as stored. Elementor Pro's Nav Menu widget refers to a menu by this `slug`. Errors: `missing_name`, `unknown_menu_location` (with `locations`), `menu_exists` (with `menu_id`).
+
+**`assign_menu_location`**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `location` | string | Yes | Theme location slug from `get_menus` |
+| `menu_id` | integer | Yes | The menu, or 0 to clear the location. The menu that was there is kept |
+| `dry_run` | boolean | No | `{dry_run: true, action: "would_assign"\|"would_clear"\|"no_change", location, before, after, not_checked}` |
+
+Returns `{location, before: {menu_id}, after: {menu_id}, change_receipt, cache}`, with `menu_id` null for an empty location. The same menu again is `{action: "no_change", ...}` with no receipt. Errors: `unknown_menu_location`, `invalid_menu_id`, `not_found`.
+
+**`get_menus`** adds `locations`: `[{slug, label, menu_id|null}]`, every location the theme registers.
+
+**Rollback.**
+
+| `target_type` | `field` | `before_value` / `after_value` | Rollback | Refused with |
+|---|---|---|---|---|
+| `menu` | `create` | `{location, menu_id, theme}`, or null with no location / `{menu_id, name, slug, location, theme}` | Deletes the menu. Gives the location back to the previous menu if this one still holds it | `rollback_conflict` if the menu has items, which deleting it deletes permanently, was renamed, or holds a location it was given later, which that change's rollback must put back first; `force` overrides. `rollback_unavailable` after a theme switch, if the change set a location |
+| `menu_location` | the location slug | `{location, menu_id, theme}` | Restores the previous menu, or empties the location | `rollback_conflict` if the location changed since; `force` overrides. `rollback_unavailable` after a theme switch, or if the previous menu no longer exists |
+
+`force` does not get past `rollback_unavailable`. WordPress keeps menu locations per theme.
+
+---
+
+## Theme Builder templates (1.17.0)
+
+Both need `manage_options` and a credential tied to a WordPress user. Refusals are JSON error text, `{error, message, ...}`; a key with no owner gets `iato_mcp_token_unbound` as plain text. Checked against Elementor 4.3.6 and Elementor Pro 4.3.3.
+
+**Conditions** are accepted in either form, and returned as strings: a rule, `{"type":"include","name":"general"}` or `{"type":"exclude","name":"singular","sub_name":"page","sub_id":42}`, or the stored string, `include/general` or `exclude/singular/page/42`. `unknown_condition` returns `registered` (each top-level name with the sub-names under it) and `takes_id`, read from what Pro registers on that site.
+
+**`create_elementor_template`**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `title` | string | Yes | |
+| `template_type` | string | Yes | `header`, `footer`, `single-post`, `single-page`, `archive`, `search-results`, `error-404`, `popup` (these need Elementor Pro), `section`, `container`, `page` |
+| `status` | string | No | `draft` (default) or `publish`. A draft shows nowhere |
+| `elementor_data` | string | No | Full Elementor JSON, stored through the same path as `update_elementor_data` |
+| `conditions` | array | No | Not for `section`, `container` or `page` |
+| `dry_run` | boolean | No | `{dry_run: true, action: "would_create", title, template_type, status, conditions, overlap_warnings?, warnings?, not_checked}` |
+
+It is built as a draft, filled, given its conditions and published last. A failure on the way, including another plugin's hook throwing during the publish, trashes the template and returns `trashed_template_id` with the error. If it cannot be trashed the error says so: `template_id`, with `still_live: true` when it is published. A `header` or `footer` with an include condition and `status: publish` needs `elementor_data` (`empty_template`), because it would replace the theme's with nothing. `elementor_data` goes through the same atomic checks in a dry run and before the post exists.
+
+Returns `{id, title, edit_url, template_type, status, conditions, conditions_revision, verified?, verified_reason?, winning_template_id?, may_win?, overlap_warnings?, overlap_note?, warnings?, change_receipt, cache}`, plus what `update_elementor_data` reports about the write (`current_revision`, `elementor_save`, `stored_by`, `sanitized_report`, ...) when `elementor_data` was given. Errors: `elementor_required`, `elementor_pro_required`, `unknown_template_type` (with `allowed`), `missing_title`, `invalid_status`, `empty_template`, `invalid_json`, `elementor_invalid_tree`, `unknown_condition`, `conditions_not_supported`, `template_create_failed`, `template_not_stored`, `conditions_not_saved`.
+
+**`set_elementor_template_conditions`**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | integer | Yes | An `elementor_library` post |
+| `conditions` | array | Yes | They replace what is there. An empty list removes them |
+| `if_revision` | string | No | The `conditions_revision` you read, from `list_elementor_templates` or an earlier write |
+| `dry_run` | boolean | No | `{dry_run: true, action: "would_update"\|"no_change"\|"would_repair_cache", would_repair_cache?, id, location, before, after, conditions_revision, overlap_warnings?, warnings?, not_checked}` |
+
+Returns `{id, location, before, after, conditions_revision, verified, verified_reason?, winning_template_id?, may_win?, overlap_warnings?, overlap_note?, warnings?, change_receipt, cache}`. The same conditions again are `{action: "no_change", ...}` with no receipt, unless Pro's cache no longer matches them: then they rebuild it, `{action: "cache_repaired", cache_repaired: true, ...}`, with no receipt and page caches purged. If Pro saves the conditions and its cache rebuild throws, the call still succeeds, with a receipt, `verified: false` and a warning. Order counts: Pro lets the last matching include set a template's priority. Errors: `elementor_pro_required`, `not_a_template`, `template_in_trash`, `conditions_not_supported`, `missing_conditions`, `unknown_condition`, `revision_conflict` (with `conditions_revision`), `conditions_not_saved`.
+
+**`verified`** is false with a reason when the template is not doing what its conditions say:
+
+| `verified_reason` | Meaning |
+|---|---|
+| `no_include_condition` | No include, so it shows nowhere |
+| `not_published` | A draft shows nowhere, though Pro's cache holds it |
+| `not_in_conditions_cache` | Pro's cache does not hold these conditions, so it will not render |
+| `another_template_wins` | On Entire Site, another header or footer takes the home page: `winning_template_id` |
+| `condition_cannot_render` | An `archive` condition on a template in the `single` location, or a `singular` one in the `archive` location: stored, with a warning, because other Pro versions may differ |
+| `empty_template` | A published header or footer with no elements: stored, with a warning, because it replaces the theme's with nothing |
+| `cache_not_regenerated` | The conditions were saved and Pro's cache rebuild failed. Send them again |
+| `home_page_template_hides_it` | On Entire Site, and the home page uses Elementor Canvas |
+| `another_template_may_win` | On Entire Site, and another template's condition that the plugin cannot judge may beat it on the home page: `may_win` |
+| `not_on_home_page` | On Entire Site, and the home page gets no template from this location |
+
+**`overlap_warnings`:** `[{template_id, title, condition, your_condition, relation: "same"|"wider"|"narrower"|"may_overlap"}]`, published templates in the same location that may show on some of the same pages. `wider`: theirs covers yours. `narrower`: yours covers theirs. Entire Site overlaps everything, and within a scope a condition overlaps its parent and any sibling that is not mutually exclusive: `singular/post` and `singular/in_category/5` may, `singular/page` and `singular/post` do not. Pro shows one per URL: on the pages both cover, the narrower wins, and on a tie the first in its cache, which can change. Popups do not compete.
+
+**`warnings`:** strings, for what the caller should know that is no reason to refuse: a condition that can never render, an empty published header or footer, a published popup with no triggers, a cache rebuild that failed.
+
+`list_elementor_templates` adds `conditions_revision` next to `conditions`.
+
+**Rollback.** `target_type` `elementor_template`, `manage_options`.
+
+| `field` | `before_value` / `after_value` | Rollback | Refused with |
+|---|---|---|---|
+| `create` | null / `{template_type, title, status, location, conditions, data_sha256, page_settings_sha256}` | Trashes the template and rebuilds Pro's cache | `rollback_conflict` if the template's post was modified, its `_elementor_data` or `_elementor_page_settings` differ from the recorded hashes, or its conditions changed since it was created, and always on a site with no trash (`EMPTY_TRASH_DAYS` 0), where it deletes for good. The message says when it is live and what rolling back removes. `force` overrides |
+| `conditions` | the condition lists | Restores them through Pro | `rollback_conflict` if they changed since; `force` overrides. `rollback_unavailable` without Pro or with the template gone |
 
 ---
 

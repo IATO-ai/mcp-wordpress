@@ -118,6 +118,9 @@ class IATO_MCP_Rollback {
 		return new WP_REST_Response( IATO_MCP_Element_Cache_Guard::scrub( $result ), 200 );
 	}
 
+	/** Set by a restore that did what it could and has something to add to the response (1.17.0). */
+	private static ?string $restore_warning = null;
+
 	/**
 	 * May the authenticated caller roll back this receipt? Object-level where
 	 * the object still exists (edit_post / delete_post / edit_term / delete_term
@@ -295,6 +298,7 @@ class IATO_MCP_Rollback {
 		// at, and whatever the restore returns: a failed one may have written.
 		IATO_MCP_Cache::note_rollback( $receipt );
 
+		self::$restore_warning = null;
 		$result = self::dispatch_rollback( $receipt );
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -317,7 +321,8 @@ class IATO_MCP_Rollback {
 				'rolled_back_by' => IATO_MCP_Change_Receipt::describe_actor( $by ),
 				'conflict_check' => $report,
 			]
-			+ ( $marked ? [] : [ 'warning' => 'The change was rolled back, but its receipt could not be marked, so this rollback could run again. The plugin\'s Diagnostics page has details.' ] );
+			+ ( $marked ? [] : [ 'warning' => 'The change was rolled back, but its receipt could not be marked, so this rollback could run again. The plugin\'s Diagnostics page has details.' ] )
+			+ ( null === self::$restore_warning ? [] : [ 'warning' => self::$restore_warning ] );
 	}
 
 	/**
@@ -363,6 +368,18 @@ class IATO_MCP_Rollback {
 				return $why;
 			}
 		}
+		if ( 'elementor_template' === $type && 'conditions' === $field ) {
+			$why = self::template_conditions_unavailable( (int) ( $receipt['post_id'] ?? 0 ) );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
+		if ( 'menu' === $type || 'menu_location' === $type ) {
+			$why = self::menu_unavailable( $type, $receipt );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
 		if ( 'post_meta' === $type && ! empty( $receipt['post_id'] ) ) {
 			$key_check = IATO_MCP_Meta_Policy::check_stored_key( (int) $receipt['post_id'], $field );
 			if ( is_wp_error( $key_check ) ) {
@@ -403,6 +420,12 @@ class IATO_MCP_Rollback {
 				return self::rollback_image( $field, $post_id, $before_value );
 			case 'menu_item':
 				return self::rollback_menu_item( $field, $post_id, $before_value );
+			case 'elementor_template':
+				return self::rollback_elementor_template( $field, $post_id, $before_value );
+			case 'menu':
+				return self::rollback_menu( $field, $before_value, $receipt['after_value'] ?? null );
+			case 'menu_location':
+				return self::rollback_menu_location( $field, $before_value );
 			case 'taxonomy':
 				return self::rollback_taxonomy( $field, $post_id, $before_value, $receipt['after_value'] ?? null );
 			case 'redirect':
@@ -449,6 +472,145 @@ class IATO_MCP_Rollback {
 			}
 		}
 		return null;
+	}
+
+	/** Why a template's conditions cannot be put back, or null (1.17.0). Neither case can be forced. */
+	private static function template_conditions_unavailable( int $template_id ): ?WP_Error {
+		$missing = IATO_MCP_Theme_Builder::get()->missing_pro();
+		if ( null !== $missing ) {
+			return new WP_Error( 'rollback_unavailable', $missing . ' So the conditions cannot be put back now.', [ 'status' => 409 ] );
+		}
+		$post = $template_id > 0 ? get_post( $template_id ) : null;
+		if ( ! $post || 'trash' === ( $post->post_status ?? '' ) ) {
+			return new WP_Error( 'rollback_unavailable', 'That template no longer exists or is in the trash, so its conditions cannot be put back.', [ 'status' => 409 ] );
+		}
+		return null;
+	}
+
+	/**
+	 * Undo create_elementor_template or set_elementor_template_conditions (1.17.0). A
+	 * created template goes in the trash, which takes it out of Pro's cache, and the cache
+	 * is rebuilt as well in case something else had changed it. Conditions go back through
+	 * Pro, which rebuilds it.
+	 */
+	private static function rollback_elementor_template( string $field, ?int $post_id, mixed $before_value ): bool|WP_Error {
+		if ( ! $post_id ) {
+			return new WP_Error( 'missing_post_id', 'Template ID required for rollback.' );
+		}
+		$builder = IATO_MCP_Theme_Builder::get();
+		if ( 'conditions' === $field ) {
+			$saved = $builder->save_conditions( $post_id, array_values( array_map( 'strval', IATO_MCP_Rollback_Conflict::json_array( $before_value ) ) ) );
+			if ( is_wp_error( $saved ) && 'cache_not_regenerated' === $saved->get_error_code() ) {
+				// They are back, so the receipt must be marked. What is left is the cache.
+				self::$restore_warning = $saved->get_error_message() . ' Send the same conditions to set_elementor_template_conditions to rebuild it.';
+				return true;
+			}
+			return $saved;
+		}
+		if ( 'create' !== $field ) {
+			return new WP_Error( 'unsupported_field', "Rollback not supported for elementor_template field: {$field}" );
+		}
+		$post = get_post( $post_id );
+		if ( $post && 'trash' !== ( $post->post_status ?? '' ) ) {
+			$trashed = IATO_MCP_Auth::keeping_post_columns( $post_id, static fn() => wp_trash_post( $post_id ) );
+			if ( ! $trashed ) {
+				return new WP_Error( 'trash_failed', 'Failed to trash the template.' );
+			}
+		}
+		// Without Pro there is no cache to rebuild, and the trash has done the rest.
+		if ( null === $builder->missing_pro() ) {
+			$regenerated = $builder->regenerate();
+			if ( is_wp_error( $regenerated ) ) {
+				self::$restore_warning = 'The template was removed, but: ' . $regenerated->get_error_message();
+			}
+		}
+		return true;
+	}
+
+	/** Put a menu in a theme location, 0 clearing it (1.17.0). The other locations stay. */
+	public static function set_menu_location( string $location, int $menu_id ): void {
+		$locations              = get_nav_menu_locations();
+		$locations[ $location ] = $menu_id;
+		set_theme_mod( 'nav_menu_locations', $locations );
+	}
+
+	/**
+	 * Why a menu receipt cannot be restored, or null (1.17.0). Locations are stored
+	 * per theme, so after a theme switch this site has no record of what the receipt
+	 * changed: writing it would set the new theme's location to the old theme's menu.
+	 * Neither case can be forced.
+	 */
+	private static function menu_unavailable( string $type, array $receipt ): ?WP_Error {
+		$after    = IATO_MCP_Rollback_Conflict::json_array( $receipt['after_value'] ?? null );
+		$location = (string) ( $after['location'] ?? '' );
+		if ( '' === $location ) {
+			return null; // a menu made without a location: nothing here belongs to a theme
+		}
+		$theme = (string) ( $after['theme'] ?? '' );
+		if ( get_stylesheet() !== $theme ) {
+			return new WP_Error(
+				'rollback_unavailable',
+				sprintf(
+					'This change set the menu location %1$s on the theme %2$s, and the site now uses %3$s. WordPress keeps menu locations per theme, so it cannot be undone from here. Use assign_menu_location, or switch back to %2$s first.',
+					$location,
+					$theme,
+					get_stylesheet()
+				),
+				[ 'status' => 409, 'theme' => $theme, 'current_theme' => get_stylesheet() ]
+			);
+		}
+		if ( 'menu_location' === $type ) {
+			$before   = IATO_MCP_Rollback_Conflict::json_array( $receipt['before_value'] ?? null );
+			$previous = (int) ( $before['menu_id'] ?? 0 );
+			if ( $previous > 0 && null === IATO_MCP_Rollback_Conflict::menu_object( $previous ) ) {
+				return new WP_Error(
+					'rollback_unavailable',
+					sprintf( 'Menu %1$d, which held the location %2$s before this change, no longer exists. Choose another with assign_menu_location.', $previous, $location ),
+					[ 'status' => 409 ]
+				);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Undo create_menu (1.17.0): delete the menu, then give the location back. Only if
+	 * this menu still holds it, because one given to another menu since is not this
+	 * change's to undo. wp_delete_nav_menu() empties a location holding the menu, so
+	 * the old menu goes back after it.
+	 */
+	private static function rollback_menu( string $field, mixed $before_value, mixed $after_value ): bool|WP_Error {
+		if ( 'create' !== $field ) {
+			return new WP_Error( 'unsupported_field', "Rollback not supported for menu field: {$field}" );
+		}
+		$after   = IATO_MCP_Rollback_Conflict::json_array( $after_value );
+		$menu_id = (int) ( $after['menu_id'] ?? 0 );
+		if ( $menu_id <= 0 ) {
+			return new WP_Error( 'invalid_receipt', 'Cannot roll back create_menu: the receipt does not name the menu.' );
+		}
+		if ( null === IATO_MCP_Rollback_Conflict::menu_object( $menu_id ) ) {
+			return true; // already gone
+		}
+
+		$location = (string) ( $after['location'] ?? '' );
+		$holds    = '' !== $location && IATO_MCP_Rollback_Conflict::menu_in_location( $location ) === $menu_id;
+
+		$deleted = wp_delete_nav_menu( $menu_id );
+		if ( ! $deleted || is_wp_error( $deleted ) ) {
+			return is_wp_error( $deleted ) ? $deleted : new WP_Error( 'delete_failed', 'Failed to delete the menu.' );
+		}
+
+		if ( $holds ) {
+			$previous = (int) ( IATO_MCP_Rollback_Conflict::json_array( $before_value )['menu_id'] ?? 0 );
+			self::set_menu_location( $location, null !== IATO_MCP_Rollback_Conflict::menu_object( $previous ) ? $previous : 0 );
+		}
+		return true;
+	}
+
+	/** Undo assign_menu_location (1.17.0). preflight() has checked the theme and the menu. */
+	private static function rollback_menu_location( string $location, mixed $before_value ): bool|WP_Error {
+		self::set_menu_location( $location, (int) ( IATO_MCP_Rollback_Conflict::json_array( $before_value )['menu_id'] ?? 0 ) );
+		return true;
 	}
 
 	/**
