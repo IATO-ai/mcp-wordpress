@@ -233,6 +233,8 @@ class IATO_MCP_Change_Receipt {
 	 *   post_meta          edit_posts                          edit_posts
 	 *   elementor_widget   edit_posts                          edit_posts
 	 *   menu_item          edit_theme_options (v1.10.0)        edit_theme_options
+	 *   menu, menu_location edit_theme_options (v1.17.0)       edit_theme_options
+	 *   elementor_template manage_options (v1.17.0)            manage_options
 	 *   redirect           manage_options                      manage_options
 	 *   taxonomy + assign/terms     edit_posts                 edit_posts
 	 *   taxonomy + create/update/delete_term  manage_categories  manage_categories
@@ -262,6 +264,9 @@ class IATO_MCP_Change_Receipt {
 			'elementor_widget' => 'edit_posts',
 			'elementor_atomic' => 'edit_posts',
 			'menu_item'        => 'edit_theme_options',
+			'menu'             => 'edit_theme_options',
+			'menu_location'    => 'edit_theme_options',
+			'elementor_template' => 'manage_options',
 			'redirect'         => 'manage_options',
 			'site_setting'     => 'manage_options',
 		];
@@ -292,7 +297,8 @@ class IATO_MCP_Change_Receipt {
 	 *   taxonomy update_term                         edit_term   <before_value.term_id>
 	 *   taxonomy delete_term (rollback re-creates)   manage_categories (type-level by design: the
 	 *                                                 object does not exist until the rollback runs)
-	 *   menu_item                                    edit_theme_options (type-level: menus are site-wide)
+	 *   menu_item, menu, menu_location               edit_theme_options (type-level: menus are site-wide)
+	 *   elementor_template                           manage_options (type-level: Theme Builder is site-wide)
 	 *   redirect                                     manage_options (type-level: site-wide)
 	 *   anything else                                manage_options (fail closed)
 	 *
@@ -367,6 +373,9 @@ class IATO_MCP_Change_Receipt {
 				}
 
 			case 'menu_item':
+			case 'menu':
+			case 'menu_location':
+			case 'elementor_template':
 			case 'redirect':
 			case 'site_setting':
 				return $typed( $type_cap, 'type-by-design' );
@@ -403,7 +412,7 @@ class IATO_MCP_Change_Receipt {
 	 * Record a change receipt after a successful write.
 	 *
 	 * @param int|null $post_id     WordPress post/attachment/menu-item ID, or null for non-post targets.
-	 * @param string   $target_type One of: post, page, image, menu_item, taxonomy, redirect, site_setting,
+	 * @param string   $target_type One of: post, page, image, menu_item, menu, menu_location, elementor_template, taxonomy, redirect, site_setting,
 	 *                              elementor_widget, elementor_atomic, post_meta, attachment.
 	 * @param string   $field       The field that was changed (for target_type=post_meta this is the meta key).
 	 * @param mixed    $before      Value before the write. null if field was unset. Arrays are JSON-encoded.

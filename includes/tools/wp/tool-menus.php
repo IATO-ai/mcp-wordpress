@@ -1,10 +1,12 @@
 <?php
 /**
  * WP Tools: get_menus, get_menu_items, update_menu_item, create_menu_item,
- *           delete_menu_item, update_menu_item_details
+ *           delete_menu_item, update_menu_item_details, create_menu,
+ *           assign_menu_location
  *
  * get_menus / get_menu_items — read only
- * update_menu_item / create_menu_item / delete_menu_item / update_menu_item_details
+ * update_menu_item / create_menu_item / delete_menu_item / update_menu_item_details /
+ * create_menu / assign_menu_location
  *                             — require edit_theme_options (WP-canonical cap for
  *                               nav-menu structure; was manage_options pre-v1.10.0).
  *
@@ -16,12 +18,50 @@
 
 defined( 'ABSPATH' ) || exit;
 
+/**
+ * A refusal the client needs its details from. MCP clients only see a tool error's
+ * text, so it is JSON: { error, message, ... } (1.17.0).
+ */
+function iato_mcp_menu_error( string $code, string $message, array $extra = [] ): array {
+	return [
+		'isError' => true,
+		'content' => [ [
+			'type' => 'text',
+			'text' => (string) wp_json_encode( [ 'error' => $code, 'message' => $message ] + $extra ),
+		] ],
+	];
+}
+
+/**
+ * The refusal for a location the theme does not register, or null when it does.
+ * Exact match: a location's slug is whatever the theme registered.
+ */
+function iato_mcp_menu_location_refusal( mixed $location ): ?array {
+	$registered = get_registered_nav_menus();
+	if ( is_string( $location ) && array_key_exists( $location, $registered ) ) {
+		return null;
+	}
+	$shown = is_string( $location ) ? $location : '';
+	if ( [] === $registered ) {
+		return iato_mcp_menu_error( 'unknown_menu_location', 'This theme registers no menu locations. A menu can still be used by a widget, by its slug.', [ 'locations' => [] ] );
+	}
+	$list = [];
+	foreach ( $registered as $slug => $label ) {
+		$list[] = [ 'slug' => (string) $slug, 'label' => (string) $label ];
+	}
+	return iato_mcp_menu_error(
+		'unknown_menu_location',
+		sprintf( 'Unknown menu location "%1$s". This theme registers: %2$s.', $shown, implode( ', ', array_column( $list, 'slug' ) ) ),
+		[ 'locations' => $list ]
+	);
+}
+
 // ── get_menus ─────────────────────────────────────────────────────────────────
 
 IATO_MCP_Server::register_tool(
 	'get_menus',
 	[
-		'description' => 'List all registered WordPress navigation menus with their item counts.',
+		'description' => 'List all registered WordPress navigation menus with their item counts, and every menu location the theme registers with the menu in it (locations).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => new stdClass(),
@@ -44,7 +84,18 @@ IATO_MCP_Server::register_tool(
 			];
 		}
 
-		return IATO_MCP_Server::ok( [ 'menus' => $result ] );
+		// 1.17.0: every location the theme registers, including empty ones. `location`
+		// above stays as it was: one location per menu, which a menu can hold several of.
+		$registered = [];
+		foreach ( get_registered_nav_menus() as $slug => $label ) {
+			$registered[] = [
+				'slug'    => (string) $slug,
+				'label'   => (string) $label,
+				'menu_id' => IATO_MCP_Rollback_Conflict::menu_in_location( (string) $slug ),
+			];
+		}
+
+		return IATO_MCP_Server::ok( [ 'menus' => $result, 'locations' => $registered ] );
 	}
 );
 
@@ -519,5 +570,174 @@ IATO_MCP_Server::register_tool(
 		IATO_MCP_Change_Receipt::append( $data, $receipt );
 
 		return IATO_MCP_Server::ok( $data );
+	}
+);
+
+// ── create_menu ──────────────────────────────────────────────────────────────
+
+IATO_MCP_Server::register_tool(
+	'create_menu',
+	[
+		'description' => 'Create an empty WordPress navigation menu, optionally in a theme location. Add its links with create_menu_item; Elementor Pro\'s Nav Menu widget refers to a menu by the slug this returns. Supports dry_run. Requires administrator.',
+		'inputSchema' => [
+			'type'       => 'object',
+			'properties' => [
+				'name'     => [ 'type' => 'string', 'description' => 'Menu name (required). Must not be in use by another menu.' ],
+				'location' => [ 'type' => 'string', 'description' => 'Theme location slug to put the menu in, from get_menus. A menu already there is replaced in that location and kept.' ],
+				'dry_run'  => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+			],
+			'required' => [ 'name' ],
+		],
+	],
+	function ( array $args ): array|WP_Error {
+		$cap_check = IATO_MCP_Auth::require_cap( 'edit_theme_options' );
+		if ( is_wp_error( $cap_check ) ) return $cap_check;
+
+		$name = is_string( $args['name'] ?? null ) ? trim( sanitize_text_field( $args['name'] ) ) : '';
+		if ( '' === $name ) {
+			return iato_mcp_menu_error( 'missing_name', 'name is required.' );
+		}
+
+		// Every check comes before the menu exists, so a refusal leaves nothing behind.
+		$location = $args['location'] ?? null;
+		$location = '' === $location ? null : $location;
+		if ( null !== $location ) {
+			$refusal = iato_mcp_menu_location_refusal( $location );
+			if ( null !== $refusal ) {
+				return $refusal;
+			}
+		}
+
+		// What wp_update_nav_menu_object() checks, slashed as it expects.
+		$existing = get_term_by( 'name', wp_slash( $name ), 'nav_menu' );
+		if ( $existing && ! is_wp_error( $existing ) ) {
+			return iato_mcp_menu_error(
+				'menu_exists',
+				sprintf( 'A menu named "%1$s" already exists (ID %2$d). Use it, or choose another name.', $name, (int) $existing->term_id ),
+				[ 'menu_id' => (int) $existing->term_id ]
+			);
+		}
+
+		$previous = null === $location ? null : IATO_MCP_Rollback_Conflict::menu_in_location( $location );
+
+		if ( ! empty( $args['dry_run'] ) ) {
+			$stored_name = iato_mcp_term_field_as_stored( 'name', $name, 'nav_menu' );
+			return IATO_MCP_Server::ok( array_merge(
+				[
+					'dry_run'  => true,
+					'action'   => 'would_create',
+					'name'     => $stored_name,
+					'slug'     => sanitize_title( $stored_name ),
+					'location' => $location,
+				],
+				null === $previous ? [] : [ 'would_replace_menu_id' => $previous ],
+				[ 'not_checked' => array_merge( IATO_MCP_Server::DRY_RUN_NOT_CHECKED, [ 'A slug already used by another menu, which WordPress would change by adding a suffix.' ] ) ]
+			) );
+		}
+
+		$menu_id = wp_create_nav_menu( wp_slash( $name ) ); // wp_insert_term() unslashes
+		if ( is_wp_error( $menu_id ) ) {
+			return iato_mcp_menu_error( (string) $menu_id->get_error_code(), (string) $menu_id->get_error_message() );
+		}
+		$menu_id = (int) $menu_id;
+		if ( null !== $location ) {
+			IATO_MCP_Rollback::set_menu_location( $location, $menu_id );
+		}
+
+		$menu  = wp_get_nav_menu_object( $menu_id );
+		$theme = get_stylesheet();
+		$data  = [
+			'menu_id'  => $menu_id,
+			'name'     => $menu ? (string) $menu->name : $name,
+			'slug'     => $menu ? (string) $menu->slug : '',
+			'location' => $location,
+		];
+		if ( null !== $previous ) {
+			$data['replaced_menu_id'] = $previous;
+		}
+
+		$receipt = IATO_MCP_Change_Receipt::record(
+			null, 'menu', 'create',
+			null === $location ? null : wp_json_encode( [ 'location' => $location, 'menu_id' => $previous, 'theme' => $theme ] ),
+			wp_json_encode( [ 'menu_id' => $menu_id, 'name' => $data['name'], 'slug' => $data['slug'], 'location' => $location, 'theme' => $theme ] )
+		);
+		IATO_MCP_Change_Receipt::append( $data, $receipt );
+
+		return IATO_MCP_Server::ok( $data );
+	}
+);
+
+// ── assign_menu_location ─────────────────────────────────────────────────────
+
+IATO_MCP_Server::register_tool(
+	'assign_menu_location',
+	[
+		'description' => 'Put a menu in a theme location, or clear the location with menu_id 0. The menu that was there is kept. Supports dry_run. Requires administrator.',
+		'inputSchema' => [
+			'type'       => 'object',
+			'properties' => [
+				'location' => [ 'type' => 'string', 'description' => 'Theme location slug, from get_menus (required).' ],
+				'menu_id'  => [ 'type' => 'integer', 'description' => 'Menu ID, or 0 to clear the location (required).' ],
+				'dry_run'  => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+			],
+			'required' => [ 'location', 'menu_id' ],
+		],
+	],
+	function ( array $args ): array|WP_Error {
+		$cap_check = IATO_MCP_Auth::require_cap( 'edit_theme_options' );
+		if ( is_wp_error( $cap_check ) ) return $cap_check;
+
+		$location = $args['location'] ?? null;
+		$refusal  = iato_mcp_menu_location_refusal( $location );
+		if ( null !== $refusal ) {
+			return $refusal;
+		}
+
+		// Required, so that leaving it out never clears a location. absint() would
+		// turn -40 into menu 40.
+		$given = $args['menu_id'] ?? null;
+		if ( ! ( is_int( $given ) || ( is_string( $given ) && ctype_digit( $given ) ) ) || (int) $given < 0 ) {
+			return iato_mcp_menu_error( 'invalid_menu_id', 'menu_id must be a menu ID, or 0 to clear the location.' );
+		}
+		$menu_id = (int) $given;
+		if ( $menu_id > 0 && null === IATO_MCP_Rollback_Conflict::menu_object( $menu_id ) ) {
+			return iato_mcp_menu_error( 'not_found', sprintf( 'Menu %d not found.', $menu_id ) );
+		}
+
+		$before = IATO_MCP_Rollback_Conflict::menu_in_location( $location );
+		$after  = $menu_id > 0 ? $menu_id : null;
+		$report = [
+			'location' => $location,
+			'before'   => [ 'menu_id' => $before ],
+			'after'    => [ 'menu_id' => $after ],
+		];
+
+		if ( ! empty( $args['dry_run'] ) ) {
+			return IATO_MCP_Server::ok( array_merge(
+				[
+					'dry_run' => true,
+					'action'  => $before === $after ? 'no_change' : ( null === $after ? 'would_clear' : 'would_assign' ),
+				],
+				$report,
+				[ 'not_checked' => IATO_MCP_Server::DRY_RUN_NOT_CHECKED ]
+			) );
+		}
+		if ( $before === $after ) {
+			return IATO_MCP_Server::ok( [ 'action' => 'no_change' ] + $report );
+		}
+
+		IATO_MCP_Rollback::set_menu_location( $location, $menu_id );
+
+		$theme  = get_stylesheet();
+		$stored = IATO_MCP_Rollback_Conflict::menu_in_location( $location );
+		$report['after']['menu_id'] = $stored;
+		$receipt = IATO_MCP_Change_Receipt::record(
+			null, 'menu_location', $location,
+			wp_json_encode( [ 'location' => $location, 'menu_id' => $before, 'theme' => $theme ] ),
+			wp_json_encode( [ 'location' => $location, 'menu_id' => $stored, 'theme' => $theme ] )
+		);
+		IATO_MCP_Change_Receipt::append( $report, $receipt );
+
+		return IATO_MCP_Server::ok( $report );
 	}
 );

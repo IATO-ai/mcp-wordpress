@@ -10,6 +10,8 @@ declare( strict_types=1 );
 final class IATO_Test_Roles {
 	public const CAPS = [
 		'subscriber'    => [ 'read' ],
+		// A role plugin's administrator of settings, who may not touch content.
+		'options_only'  => [ 'read', 'manage_options', 'edit_theme_options' ],
 		'contributor'   => [ 'read', 'edit_posts', 'delete_posts' ],
 		'author'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files' ],
 		'editor'        => [ 'read', 'edit_posts', 'delete_posts', 'edit_published_posts', 'delete_published_posts', 'publish_posts', 'upload_files', 'edit_others_posts', 'delete_others_posts', 'edit_private_posts', 'delete_private_posts', 'read_private_posts', 'edit_pages', 'edit_others_pages', 'edit_published_pages', 'edit_private_pages', 'read_private_pages', 'delete_pages', 'delete_others_pages', 'delete_published_pages', 'publish_pages', 'manage_categories', 'moderate_comments', 'unfiltered_html' ],

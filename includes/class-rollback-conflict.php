@@ -34,6 +34,18 @@ class IATO_MCP_Rollback_Conflict {
 	/** Longest string returned in `current` / `expected` before it is cut. */
 	public const MAX_SHOWN = 500;
 
+	/** @var bool|null Test seam: EMPTY_TRASH_DAYS cannot be changed once defined. */
+	private static ?bool $trash_deletes = null;
+
+	public static function set_trash_deletes( ?bool $deletes ): void {
+		self::$trash_deletes = $deletes;
+	}
+
+	/** Does wp_trash_post() delete for good on this site? It does when EMPTY_TRASH_DAYS is 0. */
+	public static function trash_deletes(): bool {
+		return self::$trash_deletes ?? ( defined( 'EMPTY_TRASH_DAYS' ) && ! EMPTY_TRASH_DAYS );
+	}
+
 	/**
 	 * @return array{status:'match'|'conflict'|'unverifiable', reason:string, current?:mixed, expected?:mixed}
 	 */
@@ -126,6 +138,17 @@ class IATO_MCP_Rollback_Conflict {
 
 			case 'menu_item':
 				return self::menu_item( $receipt, $field, $post_id );
+
+			case 'menu':
+				return 'create' === $field
+					? self::created_menu( $receipt )
+					: self::unverifiable( "unknown menu field {$field}" );
+
+			case 'menu_location':
+				return self::compare( self::menu_in_location( $field ), self::json_array( $after )['menu_id'] ?? null, "menu location {$field}" );
+
+			case 'elementor_template':
+				return self::elementor_template( $receipt, $field, $post_id );
 
 			case 'redirect':
 				return self::redirect( $after );
@@ -265,6 +288,135 @@ class IATO_MCP_Rollback_Conflict {
 			default:
 				return self::unverifiable( "unknown menu_item field {$field}" );
 		}
+	}
+
+	/** What create_elementor_template and set_elementor_template_conditions did (1.17.0). */
+	private static function elementor_template( array $receipt, string $field, int $post_id ): array {
+		$post = $post_id > 0 ? get_post( $post_id ) : null;
+		if ( 'conditions' === $field ) {
+			if ( ! $post ) {
+				return self::unverifiable( 'the template no longer exists' );
+			}
+			return self::compare( IATO_MCP_Theme_Builder::stored_conditions( $post_id ), self::json_array( $receipt['after_value'] ?? null ), 'template conditions' );
+		}
+		if ( 'create' !== $field ) {
+			return self::unverifiable( "unknown elementor_template field {$field}" );
+		}
+
+		$outcome = self::created_object( $receipt, $post_id, 'template' );
+		if ( ! $post || 'trash' === ( $post->post_status ?? '' ) ) {
+			return $outcome;
+		}
+		$recorded   = self::json_array( $receipt['after_value'] ?? null );
+		$conditions = IATO_MCP_Theme_Builder::stored_conditions( $post_id );
+		$created    = self::json_array( $recorded['conditions'] ?? [] );
+		if ( 'conflict' !== $outcome['status'] ) {
+			// The content itself: a timestamp misses what writes only the meta, as most Elementor writes do.
+			$hashes = IATO_MCP_Theme_Builder::content_hashes( $post_id );
+			if ( $hashes['data_sha256'] !== ( $recorded['data_sha256'] ?? $hashes['data_sha256'] ) || $hashes['page_settings_sha256'] !== ( $recorded['page_settings_sha256'] ?? $hashes['page_settings_sha256'] ) ) {
+				$outcome = [
+					'status'   => 'conflict',
+					'reason'   => 'the template\'s content was changed after it was created',
+					'current'  => $hashes,
+					'expected' => array_intersect_key( $recorded, $hashes ),
+				];
+			} elseif ( $conditions !== $created ) {
+				$outcome = [
+					'status'   => 'conflict',
+					'reason'   => 'the template\'s conditions were changed after it was created',
+					'current'  => $conditions,
+					'expected' => $created,
+				];
+			}
+		}
+		if ( 'conflict' === $outcome['status'] ) {
+			$outcome['reason'] .= self::live_template_note( $receipt, $post, $conditions );
+		}
+		if ( self::trash_deletes() ) {
+			$deletes = 'this site deletes instead of trashing (EMPTY_TRASH_DAYS is 0), so rolling back would delete the template for good';
+			$outcome = [
+				'status' => 'conflict',
+				'reason' => 'conflict' === $outcome['status'] ? $outcome['reason'] . ', and ' . $deletes : $deletes,
+			] + array_intersect_key( $outcome, [ 'current' => true, 'expected' => true ] );
+		}
+		return $outcome;
+	}
+
+	/** Why force is a real decision: rolling back takes a live template off the site. */
+	private static function live_template_note( array $receipt, object $post, array $conditions ): string {
+		$includes = array_filter( $conditions, static fn( string $c ): bool => str_starts_with( $c, 'include/' ) );
+		if ( 'publish' !== ( $post->post_status ?? '' ) || [] === $includes ) {
+			return '';
+		}
+		$type = (string) ( self::json_array( $receipt['after_value'] ?? null )['template_type'] ?? 'template' );
+		return in_array( 'include/general', $conditions, true )
+			? sprintf( ', and it is a live site-wide %s: rolling back would remove it from every page', $type )
+			: sprintf( ', and this %s is live: rolling back would remove it from the pages its conditions match', $type );
+	}
+
+	/**
+	 * A menu create_menu made (1.17.0). wp_delete_nav_menu() deletes the menu's items
+	 * for good, and an item counts wherever it came from, so these are the same test.
+	 */
+	private static function created_menu( array $receipt ): array {
+		$after   = self::json_array( $receipt['after_value'] ?? null );
+		$menu_id = (int) ( $after['menu_id'] ?? 0 );
+		$menu    = self::menu_object( $menu_id );
+		if ( null === $menu ) {
+			return [ 'status' => 'match', 'reason' => 'the menu is already gone' ];
+		}
+		$items = get_objects_in_term( $menu_id, 'nav_menu' );
+		$count = is_array( $items ) ? count( $items ) : 0;
+		if ( $count > 0 ) {
+			return [
+				'status'   => 'conflict',
+				'reason'   => sprintf( 'the menu now holds %d items, and deleting a menu deletes its items permanently', $count ),
+				'current'  => [ 'item_count' => $count ],
+				'expected' => [ 'item_count' => 0 ],
+			];
+		}
+		// wp_delete_nav_menu() empties any location holding the menu, and the receipt that
+		// put it there could then no longer find what to restore.
+		$created_in = (string) ( $after['location'] ?? '' );
+		$held       = [];
+		foreach ( get_nav_menu_locations() as $location => $held_id ) {
+			if ( (int) $held_id === $menu_id && (string) $location !== $created_in ) {
+				$held[] = (string) $location;
+			}
+		}
+		if ( [] !== $held ) {
+			return [
+				'status'   => 'conflict',
+				'reason'   => sprintf( 'the menu now holds the location %s, given to it after it was created, and deleting it would empty that. Roll back the location change first, which puts back the menu that was there', implode( ', ', $held ) ),
+				'current'  => [ 'locations' => $held ],
+				'expected' => [ 'locations' => '' === $created_in ? [] : [ $created_in ] ],
+			];
+		}
+		if ( (string) $menu->name !== (string) ( $after['name'] ?? '' ) ) {
+			return [
+				'status'   => 'conflict',
+				'reason'   => 'the menu was renamed after it was created',
+				'current'  => [ 'name' => (string) $menu->name ],
+				'expected' => [ 'name' => (string) ( $after['name'] ?? '' ) ],
+			];
+		}
+		return [ 'status' => 'match', 'reason' => 'the menu is empty and unchanged since it was created' ];
+	}
+
+	/**
+	 * The menu with this ID, or null. wp_get_nav_menu_object() falls back to matching
+	 * the value against slugs and names, so asked about 99 it can answer with the menu
+	 * called "99", whatever that menu's ID is.
+	 */
+	public static function menu_object( int $menu_id ): ?object {
+		$menu = $menu_id > 0 ? wp_get_nav_menu_object( $menu_id ) : false;
+		return $menu && (int) $menu->term_id === $menu_id ? $menu : null;
+	}
+
+	/** The menu in a theme location, or null: the value the menu tools record and this check reads. */
+	public static function menu_in_location( string $location ): ?int {
+		$menu_id = (int) ( get_nav_menu_locations()[ $location ] ?? 0 );
+		return $menu_id > 0 ? $menu_id : null;
 	}
 
 	/** The value update_menu_item_details records, and this check reads, per key. */

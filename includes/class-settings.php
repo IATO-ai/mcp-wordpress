@@ -44,6 +44,8 @@ class IATO_MCP_Settings {
 		'create_menu_item',
 		'delete_menu_item',
 		'update_menu_item_details',
+		'create_menu',
+		'assign_menu_location',
 		'get_terms',
 		'assign_term',
 		'create_term',
@@ -69,6 +71,9 @@ class IATO_MCP_Settings {
 		'resolve_url',
 		// Elementor v2 — template discovery (Layer 2, v1.11.0).
 		'list_elementor_templates',
+		// Theme Builder (v1.17.0).
+		'create_elementor_template',
+		'set_elementor_template_conditions',
 		// Safety (v1.4.0).
 		'rollback',
 		// Post meta + media (v1.6.0).
@@ -161,6 +166,13 @@ class IATO_MCP_Settings {
 		'1.15.0' => [
 			'update_site_settings',
 		],
+		// v1.17.0 — creating menus, assigning them to theme locations, Theme Builder templates.
+		'1.17.0' => [
+			'create_menu',
+			'assign_menu_location',
+			'create_elementor_template',
+			'set_elementor_template_conditions',
+		],
 	];
 
 	/** Tools that require the IATO API key before they'll be registered. */
@@ -200,6 +212,8 @@ class IATO_MCP_Settings {
 		'create_menu_item'         => 'Create new menu items (admin only)',
 		'delete_menu_item'         => 'Remove menu items (admin only)',
 		'update_menu_item_details' => 'Edit menu item properties (admin only)',
+		'create_menu'              => 'Create a navigation menu (admin only)',
+		'assign_menu_location'     => 'Put a menu in a theme location (admin only)',
 		'get_terms'                => 'List categories, tags, and terms',
 		'assign_term'              => 'Assign terms to posts',
 		'create_term'              => 'Create new taxonomy terms (admin only)',
@@ -239,6 +253,8 @@ class IATO_MCP_Settings {
 		'get_iato_crawl_status'    => 'Check status of a specific crawl job',
 		'list_iato_crawls'         => 'List recent IATO crawl jobs with status and IDs',
 		'list_elementor_templates' => 'Enumerate Theme Builder templates with their Display Conditions parsed (admin only — manage_options)',
+		'create_elementor_template' => 'Create a Theme Builder header, footer or other template (admin only; most types need Elementor Pro)',
+		'set_elementor_template_conditions' => 'Set where a Theme Builder template shows (admin only; needs Elementor Pro)',
 	];
 
 	/** Tool groupings for UI categories. */
@@ -247,13 +263,13 @@ class IATO_MCP_Settings {
 		'Site'          => [ 'get_site_info', 'get_site_settings', 'update_site_settings' ],
 		'SEO'           => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
 		'Media'         => [ 'get_media', 'update_alt_text', 'create_media' ],
-		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details' ],
+		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details', 'create_menu', 'assign_menu_location' ],
 		'Taxonomy'      => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
 		'Redirects'     => [ 'update_redirect' ],
 		'Comments'      => [ 'get_comments' ],
 		'Safety'        => [ 'rollback' ],
 		'Elementor'     => [ 'get_page_builder', 'get_elementor_data', 'update_elementor_data' ],
-		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates' ],
+		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates', 'create_elementor_template', 'set_elementor_template_conditions' ],
 		'IATO Platform' => [ 'get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report' ],
 		'Crawl Management' => [ 'start_iato_crawl', 'get_iato_crawl_status', 'list_iato_crawls' ],
 	];
@@ -2092,16 +2108,20 @@ CSS;
 				var cls = type === 'success' ? 'notice-success' : (type === 'error' ? 'notice-error' : 'notice-info');
 				var html = '<div id="' + id + '" class="notice ' + cls + ' is-dismissible" style="margin:12px 0"><p>' + escapeHtml(msg) + '</p></div>';
 
-				// Insert at top of .iato-wrap, below the header.
+				// Next to the Save button, at the bottom of a long page: at the top of it nobody
+				// who has just clicked Save can see whether the save worked.
+				var button = document.querySelector('.iato-submit');
 				var host = document.querySelector('.iato-wrap');
-				if (host) {
+				if (button) {
+					button.insertAdjacentHTML('beforebegin', html);
+				} else if (host) {
 					host.insertAdjacentHTML('afterbegin', html);
-					if (type === 'success') {
-						setTimeout(function() {
-							var el = document.getElementById(id);
-							if (el) el.remove();
-						}, 4000);
-					}
+				}
+				if ((button || host) && type === 'success') {
+					setTimeout(function() {
+						var el = document.getElementById(id);
+						if (el) el.remove();
+					}, 8000);
 				}
 			}
 

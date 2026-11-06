@@ -46,7 +46,7 @@
 
 | | Without IATO Account | With <img src="iato-icon.png" alt="IATO" width="16" align="top" /> IATO Account (free up to 500 pages) |
 |---|---|---|
-| **Tools** | WordPress tools only | WordPress tools + 9 IATO bridge tools |
+| **Tools** | WordPress tools only | WordPress tools + 12 IATO bridge tools |
 | **Read content** | Posts, pages, media, menus, taxonomy, comments, Elementor | Everything in WordPress tools |
 | **Edit content** | Create/update posts, SEO, alt text, menus, taxonomy, canonical, structured data, redirects, Elementor | Everything in WordPress tools |
 | **Site audit** | — | SEO issues with WP slugs attached |
@@ -299,7 +299,7 @@ Update the alt text for a media attachment.
 
 #### `get_menus`
 
-List all registered navigation menus with their item counts and assigned locations. No parameters required.
+List all registered navigation menus with their item counts, and every menu location the theme registers with the menu in it (`locations`). No parameters required.
 
 #### `get_menu_items`
 
@@ -322,7 +322,73 @@ Add a page to a navigation menu or update an existing item.
 | `parent_id` | integer | No | 0 | Parent menu item ID |
 | `dry_run` | boolean | No | false | Preview without saving |
 
+**Capability:** `edit_theme_options` (admin only)
+
+#### `create_menu`
+
+Create an empty navigation menu, optionally in a theme location. Add its links with `create_menu_item`. Elementor Pro's Nav Menu widget refers to a menu by the `slug` this returns.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | Yes | | Menu name, not in use by another menu |
+| `location` | string | No | | Theme location slug, from `get_menus`. A menu already there is replaced in that location and kept |
+| `dry_run` | boolean | No | false | Preview without saving |
+
+**Capability:** `edit_theme_options` (admin only)
+
+Rollback deletes the menu and gives the location back to the menu that held it. Deleting a menu deletes its items for good, so a menu that has items needs `force: true`. A menu given a location afterwards needs that change rolled back first, which puts the old menu back. WordPress keeps menu locations per theme, so a change that set a location cannot be rolled back after the theme is switched.
+
+#### `assign_menu_location`
+
+Put a menu in a theme location, or clear the location. The menu that was there is kept.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `location` | string | Yes | | Theme location slug, from `get_menus` |
+| `menu_id` | integer | Yes | | Menu ID, or 0 to clear the location |
+| `dry_run` | boolean | No | false | Preview without saving |
+
+**Capability:** `edit_theme_options` (admin only)
+
+### Theme Builder Tools
+
+Build the site-wide header and footer through your AI client: it can create the template, fill it, say where it shows, and check the result. These need Elementor Pro, except `section`, `container` and `page` templates. An IATO MCP key must be assigned to a user (Settings > IATO MCP) for these tools.
+
+#### `create_elementor_template`
+
+Create a template the way Add New Template does. It is built as a draft, filled, given its conditions and published last, so a failure on the way leaves nothing showing. A header or footer with conditions cannot be published empty, because it would replace the theme's with nothing: create a draft, fill it, then publish.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `title` | string | Yes | | Template title |
+| `template_type` | string | Yes | | `header`, `footer`, `single-post`, `single-page`, `archive`, `search-results`, `error-404`, `popup`, `section`, `container` or `page` |
+| `status` | string | No | `draft` | `draft` or `publish`. A draft shows nowhere |
+| `elementor_data` | string | No | | Full Elementor JSON |
+| `conditions` | array | No | | Where it shows; see below |
+| `dry_run` | boolean | No | false | Preview without saving |
+
 **Capability:** `manage_options` (admin only)
+
+Rollback moves the template to the trash. If it has been filled or changed since, rollback needs `force: true`, and the refusal says when it is live, because rolling back removes it from every page it shows on. On a site with no trash (`EMPTY_TRASH_DAYS` set to 0) it always needs `force`, because it deletes for good.
+
+#### `set_elementor_template_conditions`
+
+Set where a template shows. Elementor Pro keeps its own record of this, which decides what renders, so this goes through Pro rather than editing the template's data.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `id` | integer | Yes | | Template ID, from `list_elementor_templates` |
+| `conditions` | array | Yes | | Replaces what is there. An empty list removes them |
+| `if_revision` | string | No | | Refuse if the conditions have changed since you read this `conditions_revision` |
+| `dry_run` | boolean | No | false | Preview without saving |
+
+**Capability:** `manage_options` (admin only)
+
+Conditions are rules or strings: `{"type":"include","name":"general"}` or `include/general` for the entire site; `{"type":"exclude","name":"singular","sub_name":"page","sub_id":42}` or `exclude/singular/page/42` to leave out one page. Unknown names are refused with the list Pro registers.
+
+The response says `verified: true` when the template is doing what its conditions say, and otherwise why not, such as `not_published` or `empty_template`. It warns when another published template may show on the same pages, because Elementor Pro shows one per URL: on the pages both cover, the narrower condition wins. A condition that can never show the template, such as an archive condition on a single page template, gets a warning rather than a refusal. If Elementor Pro's record has gone stale, sending the same conditions again rebuilds it (`cache_repaired`).
+
+To see which header and footer a URL gets, use `resolve_url` and read `theme_locations`. A page using the Elementor Canvas template shows neither, and `hidden_by_page_template` says so; switch it to Elementor Full Width (`elementor_header_footer`) with `set_page_settings`.
 
 ### Taxonomy Tools
 
@@ -364,7 +430,7 @@ List comments with optional filters.
 
 ## <img src="iato-icon.png" alt="" width="28" align="top" /> IATO Bridge Tools
 
-These 9 tools require an IATO API key. They call the IATO API, then enrich results with WordPress post IDs and slugs so the AI client can act on them directly.
+These 12 tools require an IATO API key. They call the IATO API, then enrich results with WordPress post IDs and slugs so the AI client can act on them directly.
 
 ### `get_iato_sitemap`
 
@@ -464,6 +530,31 @@ Returns pages with poor load performance: slow load times, large page sizes, exc
 | `crawl_id` | string | settings default | IATO crawl ID |
 | `limit` | integer | 20 | Max pages |
 | `min_load_time_ms` | integer | 2000 | Threshold in milliseconds |
+
+### `list_iato_crawls`
+
+Lists recent IATO crawl jobs with their status and IDs. Use it to find the latest completed `crawl_id` before reading SEO fixes, the sitemap or suggestions.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | integer | 20 | Max results |
+
+### `get_iato_crawl_status`
+
+Returns the status, progress and metadata of one crawl. Use it after `start_iato_crawl` to poll until the status is `completed`.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `crawl_id` | string | settings default | IATO crawl ID |
+
+### `start_iato_crawl`
+
+Starts a new IATO crawl and returns its `crawl_id`. Administrators only, because it uses your IATO quota.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | string | this site | URL to crawl |
+| `max_pages` | integer | 1000 | Maximum pages to crawl |
 
 ---
 

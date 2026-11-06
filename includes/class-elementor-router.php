@@ -23,6 +23,27 @@ class IATO_MCP_Elementor_Router {
 	private static array $cache = [];
 
 	/**
+	 * Template types that replace what a URL shows (1.17.0): the types whose Elementor
+	 * Pro document has the location `single` or `archive`. A header, footer, popup or
+	 * section also carries display conditions, and one on Entire Site matches every
+	 * URL, but it renders around or over the page, not instead of it.
+	 */
+	private const CONTENT_TEMPLATE_TYPES = [
+		'single',
+		'single-post',
+		'single-page',
+		'error-404',
+		'archive',
+		'search-results',
+		'product',
+		'product-post',
+		'product-archive',
+	];
+
+	/** The Theme Builder locations theme_locations answers for (1.17.0). */
+	private const THEME_LOCATIONS = [ 'header', 'footer' ];
+
+	/**
 	 * Resolve a URL to its rendering target.
 	 *
 	 * v1.8.0 contract — purely additive over v1.7.x. Existing field semantics
@@ -41,12 +62,19 @@ class IATO_MCP_Elementor_Router {
 	 *   shadowed_post_id:?int,             // canonical post being overridden (null on archive shadowing)
 	 *   shadowed_route_type:?string,       // route the URL would have had without the template
 	 *   route_type:string,                 // 'page'|'category_archive'|'tag_archive'|'author_archive'|
-	 *                                      //  'cpt_archive'|'theme_builder'|'404'|<post_type>
+	 *                                      //  'cpt_archive'|'taxonomy_archive'|'date_archive'|'search_results'|
+	 *                                      //  'blog_home'|'theme_builder'|'404'|<post_type>
 	 *   template?:array{
 	 *     template_id:int,
 	 *     template_type:?string,           // 'single'|'archive'|'header'|'footer'|'404'|<location>
 	 *     condition_matched:?string,
 	 *     builder:string,                  // 'elementor' (Layer 3 adds 'divi'/'beaver-builder')
+	 *   },
+	 *   theme_locations:?array{            // 1.17.0; null without Elementor Pro's Theme Builder
+	 *     header:?array{template_id:int,condition_matched:string},
+	 *     footer:?array{template_id:int,condition_matched:string},
+	 *     not_evaluated?:list<array{location:string,template_id:int,condition:string}>,
+	 *     hidden_by_page_template?:string, // the page's template shows no header or footer: both are null
 	 *   },
 	 *   limited_resolution?:bool,
 	 *   error?:string
@@ -71,6 +99,11 @@ class IATO_MCP_Elementor_Router {
 
 		self::$cache[ $normalized ] = $result;
 		return $result;
+	}
+
+	/** Forget what this request resolved: a write has just changed the answer (1.17.0). */
+	public static function forget(): void {
+		self::$cache = [];
 	}
 
 	/**
@@ -152,6 +185,21 @@ class IATO_MCP_Elementor_Router {
 			'author_id'    => $archive_info['author_id']    ?? null,
 		];
 
+		// 1.17.0: what WordPress makes of this URL. url_to_postid() drops the query and
+		// answers with the static front page for /?cat=7 or /?s=shoes, and with whatever
+		// ID it is given for /?p=999, so a post is only what renders where this says so.
+		$url_context = self::with_url_kind( $original_url, $url_context );
+		if ( in_array( $url_context['kind'], [ 'archive', 'date', 'search', '404', 'other_host' ], true ) ) {
+			$canonical_post_id        = null;
+			$canonical_post_type      = null;
+			$url_context['post_id']   = null;
+			$url_context['post_type'] = null;
+		}
+
+		// Headers and footers render around whatever step 5 finds, so this is
+		// answered either way.
+		$result['theme_locations'] = self::theme_locations( $url_context );
+
 		// 3. Pre-shadowing route_type — what the URL would resolve to without
 		//    any template overriding it. Used as shadowed_route_type when
 		//    shadowing applies, used as the canonical route_type when it doesn't.
@@ -210,6 +258,7 @@ class IATO_MCP_Elementor_Router {
 			'shadowed_post_id'           => null,
 			'shadowed_route_type'        => null,
 			'route_type'                 => '404',
+			'theme_locations'            => null,
 		];
 	}
 
@@ -402,6 +451,9 @@ class IATO_MCP_Elementor_Router {
 		if ( ! class_exists( '\Elementor\Plugin' ) ) {
 			return null;
 		}
+		if ( 'other_host' === $ctx['kind'] ) {
+			return false; // nothing on this site renders that URL
+		}
 
 		// Preferred path: Elementor Pro's Theme_Builder Locations API.
 		// Return only on a positive match (array). The module's `false` return
@@ -505,6 +557,12 @@ class IATO_MCP_Elementor_Router {
 			if ( null !== $ctx['post_id'] && $tid === $ctx['post_id'] ) {
 				continue;
 			}
+			// 1.17.0: a header on Entire Site matches every URL and shadows none. A
+			// template with no recorded type is judged by its conditions, as before.
+			$type = get_post_meta( $tid, '_elementor_template_type', true );
+			if ( is_string( $type ) && '' !== $type && ! in_array( $type, self::CONTENT_TEMPLATE_TYPES, true ) ) {
+				continue;
+			}
 			$conditions = get_post_meta( $tid, '_elementor_conditions', true );
 			if ( ! is_array( $conditions ) ) {
 				continue;
@@ -596,13 +654,15 @@ class IATO_MCP_Elementor_Router {
 	 *   include/singular                               → 80
 	 *   include/singular/{post_type}                   → 60
 	 *   include/singular/{post_type}/{post_id}         → 20
+	 *   include/singular/front_page                    → 15
 	 *   include/archive                                → 90
 	 *   include/archive/{taxonomy}                     → 70
 	 *   include/archive/{taxonomy}/{term_id}           → 30
 	 *   include/archive/in_taxonomy/{term_id}          → 30
-	 *   include/archive/by_author                      → 80
-	 *   include/archive/by_author/{author_id}          → 40
+	 *   include/archive/author, by_author              → 80
+	 *   include/archive/author/{id}, by_author/{id}    → 40
 	 *   include/archive/post_archive                   → 70
+	 *   include/archive/date, search                   → 70
 	 *   include/archive/{cpt}_archive                  → 50
 	 */
 	private static function condition_matches_context( string $condition, array $ctx ): ?int {
@@ -617,11 +677,23 @@ class IATO_MCP_Elementor_Router {
 				return 100;
 
 			case 'singular':
-				if ( null === $ctx['post_id'] ) {
+				// Pro's Singular condition: is_singular(), or a not-found page. Having a post
+				// ID is not enough: the posts page has one and is the blog.
+				if ( 'singular' !== $ctx['kind'] && '404' !== $ctx['kind'] ) {
 					return null;
 				}
 				if ( ! isset( $parts[2] ) ) {
 					return 80;
+				}
+				if ( 'not_found404' === $parts[2] ) {
+					return '404' === $ctx['kind'] ? 10 : null;
+				}
+				if ( '404' === $ctx['kind'] ) {
+					return null; // every other sub-condition is about a post
+				}
+				// A sub-condition of singular in Pro, not a post type.
+				if ( 'front_page' === $parts[2] ) {
+					return $ctx['is_front'] ? 15 : null;
 				}
 				if ( $ctx['post_type'] !== $parts[2] ) {
 					return null;
@@ -647,13 +719,15 @@ class IATO_MCP_Elementor_Router {
 	 */
 	private static function match_archive_condition( array $parts, array $ctx ): ?int {
 		// parts[1] === 'archive' already established by caller.
+		$kind = $ctx['kind'];
 		if ( ! isset( $parts[2] ) ) {
-			return null === $ctx['archive_kind'] ? null : 90;
+			// Pro's Archive condition: is_archive() || is_home() || is_search().
+			return in_array( $kind, [ 'archive', 'blog', 'date', 'search' ], true ) ? 90 : null;
 		}
 		$subscope = $parts[2];
 
-		// by_author / by_author/{id}
-		if ( 'by_author' === $subscope ) {
+		// author is what Pro stores; by_author is what this code first understood.
+		if ( 'author' === $subscope || 'by_author' === $subscope ) {
 			if ( 'author_archive' !== $ctx['archive_kind'] ) {
 				return null;
 			}
@@ -674,9 +748,13 @@ class IATO_MCP_Elementor_Router {
 			return ( (int) $parts[3] === (int) $ctx['term_id'] ) ? 30 : null;
 		}
 
-		// post_archive — the WordPress blog index.
+		// post_archive — the WordPress blog index, and nothing else: not an ordinary page.
 		if ( 'post_archive' === $subscope ) {
-			return null === $ctx['archive_kind'] ? 70 : null;
+			return 'blog' === $kind ? 70 : null;
+		}
+
+		if ( 'date' === $subscope || 'search' === $subscope ) {
+			return $subscope === $kind ? 70 : null;
 		}
 
 		// {cpt}_archive — CPT-specific archive.
@@ -708,6 +786,430 @@ class IATO_MCP_Elementor_Router {
 			return "Theme Builder template matches condition: {$first}";
 		}
 		return 'Theme Builder template matches the rendering location';
+	}
+
+	// ── theme_locations (1.17.0) ───────────────────────────────────────────
+
+	/**
+	 * Which header and footer this URL gets. Elementor Pro's own answer
+	 * (get_documents_for_location()) is about the current request, here the REST call,
+	 * not the URL asked about, so its rule is applied to the URL instead:
+	 * Conditions_Manager::get_location_templates() in Pro 4.3.3. That rule reads Pro's
+	 * conditions cache rather than the templates' meta, because the cache decides what
+	 * renders: a template whose conditions did not reach it is rightly reported as absent.
+	 *
+	 * @param array<string,mixed> $ctx URL-derived context, with the URL's kind.
+	 * @return array<string,mixed>|null null for a URL on another host, or when the Theme
+	 *                                  Builder is not there to ask; a failure here must not
+	 *                                  cost the rest of the answer.
+	 */
+	private static function theme_locations( array $ctx ): ?array {
+		try {
+			if ( 'other_host' === $ctx['kind'] ) {
+				return null;
+			}
+			$cache = self::theme_builder_cache();
+			if ( null === $cache ) {
+				return null;
+			}
+			// Elementor Canvas prints no header or footer, whatever the conditions say.
+			$hidden = self::page_template_hiding_locations( $ctx );
+			if ( null !== $hidden ) {
+				return [ 'header' => null, 'footer' => null, 'hidden_by_page_template' => $hidden ];
+			}
+			$locations     = [];
+			$not_evaluated = [];
+			foreach ( self::THEME_LOCATIONS as $location ) {
+				$locations[ $location ] = self::location_template( $location, (array) $cache->get_by_location( $location ), $ctx, $not_evaluated );
+			}
+			if ( [] !== $not_evaluated ) {
+				$locations['not_evaluated'] = $not_evaluated;
+			}
+			return $locations;
+		} catch ( \Throwable $e ) {
+			return null;
+		}
+	}
+
+	/**
+	 * The page template that keeps a header and footer off this URL, or null. A page
+	 * template is chosen as Elementor's PageTemplates module chooses it: the page's own,
+	 * or for a page built with Elementor that named neither Elementor's nor the theme's,
+	 * the kit's default. Pro drops its header and footer from Canvas
+	 * (Locations_Manager::filter_page_template_locations()), and canvas.php never prints
+	 * the theme's. elementor_header_footer keeps them.
+	 *
+	 * @param array<string,mixed> $ctx URL-derived context, with the URL's kind.
+	 */
+	private static function page_template_hiding_locations( array $ctx ): ?string {
+		$post_id = (int) ( $ctx['post_id'] ?? 0 );
+		if ( 'singular' !== $ctx['kind'] || $post_id <= 0 ) {
+			return null;
+		}
+		$template = (string) get_post_meta( $post_id, '_wp_page_template', true );
+		if ( 'elementor_canvas' === $template ) {
+			return $template;
+		}
+		if ( in_array( $template, [ 'elementor_theme', 'elementor_header_footer' ], true ) || 'builder' !== get_post_meta( $post_id, '_elementor_edit_mode', true ) ) {
+			return null;
+		}
+		try {
+			$kits = \Elementor\Plugin::$instance->kits_manager ?? null;
+			return is_object( $kits ) && method_exists( $kits, 'get_current_settings' ) && 'elementor_canvas' === $kits->get_current_settings( 'default_page_template' ) ? 'elementor_canvas' : null;
+		} catch ( \Throwable $e ) {
+			return null;
+		}
+	}
+
+	/** Pro's conditions cache, or null when Pro's Theme Builder is not loaded. */
+	private static function theme_builder_cache(): ?object {
+		$module_class = '\ElementorPro\Modules\ThemeBuilder\Module';
+		if ( ! class_exists( $module_class ) || ! method_exists( $module_class, 'instance' ) ) {
+			return null;
+		}
+		$module = $module_class::instance();
+		if ( ! is_object( $module ) || ! method_exists( $module, 'get_conditions_manager' ) ) {
+			return null;
+		}
+		$manager = $module->get_conditions_manager();
+		if ( ! is_object( $manager ) || ! method_exists( $manager, 'get_cache' ) ) {
+			return null;
+		}
+		$cache = $manager->get_cache();
+		return is_object( $cache ) && method_exists( $cache, 'get_by_location' ) ? $cache : null;
+	}
+
+	/**
+	 * The template that wins a location for this URL, as Pro decides it: published
+	 * only (its cache holds drafts too); any matching exclude removes the template;
+	 * of a template's matching includes the last one sets its priority; the lowest
+	 * priority wins, and a tie goes to whichever comes first in the cache.
+	 *
+	 * @param array<int,mixed>    $templates     Template ID => its condition strings.
+	 * @param array<string,mixed> $ctx           URL-derived context with the URL's kind.
+	 * @param list<array>         $not_evaluated Conditions this code could not judge.
+	 * @return array{template_id:int,condition_matched:string}|null
+	 */
+	private static function location_template( string $location, array $templates, array $ctx, array &$not_evaluated ): ?array {
+		$best          = null;
+		$best_priority = PHP_INT_MAX;
+		foreach ( $templates as $template_id => $conditions ) {
+			$template_id = (int) $template_id;
+			if ( 'publish' !== get_post_status( $template_id ) ) {
+				continue;
+			}
+			$priority = null;
+			$matched  = '';
+			$excluded = false;
+			foreach ( (array) $conditions as $condition ) {
+				$condition = (string) $condition;
+				$outcome   = self::location_condition( $condition, $ctx );
+				if ( null === $outcome ) {
+					$not_evaluated[] = [ 'location' => $location, 'template_id' => $template_id, 'condition' => $condition ];
+				} elseif ( false !== $outcome ) {
+					if ( str_starts_with( $condition, 'exclude/' ) ) {
+						$excluded = true;
+					} else {
+						$priority = $outcome;
+						$matched  = $condition;
+					}
+				}
+			}
+			if ( ! $excluded && null !== $priority && $priority < $best_priority ) {
+				$best_priority = $priority;
+				$best          = [ 'template_id' => $template_id, 'condition_matched' => $matched ];
+			}
+		}
+		return $best;
+	}
+
+	/**
+	 * What kind of page this URL is, in the terms Pro's conditions use, decided the way
+	 * WordPress decides it for a visitor: its rewrite rules and query variables go through
+	 * WP_Query::parse_query(), and what a request would answer with a 404 is a 404
+	 * (WP::handle_404()). The answers: singular, blog, archive, date, search, 404,
+	 * other_host, or unknown when this cannot tell, which never gets a confident answer:
+	 * conditions that depend on it go under not_evaluated. The archive fields of $ctx are
+	 * replaced with what WordPress found.
+	 *
+	 * The path guessing in detect_archive_info() stays for one thing: a URL WordPress's
+	 * rules read as not found which a plugin's term or author link really produces.
+	 *
+	 * @param array<string,mixed> $ctx URL-derived context, with detect_archive_info()'s guesses.
+	 * @return array<string,mixed> The same, plus kind and is_front.
+	 */
+	private static function with_url_kind( string $url, array $ctx ): array {
+		try {
+			$view = self::wordpress_view( $url, (int) ( $ctx['post_id'] ?? 0 ) );
+		} catch ( \Throwable $e ) {
+			$view = [ 'kind' => 'unknown' ];
+		}
+		$guessed = null !== $ctx['term_id'] || null !== $ctx['author_id'] || null !== $ctx['cpt_name'];
+		if ( '404' === $view['kind'] && $guessed ) {
+			$ctx['kind']     = 'archive';
+			$ctx['is_front'] = false;
+			return $ctx;
+		}
+		$ctx['kind']         = $view['kind'];
+		$ctx['is_front']     = ! empty( $view['is_front'] );
+		$ctx['archive_kind'] = $view['archive_kind'] ?? null;
+		$ctx['term_id']      = $view['term_id'] ?? null;
+		$ctx['taxonomy']     = $view['taxonomy'] ?? null;
+		$ctx['cpt_name']     = $view['cpt_name'] ?? null;
+		$ctx['author_id']    = $view['author_id'] ?? null;
+		return $ctx;
+	}
+
+	/**
+	 * @param int $post_id What url_to_postid() answered, 0 for nothing.
+	 * @return array{kind:string,is_front?:bool,archive_kind?:string,term_id?:int,taxonomy?:string,cpt_name?:string,author_id?:int}
+	 */
+	private static function wordpress_view( string $url, int $post_id ): array {
+		$parts = wp_parse_url( $url );
+		$parts = is_array( $parts ) ? $parts : [];
+		if ( ! self::is_this_host( (string) ( $parts['host'] ?? '' ) ) ) {
+			return [ 'kind' => 'other_host' ];
+		}
+		$vars = self::query_vars_of( $parts );
+		if ( null === $vars ) {
+			return [ 'kind' => 'unknown' ];
+		}
+
+		$query = new \WP_Query();
+		$query->parse_query( $vars );
+		$archive_flags = array_filter( [ $query->is_category, $query->is_tag, $query->is_tax, $query->is_author, $query->is_date, $query->is_post_type_archive, $query->is_search ] );
+		if ( $query->is_feed || $query->is_embed || $query->is_trackback || $query->is_robots || $query->is_favicon || ! empty( $query->is_sitemap ) || count( $archive_flags ) > 1 ) {
+			return [ 'kind' => 'unknown' ];
+		}
+
+		if ( $query->is_singular ) {
+			if ( $post_id <= 0 || ! get_post( $post_id ) ) {
+				// url_to_postid() ran these rules and found nothing. It does not read a post
+				// named in the query string, so that is not a 404 this can vouch for.
+				parse_str( (string) ( $parts['query'] ?? '' ), $given );
+				return [ 'kind' => [] !== array_intersect_key( $given, array_flip( [ 'name', 'pagename', 'attachment', 'subpost', 'subpost_id' ] ) ) ? 'unknown' : '404' ];
+			}
+			// WooCommerce turns its shop page into a product archive in its own query filter,
+			// and Pro hands that page to WooCommerce's conditions.
+			if ( function_exists( 'wc_get_page_id' ) && (int) wc_get_page_id( 'shop' ) === $post_id ) {
+				return [ 'kind' => 'unknown' ];
+			}
+			return [ 'kind' => 'singular', 'is_front' => 'page' === get_option( 'show_on_front' ) && (int) get_option( 'page_on_front' ) === $post_id ];
+		}
+
+		// What a request would answer with a 404: a page past the end, or a date with no posts.
+		if ( ( $query->is_paged || $query->is_date ) && ! self::has_posts( $vars ) ) {
+			return [ 'kind' => '404' ];
+		}
+		if ( $query->is_home || $query->is_posts_page ) {
+			return [ 'kind' => 'blog', 'archive_kind' => 'blog_home' ];
+		}
+		if ( $query->is_search ) {
+			return [ 'kind' => 'search', 'archive_kind' => 'search_results' ];
+		}
+		if ( $query->is_date ) {
+			return [ 'kind' => 'date', 'archive_kind' => 'date_archive' ];
+		}
+		$object = $query->get_queried_object();
+		if ( $query->is_category || $query->is_tag || $query->is_tax ) {
+			if ( ! is_object( $object ) ) {
+				return [ 'kind' => '404' ]; // a term that does not exist
+			}
+			$taxonomy = (string) $object->taxonomy;
+			if ( class_exists( 'WooCommerce' ) && ( str_starts_with( $taxonomy, 'product_' ) || str_starts_with( $taxonomy, 'pa_' ) ) ) {
+				return [ 'kind' => 'unknown' ];
+			}
+			return [
+				'kind'         => 'archive',
+				'archive_kind' => $query->is_category ? 'category_archive' : ( $query->is_tag ? 'tag_archive' : 'taxonomy_archive' ),
+				'taxonomy'     => $taxonomy,
+				'term_id'      => (int) $object->term_id,
+			];
+		}
+		if ( $query->is_author ) {
+			return is_object( $object ) ? [ 'kind' => 'archive', 'archive_kind' => 'author_archive', 'author_id' => (int) $object->ID ] : [ 'kind' => '404' ];
+		}
+		if ( $query->is_post_type_archive ) {
+			if ( ! is_object( $object ) || ( class_exists( 'WooCommerce' ) && 'product' === $object->name ) ) {
+				return [ 'kind' => 'unknown' ];
+			}
+			return [ 'kind' => 'archive', 'archive_kind' => 'cpt_archive', 'cpt_name' => (string) $object->name ];
+		}
+		return [ 'kind' => 'unknown' ];
+	}
+
+	/** Is this the site's host? No host means a relative URL. A leading www. is optional, as in url_to_postid(). */
+	private static function is_this_host( string $host ): bool {
+		$plain = static fn( string $h ): string => (string) preg_replace( '/^www\./', '', strtolower( $h ) );
+		return '' === $host || $plain( $host ) === $plain( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+	}
+
+	/**
+	 * The query variables WP::parse_request() would arrive at for this URL, from the
+	 * rewrite rules as url_to_postid() walks them, then the query string, which wins.
+	 *
+	 * @param array<string,mixed> $parts wp_parse_url()'s answer.
+	 * @return array<string,mixed>|null null when WordPress's rewrite layer is not there.
+	 */
+	private static function query_vars_of( array $parts ): ?array {
+		global $wp_rewrite, $wp;
+		if ( ! is_object( $wp_rewrite ) || ! is_object( $wp ) ) {
+			return null;
+		}
+
+		$path = trim( (string) ( $parts['path'] ?? '' ), '/' );
+		$home = trim( (string) wp_parse_url( home_url( '/' ), PHP_URL_PATH ), '/' );
+		if ( '' !== $home && ( $path === $home || str_starts_with( $path, $home . '/' ) ) ) {
+			$path = trim( substr( $path, strlen( $home ) ), '/' );
+		}
+		if ( ! $wp_rewrite->using_index_permalinks() ) {
+			$path = trim( (string) preg_replace( '#^' . preg_quote( (string) $wp_rewrite->index, '#' ) . '(?:/|$)#', '', $path ), '/' );
+		}
+
+		$rules = (array) $wp_rewrite->wp_rewrite_rules();
+		if ( '' !== $path && [] === $rules ) {
+			return null; // plain permalinks: what a path means is up to the server in front of WordPress
+		}
+		$vars = [];
+		if ( '' !== $path ) {
+			foreach ( $rules as $match => $target ) {
+				if ( 1 !== preg_match( "#^{$match}#", $path, $matches ) ) {
+					continue;
+				}
+				if ( $wp_rewrite->use_verbose_page_rules && 1 === preg_match( '/pagename=\$matches\[([0-9]+)\]/', (string) $target, $page_match ) && ! get_page_by_path( $matches[ (int) $page_match[1] ] ) ) {
+					continue;
+				}
+				parse_str( addslashes( \WP_MatchesMapRegex::apply( (string) preg_replace( '!^.+\?!', '', (string) $target ), $matches ) ), $vars );
+				break;
+			}
+		}
+		parse_str( (string) ( $parts['query'] ?? '' ), $given );
+		$vars = array_merge( $vars, $given );
+
+		// Only what a visitor's URL can set, and a post type's own query variable names a post.
+		$public = array_intersect_key( $vars, array_flip( (array) $wp->public_query_vars ) );
+		foreach ( get_post_types( [], 'objects' ) as $post_type => $object ) {
+			if ( ! empty( $object->query_var ) && isset( $public[ $object->query_var ] ) ) {
+				$public['post_type'] = $post_type;
+				$public['name']      = $public[ $object->query_var ];
+			}
+		}
+		// Empty matches from optional rule groups are not values. An empty search still is a search.
+		$public = array_filter( $public, static fn( $value, $key ): bool => '' !== $value || 's' === $key, ARRAY_FILTER_USE_BOTH );
+		return wp_resolve_numeric_slug_conflicts( $public );
+	}
+
+	/** Would a visitor's request find any posts? WP::handle_404() answers 404 when a date or a later page has none. */
+	private static function has_posts( array $vars ): bool {
+		$found = new \WP_Query( $vars + [ 'fields' => 'ids', 'no_found_rows' => true, 'post_status' => 'publish' ] );
+		return ! empty( $found->posts );
+	}
+
+	/**
+	 * One stored condition against a URL. Priorities are what Pro's
+	 * get_condition_priority() gives (lower is more specific); they only ever compare
+	 * with each other.
+	 *
+	 * @param array<string,mixed> $ctx URL-derived context with the URL's kind.
+	 * @return int|false|null The priority when it applies, false when it does not, null
+	 *                        when it depends on something this code does not look at.
+	 */
+	private static function location_condition( string $condition, array $ctx ): int|false|null {
+		[ $mode, $name, $sub_name, $sub_id ] = array_pad( explode( '/', $condition ), 4, '' );
+		if ( 'include' !== $mode && 'exclude' !== $mode ) {
+			return null;
+		}
+		switch ( $name ) {
+			case 'general':
+				return 100;
+			case 'singular':
+				return self::singular_location_condition( $sub_name, $sub_id, $ctx );
+			case 'archive':
+				return self::archive_location_condition( $sub_name, $sub_id, $ctx );
+			default:
+				return null;
+		}
+	}
+
+	/** @return int|false|null See location_condition(). */
+	private static function singular_location_condition( string $sub_name, string $sub_id, array $ctx ): int|false|null {
+		if ( 'unknown' === $ctx['kind'] ) {
+			return null;
+		}
+		// Pro's Singular condition also passes on a not-found page.
+		if ( 'singular' !== $ctx['kind'] && '404' !== $ctx['kind'] ) {
+			return false;
+		}
+		if ( '' === $sub_name ) {
+			return 60;
+		}
+		if ( 'not_found404' === $sub_name ) {
+			return '404' === $ctx['kind'] ? 5 : false;
+		}
+		if ( '404' === $ctx['kind'] ) {
+			return false; // every other sub-condition is about a post
+		}
+		if ( 'front_page' === $sub_name ) {
+			return $ctx['is_front'] ? 15 : false;
+		}
+		if ( 1 === preg_match( '/^(?:child_of|any_child_of|by_author|in_.+|.+_by_author)$/', $sub_name ) ) {
+			return null;
+		}
+		if ( $ctx['post_type'] !== $sub_name ) {
+			return false;
+		}
+		if ( '' === $sub_id ) {
+			return 30;
+		}
+		return (int) $sub_id === (int) $ctx['post_id'] ? 20 : false;
+	}
+
+	/** @return int|false|null See location_condition(). */
+	private static function archive_location_condition( string $sub_name, string $sub_id, array $ctx ): int|false|null {
+		$kind = $ctx['kind'];
+		if ( 'unknown' === $kind ) {
+			return null;
+		}
+		if ( ! in_array( $kind, [ 'archive', 'blog', 'date', 'search' ], true ) ) {
+			return false;
+		}
+		if ( '' === $sub_name ) {
+			return 80;
+		}
+		if ( 'post_archive' === $sub_name ) {
+			return 'blog' === $kind ? 60 : false;
+		}
+		if ( 'date' === $sub_name ) {
+			return 'date' === $kind ? 55 : false;
+		}
+		if ( 'search' === $sub_name ) {
+			return 'search' === $kind ? 55 : false;
+		}
+		if ( 'author' === $sub_name || 'by_author' === $sub_name ) {
+			if ( 'author_archive' !== $ctx['archive_kind'] ) {
+				return false;
+			}
+			if ( '' === $sub_id ) {
+				return 55;
+			}
+			return (int) $sub_id === (int) $ctx['author_id'] ? 50 : false;
+		}
+		if ( 'archive' !== $kind ) {
+			return false; // what is left is a taxonomy or a post type's archive
+		}
+		if ( 1 === preg_match( '/^(?:child_of_.+|any_child_of_.+|in_.+)$/', $sub_name ) ) {
+			return null;
+		}
+		if ( str_ends_with( $sub_name, '_archive' ) ) {
+			return 'cpt_archive' === $ctx['archive_kind'] && substr( $sub_name, 0, -8 ) === $ctx['cpt_name'] ? 60 : false;
+		}
+		if ( $sub_name !== $ctx['taxonomy'] ) {
+			return false;
+		}
+		if ( '' === $sub_id ) {
+			return 60;
+		}
+		return null !== $ctx['term_id'] && (int) $sub_id === (int) $ctx['term_id'] ? 50 : false;
 	}
 
 	/**
@@ -784,8 +1286,8 @@ class IATO_MCP_Elementor_Router {
 		}
 		$result['subscope'] = $parts[2];
 
-		// Author archive: include/archive/by_author or include/archive/by_author/{id}
-		if ( 'by_author' === $result['subscope'] ) {
+		// Author archive: include/archive/author (Pro) or by_author, each with an optional {id}
+		if ( 'author' === $result['subscope'] || 'by_author' === $result['subscope'] ) {
 			if ( isset( $parts[3] ) && ctype_digit( $parts[3] ) ) {
 				$result['target_id']    = (int) $parts[3];
 				$result['target_label'] = self::resolve_target_label( 'author', null, $result['target_id'] );
