@@ -163,8 +163,10 @@ class IATO_MCP_Sanitize_Report {
 
 		$notes  = [];
 		$policy = (string) ( $extra['inline_markup'] ?? '' );
-		// wp_kses removes the tags and keeps what is between them.
-		if ( 'html' === $rule && 'kept' !== $policy && array_intersect( [ 'style', 'script' ], $removed['removed_tags'] ) ) {
+		// wp_kses removes the tags and keeps what is between them. The plugin removes
+		// whole elements first (1.16.0), so this is only for what stays: an unclosed
+		// tag, Elementor's own kses pass, or WordPress below 6.5.
+		if ( 'html' === $rule && 'kept' !== $policy && array_intersect( [ 'style', 'script' ], $removed['removed_tags'] ) && self::removed_text_remains( $before, $after ) ) {
 			$notes[] = 'The contents of removed <style> and <script> tags stay on the page as visible text; send the value again without them.';
 		}
 		if ( isset( self::POLICY_NOTES[ $policy ] ) ) {
@@ -174,6 +176,21 @@ class IATO_MCP_Sanitize_Report {
 			$entry['note'] = implode( ' ', $notes );
 		}
 		return $entry;
+	}
+
+	/** Does the text of a style or script element in $before still show in $after? For the note only. */
+	private static function removed_text_remains( string $before, string $after ): bool {
+		if ( ! preg_match_all( '#<(style|script)\b[^>]*>(.*?)(?:</\1\s*>|\z)#is', $before, $matches ) ) {
+			return false;
+		}
+		$shown = html_entity_decode( $after, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+		foreach ( $matches[2] as $body ) {
+			$body = trim( $body );
+			if ( '' !== $body && str_contains( $shown, $body ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** An entry for a value that passed through a sanitising function, or null when nothing was removed from it. */

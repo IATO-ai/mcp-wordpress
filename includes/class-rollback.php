@@ -91,7 +91,12 @@ class IATO_MCP_Rollback {
 		}
 
 		IATO_MCP_Cache::begin();
-		$result = self::execute( $receipt, [ 'force' => $force, 'dry_run' => $dry_run ] );
+		$level = ob_get_level();
+		try {
+			$result = self::execute( $receipt, [ 'force' => $force, 'dry_run' => $dry_run ] );
+		} finally {
+			IATO_MCP_Server::close_buffers( $level );
+		}
 		$cache  = IATO_MCP_Cache::flush();
 		if ( is_wp_error( $result ) ) {
 			$data = $result->get_error_data();
@@ -238,9 +243,16 @@ class IATO_MCP_Rollback {
 			$restore = [ 'restored_value' => IATO_MCP_Elementor_Atomic_Writer::restore_view( $receipt ) ];
 		}
 		if ( $is_tree ) {
-			$restore = null === $before || null !== self::no_elementor_from( $before )
-				? [ 'restored_revision' => null, 'restored' => 'no_elementor_data' ]
-				: [ 'restored_revision' => IATO_MCP_Elementor_Adapter::compute_revision( (string) $before ) ];
+			$envelope = self::no_elementor_from( $before );
+			$old_tree = self::envelope_tree( $envelope, (string) $receipt['field'] );
+			if ( null !== $old_tree ) {
+				// 1.16.0: all three come back: the tree, the flag, the content.
+				$restore = [ 'restored_revision' => IATO_MCP_Elementor_Adapter::compute_revision( $old_tree ), 'restored' => '' === (string) ( $envelope['edit_mode'] ?? '' ) ? 'content_and_elementor_off' : 'content' ];
+			} elseif ( null === $before || null !== $envelope ) {
+				$restore = [ 'restored_revision' => null, 'restored' => 'no_elementor_data' ];
+			} else {
+				$restore = [ 'restored_revision' => IATO_MCP_Elementor_Adapter::compute_revision( (string) $before ) ];
+			}
 		}
 
 		$check  = IATO_MCP_Rollback_Conflict::check( $receipt );
@@ -266,7 +278,8 @@ class IATO_MCP_Rollback {
 		if ( $dry_run ) {
 			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
 				+ $base
-				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] : [ 'would_restore' => $is_atomic ? $restore['restored_value'] : $before ] )
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic ? $restore['restored_value'] : $before ] )
+				+ ( $is_tree ? self::content_refresh_preview( $post_id, $before ) : [] )
 				+ [ 'conflict_check' => $report ];
 		}
 
@@ -287,8 +300,14 @@ class IATO_MCP_Rollback {
 			return $result;
 		}
 
+		// 1.16.0: a tree put back directly leaves post_content holding the text of the
+		// tree it replaced. An envelope restored the content itself.
+		if ( $is_tree && null !== $post_id && is_string( $before ) && null === self::no_elementor_from( $before ) ) {
+			$restore += IATO_MCP_Elementor_Adapter::refresh_post_content( $post_id );
+		}
+
 		$by = IATO_MCP_Change_Receipt::current_actor();
-		IATO_MCP_Change_Receipt::mark_rolled_back( $change_id, $by );
+		$marked = IATO_MCP_Change_Receipt::mark_rolled_back( $change_id, $by );
 
 		return [ 'success' => true ]
 			+ $base
@@ -297,7 +316,8 @@ class IATO_MCP_Rollback {
 				'rolled_back_at' => gmdate( 'c' ),
 				'rolled_back_by' => IATO_MCP_Change_Receipt::describe_actor( $by ),
 				'conflict_check' => $report,
-			];
+			]
+			+ ( $marked ? [] : [ 'warning' => 'The change was rolled back, but its receipt could not be marked, so this rollback could run again. The plugin\'s Diagnostics page has details.' ] );
 	}
 
 	/**
@@ -341,6 +361,12 @@ class IATO_MCP_Rollback {
 			$why = self::site_setting_unavailable( $field, $before );
 			if ( null !== $why ) {
 				return $why;
+			}
+		}
+		if ( 'post_meta' === $type && ! empty( $receipt['post_id'] ) ) {
+			$key_check = IATO_MCP_Meta_Policy::check_stored_key( (int) $receipt['post_id'], $field );
+			if ( is_wp_error( $key_check ) ) {
+				return new WP_Error( 'rollback_unavailable', $key_check->get_error_message(), [ 'status' => 409 ] );
 			}
 		}
 		if ( 'taxonomy' === $type && 'update_term' === $field ) {
@@ -388,7 +414,7 @@ class IATO_MCP_Rollback {
 			case 'attachment':
 				return self::rollback_attachment( $field, $post_id, $before_value );
 			case 'elementor_widget':
-				return self::rollback_elementor( $post_id, $before_value );
+				return self::rollback_elementor( $post_id, $before_value, $field );
 			case IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE:
 				return IATO_MCP_Elementor_Atomic_Writer::rollback( $receipt );
 			default:
@@ -445,8 +471,70 @@ class IATO_MCP_Rollback {
 	 * original content and builder flag. A JSON object, never mistaken for a
 	 * tree (Elementor data is a JSON array).
 	 */
-	public static function no_elementor_envelope( string $post_content, string $edit_mode ): string {
-		return (string) wp_json_encode( [ 'iato_no_elementor_data' => true, 'post_content' => $post_content, 'edit_mode' => $edit_mode ] );
+	/** What a real rollback's content refresh would do, for a dry run. */
+	private static function content_refresh_preview( ?int $post_id, mixed $before ): array {
+		if ( null === $post_id || ! is_string( $before ) || null !== self::no_elementor_from( $before ) ) {
+			return [];
+		}
+		$elements = json_decode( $before, true );
+		return is_array( $elements ) ? IATO_MCP_Elementor_Adapter::refresh_post_content( $post_id, IATO_MCP_Elementor_Adapter::force_arrays( $elements ) ) : [];
+	}
+
+	public static function no_elementor_envelope( string $post_content, string $edit_mode, ?string $elementor_data = null ): string {
+		return (string) wp_json_encode(
+			[ 'iato_no_elementor_data' => true, 'post_content' => $post_content, 'edit_mode' => $edit_mode ]
+			+ ( null === $elementor_data ? [] : [ 'elementor_data' => $elementor_data ] )
+		);
+	}
+
+	/**
+	 * An envelope gains a hash of the content the write left, for the conflict check
+	 * (1.16.0). Anything else is returned as it is: a stored tree is a JSON array.
+	 */
+	public static function envelope_with_content_after( string $before, string $content ): string {
+		$envelope = self::no_elementor_from( $before );
+		if ( null === $envelope ) {
+			return $before;
+		}
+		$envelope['content_after_sha256'] = hash( 'sha256', $content );
+		return (string) wp_json_encode( $envelope );
+	}
+
+	/**
+	 * The receipt field of a write that kept an envelope (1.16.0). The envelope is
+	 * JSON, and so is a stored tree: only this column, which no request can set, says
+	 * the plugin wrote it. Text from any other receipt that merely looks like an
+	 * envelope came out of the post's own data.
+	 */
+	public const ACTIVATE_FIELD = 'elementor:document:activate';
+
+	/**
+	 * What a whole-tree write's receipt keeps, and its field. Elementor's save replaces
+	 * post_content, which visitors see whenever the post has no elements, with the flag
+	 * on too (Elementor sets it when its editor opens, saved or not): those writes, and
+	 * any that turn Elementor on, keep an envelope.
+	 *
+	 * @return array{0:string,1:string} The before value and the receipt field.
+	 */
+	public static function tree_receipt( int $post_id, string $stored_raw, bool $turning_on, string $field ): array {
+		// Data Elementor cannot read shows no elements either, so visitors see the content.
+		$elements = '' === $stored_raw ? null : json_decode( $stored_raw, true );
+		if ( ! $turning_on && is_array( $elements ) && [] !== $elements ) {
+			return [ $stored_raw, $field ];
+		}
+		return [
+			self::no_elementor_envelope(
+				(string) get_post_field( 'post_content', $post_id ),
+				(string) get_post_meta( $post_id, '_elementor_edit_mode', true ),
+				'' !== $stored_raw ? $stored_raw : null
+			),
+			self::ACTIVATE_FIELD,
+		];
+	}
+
+	/** The stored tree an envelope holds, from a receipt whose field vouches for it. */
+	private static function envelope_tree( ?array $envelope, string $field ): ?string {
+		return self::ACTIVATE_FIELD === $field && isset( $envelope['elementor_data'] ) ? (string) $envelope['elementor_data'] : null;
 	}
 
 	/** The envelope's fields, or null when $before is not one. */
@@ -463,10 +551,11 @@ class IATO_MCP_Rollback {
 	 * `_elementor_data` text as it was stored before the write, restored
 	 * verbatim through the post_meta path (kses lock lifted, Elementor's meta
 	 * sanitize callbacks out of the way, caches cleared). For a post that had
-	 * no Elementor data the before value is an envelope: the data is removed,
-	 * the builder flag and the original post_content are put back.
+	 * no Elementor data, or had Elementor turned off, the before value is an
+	 * envelope: the data is removed or put back as it was (1.16.0), the builder flag
+	 * and the original post_content are put back.
 	 */
-	private static function rollback_elementor( ?int $post_id, mixed $before_value ): bool|WP_Error {
+	private static function rollback_elementor( ?int $post_id, mixed $before_value, string $field = '' ): bool|WP_Error {
 		if ( ! $post_id || ! get_post( $post_id ) ) {
 			return new WP_Error( 'post_not_found', 'Post not found.', [ 'status' => 404 ] );
 		}
@@ -475,7 +564,7 @@ class IATO_MCP_Rollback {
 			return self::rollback_post_meta( '_elementor_data', $post_id, $before_value );
 		}
 
-		$result = self::rollback_post_meta( '_elementor_data', $post_id, null );
+		$result = self::rollback_post_meta( '_elementor_data', $post_id, self::envelope_tree( $plain, $field ) );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -486,31 +575,24 @@ class IATO_MCP_Rollback {
 			update_post_meta( $post_id, '_elementor_edit_mode', wp_slash( $mode ) );
 		}
 		if ( null !== $plain && isset( $plain['post_content'] ) ) {
-			return self::restore_post_content( $post_id, (string) $plain['post_content'] );
+			$content = (string) $plain['post_content'];
+			// A receipt from before 1.16.0, or text that only looks like an envelope:
+			// nothing shows the plugin wrote it, so it is no reason to skip the filter.
+			if ( self::ACTIVATE_FIELD !== $field && ! IATO_MCP_Auth::holds_unfiltered_html() ) {
+				$content = IATO_MCP_Elementor_Sanitizer::clean_markup( $content );
+			}
+			return self::restore_post_content( $post_id, $content );
 		}
 		return true;
 	}
 
 	/**
 	 * Put a post's content back exactly as it was stored (a value read from the
-	 * database when the receipt was recorded). WordPress' kses content filters
-	 * are on for every MCP request (the 1.13.0 lock); they would filter the
-	 * restored content again and strip what a person with unfiltered_html had
-	 * stored, so they are removed for this one write and put back afterwards,
-	 * also when it fails. The value is slashed because wp_update_post() unslashes.
+	 * database when the receipt was recorded), past the kses filters of the 1.13.0
+	 * lock, which would strip what a person with unfiltered_html had stored.
 	 */
 	private static function restore_post_content( int $post_id, string $content ): bool|WP_Error {
-		$kses_on = function_exists( 'kses_remove_filters' ) && false !== has_filter( 'content_save_pre', 'wp_filter_post_kses' );
-		if ( $kses_on ) {
-			kses_remove_filters();
-		}
-		try {
-			$result = IATO_MCP_Auth::write_unlocked( fn() => wp_update_post( wp_slash( [ 'ID' => $post_id, 'post_content' => $content ] ), true ) );
-		} finally {
-			if ( $kses_on ) {
-				kses_init_filters();
-			}
-		}
+		$result = IATO_MCP_Auth::write_unlocked( fn() => IATO_MCP_Auth::update_post_fields( [ 'ID' => $post_id, 'post_content' => $content ], true ) );
 		return is_wp_error( $result ) ? $result : true;
 	}
 
@@ -616,7 +698,8 @@ class IATO_MCP_Rollback {
 			if ( 'trash' === $post->post_status ) {
 				return true;
 			}
-			$trashed = wp_trash_post( $post_id );
+			// Trashing saves the post, and the filters would take from its content.
+			$trashed = IATO_MCP_Auth::keeping_post_columns( $post_id, fn() => wp_trash_post( $post_id ) );
 			if ( ! $trashed ) {
 				return new WP_Error( 'trash_failed', 'Failed to trash post.' );
 			}
@@ -636,12 +719,9 @@ class IATO_MCP_Rollback {
 			return new WP_Error( 'unsupported_field', "Rollback not supported for post field: {$field}" );
 		}
 
-		// Slashed: wp_update_post() unslashes, which would strip the restored
-		// value's backslashes.
-		$result = wp_update_post( wp_slash( [
-			'ID'      => $post_id,
-			$post_key => $before_value,
-		] ), true );
+		// The value goes back as the database held it (1.16.0), and the columns this
+		// receipt is not about stay as they are.
+		$result = IATO_MCP_Auth::update_post_fields( [ 'ID' => $post_id, $post_key => $before_value ], true );
 
 		return is_wp_error( $result ) ? $result : true;
 	}

@@ -124,6 +124,11 @@ if ( ! function_exists( 'esc_html' ) ) {
 		return htmlspecialchars( (string) $s, ENT_QUOTES );
 	}
 }
+if ( ! function_exists( '__return_false' ) ) {
+	function __return_false(): bool {
+		return false;
+	}
+}
 if ( ! function_exists( '__return_true' ) ) {
 	function __return_true(): bool {
 		return true;
@@ -131,6 +136,9 @@ if ( ! function_exists( '__return_true' ) ) {
 }
 if ( ! function_exists( 'remove_filter' ) ) {
 	function remove_filter( string $hook, callable $cb, int $priority = 10 ): bool {
+		if ( class_exists( 'IATO_Test_Abilities_State' ) && isset( IATO_Test_Abilities_State::$filters[ $hook ] ) ) {
+			IATO_Test_Abilities_State::$filters[ $hook ] = array_values( array_filter( IATO_Test_Abilities_State::$filters[ $hook ], static fn( $added ) => $added !== $cb ) );
+		}
 		foreach ( ( $GLOBALS['wp_filter'][ $hook ]->callbacks[ $priority ] ?? [] ) as $id => $entry ) {
 			if ( $entry['function'] === $cb ) {
 				unset( $GLOBALS['wp_filter'][ $hook ]->callbacks[ $priority ][ $id ] );

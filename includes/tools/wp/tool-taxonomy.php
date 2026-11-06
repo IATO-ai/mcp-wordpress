@@ -15,6 +15,48 @@
 
 defined( 'ABSPATH' ) || exit;
 
+/**
+ * A term's name or description as WordPress will store it, for a dry run: the save
+ * filters turn & into &amp;, and wp_insert_term() compares that form.
+ */
+function iato_mcp_term_field_as_stored( string $field, string $value, string $taxonomy ): string {
+	return (string) wp_unslash( sanitize_term_field( $field, wp_slash( $value ), 0, $taxonomy, 'db' ) );
+}
+
+/**
+ * The term wp_insert_term() would refuse a new one over, by its own rule: a slug asked
+ * for can make a repeated name acceptable, and on a hierarchical taxonomy only siblings
+ * count.
+ *
+ * @return int|null The existing term's ID, or null when the insert would go ahead.
+ */
+function iato_mcp_term_insert_conflict( string $name, string $slug, bool $slug_given, int $parent, string $taxonomy ): ?int {
+	$matches = get_terms( [ 'taxonomy' => $taxonomy, 'name' => $name, 'hide_empty' => false, 'parent' => $parent, 'update_term_meta_cache' => false ] );
+	$match   = null;
+	foreach ( is_array( $matches ) ? $matches : [] as $candidate ) {
+		if ( strtolower( $name ) === strtolower( $candidate->name ) ) {
+			$match = $candidate;
+			break;
+		}
+	}
+	if ( null === $match ) {
+		return null;
+	}
+	$slug_match = get_term_by( 'slug', $slug, $taxonomy );
+	if ( $slug_given && $match->slug !== $slug && ! $slug_match ) {
+		return null;
+	}
+	if ( ! is_taxonomy_hierarchical( $taxonomy ) ) {
+		return (int) $match->term_id;
+	}
+	$siblings = get_terms( [ 'taxonomy' => $taxonomy, 'get' => 'all', 'parent' => $parent, 'update_term_meta_cache' => false ] );
+	$siblings = is_array( $siblings ) ? $siblings : [];
+	if ( ( ! $slug_given || $match->slug === $slug ) && in_array( $name, wp_list_pluck( $siblings, 'name' ), true ) ) {
+		return (int) $match->term_id;
+	}
+	return $slug_match && in_array( $slug, wp_list_pluck( $siblings, 'slug' ), true ) ? (int) $slug_match->term_id : null;
+}
+
 // ── get_terms ─────────────────────────────────────────────────────────────────
 
 IATO_MCP_Server::register_tool(
@@ -71,6 +113,7 @@ IATO_MCP_Server::register_tool(
 				'post_id'  => [ 'type' => 'integer', 'description' => 'Post ID (required)' ],
 				'term_id'  => [ 'type' => 'integer', 'description' => 'Term ID to assign (required)' ],
 				'taxonomy' => [ 'type' => 'string',  'description' => 'category|post_tag (default: category)' ],
+				'dry_run'  => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'post_id', 'term_id' ],
 		],
@@ -112,6 +155,21 @@ IATO_MCP_Server::register_tool(
 			$before_ids = [];
 		}
 
+		if ( ! empty( $args['dry_run'] ) ) {
+			$before_ids = array_map( 'intval', $before_ids );
+			return IATO_MCP_Server::ok( [
+				'dry_run'     => true,
+				'action'      => in_array( $term_id, $before_ids, true ) ? 'no_change' : 'would_assign',
+				'post_id'     => $post_id,
+				'term_id'     => $term_id,
+				'term_name'   => $term->name,
+				'taxonomy'    => $taxonomy,
+				'before_ids'  => $before_ids,
+				'after_ids'   => array_values( array_unique( array_merge( $before_ids, [ $term_id ] ) ) ),
+				'not_checked' => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
+			] );
+		}
+
 		$result = wp_set_post_terms( $post_id, [ $term_id ], $taxonomy, true );
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -150,6 +208,7 @@ IATO_MCP_Server::register_tool(
 				'slug'        => [ 'type' => 'string',  'description' => 'URL slug (auto-generated from name if omitted).' ],
 				'description' => [ 'type' => 'string',  'description' => 'Term description.' ],
 				'parent'      => [ 'type' => 'integer', 'description' => 'Parent term ID (categories only, 0 for top-level).' ],
+				'dry_run'     => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'taxonomy', 'name' ],
 		],
@@ -182,6 +241,30 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( isset( $args['parent'] ) && 'category' === $taxonomy ) {
 			$term_args['parent'] = absint( $args['parent'] );
+		}
+
+		if ( ! empty( $args['dry_run'] ) ) {
+			$parent = (int) ( $term_args['parent'] ?? 0 );
+			if ( $parent > 0 && ! term_exists( $parent ) ) {
+				return new WP_Error( 'missing_parent', 'Parent term does not exist.' );
+			}
+			$stored_name = iato_mcp_term_field_as_stored( 'name', $name, $taxonomy );
+			$slug_given  = ! empty( $term_args['slug'] );
+			$slug        = $slug_given ? $term_args['slug'] : sanitize_title( $stored_name );
+			$existing    = iato_mcp_term_insert_conflict( $stored_name, $slug, $slug_given, $parent, $taxonomy );
+			if ( null !== $existing ) {
+				return new WP_Error( 'term_exists', 'A term with the name provided already exists with this parent.', (int) $existing );
+			}
+			return IATO_MCP_Server::ok( [
+				'dry_run'     => true,
+				'action'      => 'would_create',
+				'name'        => $stored_name,
+				'slug'        => $slug,
+				'taxonomy'    => $taxonomy,
+				'parent_id'   => $parent,
+				'description' => $term_args['description'] ?? '',
+				'not_checked' => array_merge( IATO_MCP_Server::DRY_RUN_NOT_CHECKED, [ 'A slug already used by another term, which WordPress would change by adding a suffix.' ] ),
+			] );
 		}
 
 		// Slashed: wp_insert_term() unslashes the name and description.
@@ -225,6 +308,7 @@ IATO_MCP_Server::register_tool(
 				'slug'        => [ 'type' => 'string',  'description' => 'New URL slug.' ],
 				'description' => [ 'type' => 'string',  'description' => 'New term description.' ],
 				'parent'      => [ 'type' => 'integer', 'description' => 'New parent term ID (categories only, 0 for top-level).' ],
+				'dry_run'     => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'taxonomy', 'term_id' ],
 		],
@@ -273,6 +357,50 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'no_changes', 'No fields provided to update.' );
 		}
 
+		if ( ! empty( $args['dry_run'] ) ) {
+			if ( isset( $term_args['name'] ) && '' === trim( $term_args['name'] ) ) {
+				return new WP_Error( 'empty_term_name', 'A name is required for this term.' );
+			}
+			$new_parent = $term_args['parent'] ?? (int) $term->parent;
+			if ( $new_parent > 0 && ! term_exists( $new_parent ) ) {
+				return new WP_Error( 'missing_parent', 'Parent term does not exist.' );
+			}
+			// What wp_update_term() will do with each: its save filters run on the text,
+			// an empty slug comes from the name, and a term cannot be its own parent.
+			$planned = $term_args;
+			foreach ( [ 'name', 'description' ] as $field ) {
+				if ( isset( $planned[ $field ] ) ) {
+					$planned[ $field ] = iato_mcp_term_field_as_stored( $field, $planned[ $field ], $taxonomy );
+				}
+			}
+			if ( isset( $planned['slug'] ) && '' === $planned['slug'] ) {
+				$planned['slug'] = sanitize_title( $planned['name'] ?? $term->name );
+			} elseif ( isset( $planned['slug'] ) ) {
+				$duplicate = get_term_by( 'slug', $planned['slug'], $taxonomy );
+				if ( $duplicate && (int) $duplicate->term_id !== $term_id && $new_parent === (int) $duplicate->parent ) {
+					return new WP_Error( 'duplicate_term_slug', sprintf( 'The slug "%s" is already in use by another term.', $planned['slug'] ) );
+				}
+			}
+			if ( isset( $planned['parent'] ) && $planned['parent'] === $term_id ) {
+				$planned['parent'] = 0;
+			}
+			$would = [];
+			foreach ( $planned as $field => $after ) {
+				$current = 'parent' === $field ? (int) $term->parent : $term->{$field};
+				if ( $current !== $after ) {
+					$would[ $field ] = [ 'before' => $current, 'after' => $after ];
+				}
+			}
+			return IATO_MCP_Server::ok( [
+				'dry_run'      => true,
+				'action'       => [] === $would ? 'no_change' : 'would_update',
+				'term_id'      => $term_id,
+				'taxonomy'     => $taxonomy,
+				'would_change' => (object) $would,
+				'not_checked'  => array_merge( IATO_MCP_Server::DRY_RUN_NOT_CHECKED, [ 'A slug used by a term under another parent, which WordPress would change by adding a number', 'A parent that would create a loop, which WordPress would break by changing other terms' ] ),
+			] );
+		}
+
 		// Snapshot before state.
 		// term_id in both snapshots (1.13.0): rollback restores that term, and the
 		// conflict check reads it back. Earlier receipts lacked it, so their
@@ -315,6 +443,7 @@ IATO_MCP_Server::register_tool(
 			'properties' => [
 				'taxonomy' => [ 'type' => 'string',  'description' => 'category or post_tag (required).' ],
 				'term_id'  => [ 'type' => 'integer', 'description' => 'Term ID to delete (required).' ],
+				'dry_run'  => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'taxonomy', 'term_id' ],
 		],
@@ -345,6 +474,21 @@ IATO_MCP_Server::register_tool(
 			return $object_check;
 		}
 
+		if ( ! empty( $args['dry_run'] ) ) {
+			if ( 'category' === $taxonomy && (int) get_option( 'default_category' ) === $term_id ) {
+				return new WP_Error( 'delete_failed', 'Cannot delete the default category.' );
+			}
+			return IATO_MCP_Server::ok( [
+				'dry_run'     => true,
+				'action'      => 'would_delete',
+				'term_id'     => $term_id,
+				'name'        => $term->name,
+				'taxonomy'    => $taxonomy,
+				'post_count'  => (int) $term->count,
+				'not_checked' => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
+			] );
+		}
+
 		// Snapshot before deletion for rollback.
 		$before_snapshot = wp_json_encode( [ 'term_id' => $term->term_id, 'name' => $term->name, 'slug' => $term->slug, 'description' => $term->description, 'parent' => (int) $term->parent, 'taxonomy' => $taxonomy ] );
 
@@ -354,8 +498,13 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
-		if ( false === $result ) {
+		// 1.16.0: core returns 0, not false, for the default category. Before this, a
+		// site without a bound key reported it deleted and recorded a receipt.
+		if ( 0 === $result ) {
 			return new WP_Error( 'delete_failed', 'Cannot delete the default category.' );
+		}
+		if ( false === $result ) {
+			return new WP_Error( 'delete_failed', 'The term could not be deleted.' );
 		}
 
 		$receipt = IATO_MCP_Change_Receipt::record( null, 'taxonomy', 'delete_term', $before_snapshot, null );

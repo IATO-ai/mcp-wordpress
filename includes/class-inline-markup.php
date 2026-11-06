@@ -116,6 +116,39 @@ class IATO_MCP_Inline_Markup {
 	 *
 	 * @return array{ok:bool,html:string,kept_tags:string[],removed_css:string[]}
 	 */
+	/**
+	 * Remove whole STYLE and SCRIPT elements, found with WordPress' own tokenizer
+	 * (1.16.0). kses removes those tags and keeps what is between them, so CSS and
+	 * JavaScript would otherwise show on the page as text. Run this before kses, never
+	 * after: removing text from sanitised markup can join what is left into something
+	 * live. An unclosed element stays for kses, because the tokenizer stops there.
+	 * Below WordPress 6.5 there is no next_token(), and the value comes back unchanged.
+	 */
+	public static function remove_style_and_script( string $html ): string {
+		if ( false === stripos( $html, '<style' ) && false === stripos( $html, '<script' ) ) {
+			return $html;
+		}
+		if ( ! class_exists( 'WP_HTML_Tag_Processor' ) || ! method_exists( 'WP_HTML_Tag_Processor', 'next_token' ) ) {
+			return $html;
+		}
+		require_once __DIR__ . '/class-html-token-scanner.php';
+		$scanner = new IATO_MCP_Html_Token_Scanner( $html );
+		$out     = '';
+		$at      = 0;
+		while ( $scanner->next_token() ) {
+			if ( '#tag' !== $scanner->get_token_type() || $scanner->is_tag_closer() || ! in_array( $scanner->get_tag(), [ 'STYLE', 'SCRIPT' ], true ) ) {
+				continue;
+			}
+			$span = $scanner->token_span();
+			if ( null === $span ) {
+				return $html;
+			}
+			$out .= substr( $html, $at, $span[0] - $at );
+			$at   = $span[0] + $span[1];
+		}
+		return $out . substr( $html, $at );
+	}
+
 	public static function filter( string $html ): array {
 		$fail = [ 'ok' => false, 'html' => '', 'kept_tags' => [], 'removed_css' => [] ];
 
@@ -127,12 +160,18 @@ class IATO_MCP_Inline_Markup {
 		$blocks  = [];
 		$removed = [];
 		while ( $scanner->next_token() ) {
-			if ( '#tag' !== $scanner->get_token_type() || 'STYLE' !== $scanner->get_tag() || $scanner->is_tag_closer() ) {
+			if ( '#tag' !== $scanner->get_token_type() || $scanner->is_tag_closer() || ! in_array( $scanner->get_tag(), [ 'STYLE', 'SCRIPT' ], true ) ) {
 				continue;
 			}
 			$span = $scanner->token_span();
 			if ( null === $span ) {
 				return $fail;
+			}
+			// 1.16.0: a script goes whole; kses would leave its body as text.
+			if ( 'SCRIPT' === $scanner->get_tag() ) {
+				$rest .= substr( $html, $at, $span[0] - $at );
+				$at    = $span[0] + $span[1];
+				continue;
 			}
 			$css     = self::sanitize_css( $scanner->get_modifiable_text() );
 			$removed = array_merge( $removed, $css['removed'] );
@@ -218,12 +257,8 @@ class IATO_MCP_Inline_Markup {
 				if ( isset( $svg[ $tag ] ) && 1 === preg_match( '/url\(\s*[\'"]?\s*(?!#)/i', $decoded ) ) {
 					return false;
 				}
-				if ( 'style' === $name && 1 === preg_match_all( '/url\(\s*[\'"]?([^\'")]*)/i', $decoded, $targets ) ) {
-					foreach ( $targets[1] as $target ) {
-						if ( ! self::url_stays_on_site( $target ) ) {
-							return false;
-						}
-					}
+				if ( 'style' === $name && self::style_attribute_leaves_site( $value ) ) {
+					return false;
 				}
 			}
 		}
@@ -325,6 +360,9 @@ class IATO_MCP_Inline_Markup {
 		if ( str_contains( $scan, '@import' ) ) {
 			return 'it would still hold @import';
 		}
+		if ( self::text_leaves_site( $scan ) ) {
+			return 'it still names another site';
+		}
 		$urls = 0;
 		foreach ( $tokens as $token ) {
 			$urls += 'url' === $token['t'] || ( 'function' === $token['t'] && 'url' === $token['v'] ) ? 1 : 0;
@@ -333,6 +371,76 @@ class IATO_MCP_Inline_Markup {
 			return 'the text url( appears where no url() can be, which is how a reference gets hidden';
 		}
 		return null;
+	}
+
+	/**
+	 * Does this text name another site anywhere, however it is read? Knows nothing of
+	 * CSS syntax, on purpose: three reviews each found a way to make the tokenizer and
+	 * the browser disagree about where a string ends, and a block that fools the
+	 * tokenizer still has to get past this. Strict by design, so it also catches a URL in
+	 * an attribute selector or in text. Run it on decoded text.
+	 *
+	 * URL parsers drop tabs and newlines, so whitespace goes first. Where a URL can begin,
+	 * what follows up to the first / ? # or backslash, where a browser ends the host,
+	 * must be this site's host exactly. Nothing here parses a URL: parse_url() reading a
+	 * loosely cut string is how a review got `//evil.example);--a:@localhost/` past an
+	 * earlier version, as a host of localhost.
+	 *
+	 * Passes: base64 images, whose alphabet holds slashes but no quote or parenthesis,
+	 * which is what would have to stand before a real URL; `a[href^="https://"]`, which
+	 * names nothing; SVG's namespaces, in nearly every inline SVG image. A slash pair
+	 * after a name character is a path, `/img//a.png`, and `.btn-http:hover` is a selector.
+	 * `///` is not exempt: browsers read it as `//`.
+	 */
+	private static function text_leaves_site( string $text ): bool {
+		$compact = preg_replace( '/[\x00-\x20]/', '', $text );
+		$compact = is_string( $compact ) ? preg_replace( '~data:image/[a-z0-9.+\-]+;base64,[a-z0-9+/=]*~i', 'data:', $compact ) : null;
+		if ( ! is_string( $compact ) ) {
+			return true;
+		}
+		// One match at a time: this stops at the first answer, and a value of nothing but
+		// slashes costs no memory.
+		$pattern = '~(?<![a-z0-9_\-.%\~])(?:https?:)?[/\\\\]{2}|(?<![a-z0-9_\-.#])(?:https?|ftps?|gopher|wss?|file):~i';
+		$at      = 0;
+		while ( 1 === ( $hit = preg_match( $pattern, $compact, $found, PREG_OFFSET_CAPTURE, $at ) ) ) {
+			[ $match, $offset ] = $found[0];
+			$start              = $offset + strlen( $match );
+			$at                 = $start;
+			if ( ! preg_match( '~^(?:https?:)?(?:[/\\\\]{2})?$~i', $match ) ) {
+				return true; // another scheme
+			}
+			if ( 1 === preg_match( '~\G["\']\]~', $compact, $unused, 0, $start ) ) {
+				continue; // a[href^="https://"] names nothing
+			}
+			if ( 1 === preg_match( '~\Gwww\.w3\.org/(?:2000/svg|1999/xlink|1999/xhtml)~i', $compact, $unused, 0, $start ) ) {
+				continue;
+			}
+			$authority = substr( $compact, $start, strcspn( $compact, '/?#\\', $start ) );
+			if ( ! self::is_own_host( (string) preg_replace( '/:[0-9]*$/', '', $authority ) ) ) {
+				return true;
+			}
+		}
+		if ( 0 !== $hit ) {
+			return true; // the search itself failed
+		}
+		return false;
+	}
+
+	/**
+	 * Would this style attribute load from another site? The tokenizer's reading and
+	 * the plain search both have to clear it. The tokenizer knows url('ftp:...') is a
+	 * URL in any scheme; the plain search does not have to know CSS.
+	 */
+	private static function style_attribute_leaves_site( string $value ): bool {
+		$tokens = self::css_tokens( $value );
+		if ( null === $tokens ) {
+			return true;
+		}
+		$removed = [];
+		if ( null === self::rewrite_css( $tokens, $removed ) || [] !== $removed ) {
+			return true;
+		}
+		return self::text_leaves_site( self::decode_escapes( $value ) );
 	}
 
 	/**
@@ -429,13 +537,20 @@ class IATO_MCP_Inline_Markup {
 	 * Does anything inside this function load from another site? In a function that
 	 * takes an image or a URL, every string counts as a URL, and any nested function
 	 * except url() and the gradients counts as one too: var(), attr() and if() can
-	 * hand it a value nothing here can see.
+	 * hand it a value nothing here can see. The same holds when such a function sits
+	 * anywhere inside this one: var(--n, image-set(...)) is just as much an image.
 	 *
 	 * @param string                                         $name  Function name, lowercase.
 	 * @param array<int,array{t:string,raw:string,v:string}> $inner The tokens between its parentheses.
 	 */
 	private static function function_leaves_site( string $name, array $inner ): bool {
-		$takes_url = 1 === preg_match( '/^(?:url|src|image|(?:-webkit-)?image-set|(?:-webkit-)?cross-fade|(?:-moz-)?element|paint)$/', $name );
+		$url_function = '/^(?:url|src|image|(?:-webkit-)?image-set|(?:-webkit-)?cross-fade|(?:-moz-)?element|paint)$/';
+		$takes_url    = 1 === preg_match( $url_function, $name );
+		foreach ( $inner as $token ) {
+			if ( 'function' === $token['t'] && 1 === preg_match( $url_function, $token['v'] ) ) {
+				$takes_url = true;
+			}
+		}
 		foreach ( $inner as $token ) {
 			switch ( $token['t'] ) {
 				case 'at':
@@ -469,7 +584,8 @@ class IATO_MCP_Inline_Markup {
 	/**
 	 * Tokens of a CSS body, following CSS Syntax Level 3 where it matters here:
 	 * strings, url(), functions, at-keywords, identifiers with their escapes decoded.
-	 * Comments become whitespace. Numbers and punctuation come through a byte at a
+	 * Comments become whitespace. A number takes its unit and a # its name, so 1url( and
+	 * #url( are not url(). Other punctuation comes through a byte at a
 	 * time. Null for what a browser would repair but this will not guess at: an
 	 * unterminated string, comment or url(), and a bad url().
 	 *
@@ -496,6 +612,23 @@ class IATO_MCP_Inline_Markup {
 					return null;
 				}
 				$out[] = $string;
+				continue;
+			}
+			if ( ctype_digit( $c ) || ( '.' === $c && ctype_digit( $css[ $i + 1 ] ?? '' ) ) ) {
+				$from = $i;
+				preg_match( '/\G[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?/', $css, $number, 0, $i );
+				$i += strlen( $number[0] );
+				if ( self::starts_name( $css, $i ) ) {
+					self::css_name( $css, $i );
+				}
+				$out[] = [ 't' => 'number', 'raw' => substr( $css, $from, $i - $from ), 'v' => '' ];
+				continue;
+			}
+			if ( '#' === $c && ( 1 === preg_match( '/\G[a-zA-Z0-9_\-\x80-\xff]/', $css, $unused, 0, $i + 1 ) || self::valid_escape( $css, $i + 1 ) ) ) {
+				$from = $i;
+				++$i;
+				self::css_name( $css, $i );
+				$out[] = [ 't' => 'hash', 'raw' => substr( $css, $from, $i - $from ), 'v' => '' ];
 				continue;
 			}
 			if ( '@' === $c && self::starts_name( $css, $i + 1 ) ) {
@@ -645,7 +778,9 @@ class IATO_MCP_Inline_Markup {
 			$i += strlen( $m[0] );
 			return self::code_point( (int) hexdec( $m[1] ) );
 		}
-		$char = (string) preg_replace( '/^(.).*$/su', '$1', substr( $css, $i + 1, 4 ) );
+		// One whole character. sanitize_css() has already refused invalid UTF-8.
+		$lead = ord( $css[ $i + 1 ] ?? "\0" );
+		$char = substr( $css, $i + 1, $lead >= 0xF0 ? 4 : ( $lead >= 0xE0 ? 3 : ( $lead >= 0xC0 ? 2 : 1 ) ) );
 		$i   += 1 + strlen( $char );
 		return $char;
 	}

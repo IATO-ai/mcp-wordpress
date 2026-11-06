@@ -9,7 +9,8 @@
  *   2. Allowlist — known-safe theme/builder/SEO prefixes plus any public (non-underscore) key.
  *                  Anything outside the allowlist requires force=true and surfaces a warning.
  *
- * All matching is case-insensitive (stripos).
+ * The denylist matches without case (stripos); what is allowed matches exactly, because
+ * another case of an allowed key would be a new row that captures later writes to it.
  *
  * @package IATO_MCP
  */
@@ -84,7 +85,7 @@ class IATO_MCP_Meta_Policy {
 	 * @return true|WP_Error WP_Error('elementor_content_key')
 	 */
 	public static function check_elementor_meta_write( string $key ): bool|WP_Error {
-		if ( ! self::is_elementor_key( $key ) || in_array( strtolower( $key ), self::ELEMENTOR_WRITABLE, true ) ) {
+		if ( ! self::is_elementor_key( $key ) || in_array( $key, self::ELEMENTOR_WRITABLE, true ) ) {
 			return true;
 		}
 		return new WP_Error(
@@ -212,7 +213,9 @@ class IATO_MCP_Meta_Policy {
 			return true;
 		}
 		foreach ( self::ALLOW_PREFIXES as $prefix ) {
-			if ( 0 === stripos( $key, $prefix ) ) {
+			// Any case of an Elementor key goes on to check_elementor_meta_write(), which
+			// gives the reason that helps.
+			if ( 0 === strpos( $key, $prefix ) || self::is_elementor_key( $key ) ) {
 				return true;
 			}
 		}
@@ -226,8 +229,12 @@ class IATO_MCP_Meta_Policy {
 	 *                       WP_Error('meta_requires_force') for an allowlist miss when force=false.
 	 */
 	public static function check_write( string $key, bool $force ): bool|WP_Error {
-		if ( '' === $key ) {
-			return new WP_Error( 'invalid_meta_key', 'Meta key must not be empty.' );
+		if ( '' === $key || '0' === $key ) { // WordPress stores nothing under either.
+			return new WP_Error( 'invalid_meta_key', 'Meta key must not be empty or 0.' );
+		}
+		$slashes = self::backslash_error( $key );
+		if ( null !== $slashes ) {
+			return $slashes;
 		}
 		if ( self::is_denied( $key ) ) {
 			return new WP_Error(
@@ -243,7 +250,80 @@ class IATO_MCP_Meta_Policy {
 				[ 'key' => $key ]
 			);
 		}
+		if ( ! $force && preg_match( '/[^\x21-\x7E]/', $key ) ) {
+			return new WP_Error(
+				'meta_requires_force',
+				sprintf( 'Meta key %s holds spaces or characters outside ASCII. Check that it is the key you mean, then pass force=true to write it.', $key ),
+				[ 'key' => $key ]
+			);
+		}
 		return true;
+	}
+
+	/**
+	 * WordPress unslashes a meta key before looking it up, after every check here has
+	 * read it, so a backslash makes it a different key, and force does not lift this.
+	 */
+	private static function backslash_error( string $key ): ?WP_Error {
+		if ( false === strpos( $key, '\\' ) ) {
+			return null;
+		}
+		return new WP_Error(
+			'invalid_meta_key',
+			sprintf( 'Meta key %s holds a backslash. WordPress removes it before looking the key up, so this write would reach another key. Nothing was written.', $key ),
+			[ 'key' => $key ]
+		);
+	}
+
+	/** The meta_key column's length. A longer key stores nothing. */
+	public const MAX_KEY_LENGTH = 255;
+
+	/**
+	 * The check that needs the database: its collation decides which row a key reaches,
+	 * and that can be a row with a different name (case, accents, spaces, look-alike
+	 * characters), which these lists never saw (1.16.0). Asks instead of guessing,
+	 * because the rules differ between collations.
+	 *
+	 * A key this post has not got yet would be a new row, which later writes of the real
+	 * key would land in, leaving that key reading as empty: another spelling stored
+	 * anywhere on the site is enough to refuse it.
+	 *
+	 * @return true|WP_Error WP_Error('meta_key_too_long'), WP_Error('meta_key_mismatch')
+	 */
+	public static function check_stored_key( int $post_id, string $key ): bool|WP_Error {
+		$slashes = self::backslash_error( $key );
+		if ( null !== $slashes ) {
+			return $slashes;
+		}
+		if ( ( function_exists( 'mb_strlen' ) ? mb_strlen( $key ) : strlen( $key ) ) > self::MAX_KEY_LENGTH ) {
+			return new WP_Error(
+				'meta_key_too_long',
+				sprintf( 'A meta key can be at most %d characters. Nothing was written.', self::MAX_KEY_LENGTH ),
+				[ 'key' => $key ]
+			);
+		}
+		global $wpdb;
+		$stored = (array) $wpdb->get_col( $wpdb->prepare( "SELECT meta_key FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = %s", $post_id, $key ) );
+		foreach ( $stored as $row ) {
+			if ( $row !== $key ) {
+				return self::key_mismatch( $key, $row );
+			}
+		}
+		if ( [] === $stored ) {
+			$elsewhere = $wpdb->get_var( $wpdb->prepare( "SELECT meta_key FROM {$wpdb->postmeta} WHERE meta_key = %s AND CAST(meta_key AS BINARY) <> CAST(%s AS BINARY) LIMIT 1", $key, $key ) );
+			if ( is_string( $elsewhere ) && $elsewhere !== $key ) {
+				return self::key_mismatch( $key, $elsewhere );
+			}
+		}
+		return true;
+	}
+
+	private static function key_mismatch( string $key, string $row ): WP_Error {
+		return new WP_Error(
+			'meta_key_mismatch',
+			sprintf( 'The database treats meta key %1$s as the key %2$s already stored on this site, so this write would reach or take the place of that key. Use the stored key exactly. Nothing was written.', $key, $row ),
+			[ 'key' => $key, 'stored_key' => $row ]
+		);
 	}
 
 	/**

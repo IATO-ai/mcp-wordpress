@@ -77,8 +77,19 @@ final class InlineMarkupTest extends TestCase {
 			'inline image'         => [ 'a { background: url(data:image/png;base64,AAAA) }', 'a { background: url(data:image/png;base64,AAAA) }', [] ],
 			'comment removed'      => [ 'a{}/* note */b{}', 'a{} b{}', [] ],
 			'nesting selector'     => [ 'a { &:hover { color: red } & b { color: blue } }', 'a { &:hover { color: red } & b { color: blue } }', [] ],
-			'attribute selector'   => [ 'a[href^="https://other.example/"] { color: red }', 'a[href^="https://other.example/"] { color: red }', [] ],
-			'plain text with colon' => [ 'a::after { content: "Note: see https://x" }', 'a::after { content: "Note: see https://x" }', [] ],
+			'attribute selector'   => [ 'a[href^="/docs/"] { color: red }', 'a[href^="/docs/"] { color: red }', [] ],
+			'a large base64 image with slashes' => [ 'a { background: url(data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7) }', 'a { background: url(data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7) }', [] ],
+			'selectors with http in them' => [ '.btn-http:hover, .icon-https::before { color: red }', '.btn-http:hover, .icon-https::before { color: red }', [] ],
+			'selector naming no site' => [ 'a[href^="https://"], a[href^="http:"] { color: red }', 'a[href^="https://"], a[href^="http:"] { color: red }', [] ],
+			'a scheme mid-text, which nothing fetches' => [ 'a::after { content: "see http:evil.example" }', 'a::after { content: "see http:evil.example" }', [] ],
+			'plain text with colon' => [ 'a::after { content: "Note: see below" }', 'a::after { content: "Note: see below" }', [] ],
+			'svg namespace in an image' => [ "a { background: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E\") }", "a { background: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E\") }", [] ],
+			'var for a colour'     => [ 'a { fill: var(--c); background: var(--b, #fff) }', 'a { fill: var(--c); background: var(--b, #fff) }', [] ],
+			'an image of this site inside var' => [ 'a { background: var(--b, url("/a.png")) }', 'a { background: var(--b, url("/a.png")) }', [] ],
+			'var inside a gradient' => [ 'a { background: linear-gradient(var(--a), var(--b)) }', 'a { background: linear-gradient(var(--a), var(--b)) }', [] ],
+			'numbers and units'    => [ 'a { width: 1.5em; margin: .5px 1e3px; color: #0af }', 'a { width: 1.5em; margin: .5px 1e3px; color: #0af }', [] ],
+			'an id selector'       => [ '#url { color: red }', '#url { color: red }', [] ],
+			'escaped multibyte'    => [ "a::after { content: \"\\€\" }", "a::after { content: \"\\€\" }", [] ],
 			'font face'            => [ '@font-face { font-family: "Foo"; src: local("Foo: Bar"), url(/f.woff2) format("woff2") }', '@font-face { font-family: "Foo"; src: local("Foo: Bar"), url(/f.woff2) format("woff2") }', [] ],
 			'gradient in image-set' => [ 'a { background: image-set(linear-gradient(red, blue) 1x) }', 'a { background: image-set(linear-gradient(red, blue) 1x) }', [] ],
 			'scroll-behavior'      => [ 'html { scroll-behavior: smooth }', 'html { scroll-behavior: smooth }', [] ],
@@ -117,6 +128,12 @@ final class InlineMarkupTest extends TestCase {
 			'data but not image'   => [ 'a { background: url(data:text/html,x) }', 'a { background: none }', [ 'url(data:text/html,x)' ] ],
 			'lookalike host'       => [ 'a { background: url(https://site.example.evil.example/a) }', 'a { background: none }', [ 'url(https://site.example.evil.example/a)' ] ],
 			'image-set off-site'   => [ 'a { background: image-set("https://evil.example/a.png" 1x) }', 'a { background: none }', [ 'image-set("https://evil.example/a.png" 1x)' ] ],
+			'image-set inside var' => [ 'a { background-image: var(--n, image-set("https://evil.example/a.png" 1x)) }', 'a { background-image: none }', [ 'var(--n, image-set("https://evil.example/a.png" 1x))' ] ],
+			'no slashes, inside var' => [ 'a { background-image: var(--n, image-set("http:evil.example/a.png" 1x)) }', 'a { background-image: none }', [ 'var(--n, image-set("http:evil.example/a.png" 1x))' ] ],
+			'var inside var'       => [ 'a { background-image: var(--n, image-set(var(--u) 1x)) }', 'a { background-image: none }', [ 'var(--n, image-set(var(--u) 1x))' ] ],
+			'an unknown scheme inside var' => [ "a { background-image: var(--n, url('zhttp:evil.example/a.png')) }", 'a { background-image: none }', [ "var(--n, url('zhttp:evil.example/a.png'))" ] ],
+			'quoted url inside var' => [ 'a { background-image: var(--n, url("https://evil.example/a.png")) }', 'a { background-image: none }', [ 'var(--n, url("https://evil.example/a.png"))' ] ],
+			'escape before a multibyte character' => [ ".z{--a:\\\"ab€;background-image:image-set('https://evil.example/R2.png' 1x);--b:\\\"ab€}", ".z{--a:\\\"ab€;background-image:none;--b:\\\"ab€}", [ "image-set('https://evil.example/R2.png' 1x)" ] ],
 			'-webkit-image-set'    => [ 'a { background: -webkit-image-set(url(https://evil.example/a.png) 1x) }', 'a { background: none }', [ '-webkit-image-set(url(https://evil.example/a.png) 1x)' ] ],
 		];
 	}
@@ -151,6 +168,13 @@ final class InlineMarkupTest extends TestCase {
 			'unterminated image-set' => [ 'a{background:image-set("https://evil.example/E.png" 1x' ],
 			'unterminated comment' => [ 'a{} /* x' ],
 			'newline in a string'  => [ "a{content:\"x\ny\"}" ],
+			'off-site attribute selector' => [ 'a[href^="https://other.example/"] { color: red }' ],
+			'off-site in plain text' => [ 'a::after { content: "Note: see https://x" }' ],
+			'scheme with no slashes in a string' => [ 'a::after { content: "http:evil.example" }' ],
+			'a number before url(' => [ '.z{--w:1url(/*)"*/);background-image:image-set(\'https://evil.example/R3.png\' 1x);--q:"}' ],
+			'a decimal before url(' => [ '.z{--w:1.5url(/*)"*/);background-image:image-set(\'https://evil.example/R3.png\' 1x);--q:"}' ],
+			'an exponent before url(' => [ '.z{--w:1e3url(/*)"*/);background-image:image-set(\'https://evil.example/R3.png\' 1x);--q:"}' ],
+			'a hash before url('   => [ '.z{--w:#url(/*)"*/);background-image:image-set(\'https://evil.example/R3.png\' 1x);--q:"}' ],
 			'text url( as a shield' => [ 'a{--x:"url(";background:url(https://evil.example/C.png)}' ],
 			'numeric reference'    => [ '@&#105;mport "https://evil.example/x.css";' ],
 			'reference in url'     => [ 'a{background:ur&#108;(https://evil.example/p.png)}' ],
@@ -165,6 +189,77 @@ final class InlineMarkupTest extends TestCase {
 		$r = IATO_MCP_Inline_Markup::sanitize_css( $in );
 		$this->assertNull( $r['css'], $in );
 		$this->assertStringStartsWith( 'whole <style> block', (string) end( $r['removed'] ) );
+	}
+
+	public static function site_names(): array {
+		return [
+			'two urls, the second off-site' => [ 'background-image:url(/a.png),url(https://evil.example/b.png)', true ],
+			'image-set inside var'          => [ "background-image:var(--n,image-set('https://evil.example/b.png' 1x))", true ],
+			'a parenthesis in the host'     => [ "background-image:url('//site.example).evil.example/b.png')", true ],
+			'no slashes'                    => [ 'background:url(http:evil.example/b.png)', true ],
+			'one slash'                     => [ 'background:url(https:/evil.example/b.png)', true ],
+			'upper case'                    => [ 'background:url(HTTPS://EVIL.EXAMPLE/b.png)', true ],
+			'a tab in the slashes'          => [ "background:url(/\t/evil.example/b.png)", true ],
+			'a backslash'                   => [ 'background:url(/\\evil.example/b.png)', true ],
+			'on-site, then off-site'        => [ 'background:url(//site.example/a.png),url(//evil.example/b.png)', true ],
+			'a credential'                  => [ 'background:url(https://site.example@evil.example/b.png)', true ],
+			'over-run into this host'       => [ 'background-image:url(//evil.example);--a:@site.example/', true ],
+			'a quote in the host'           => [ "background-image:url(\"//site.example'.evil.example/c.png\")", true ],
+			'a quote before the host'       => [ "background-image:url(\"//'evil.example/c.png\")", true ],
+			'a quote after the namespace'   => [ "background-image:url(\"//www.w3.org'.evil.example/c.png\")", true ],
+			'w3 beyond the namespace'       => [ 'background-image:url(https://www.w3.org/w1.png)', true ],
+			'three slashes'                 => [ 'background:url(///evil.example/b.png)', true ],
+			'other schemes'                 => [ "background-image:url('ftp:evil.example/s.png')", true ],
+			'gopher'                        => [ "background-image:url('gopher:evil.example/s.png')", true ],
+			'a dot after the host'          => [ 'background:url(//site.example./a.png)', true ],
+			'percent in the host'           => [ 'background:url(//%73ite.example/a.png)', true ],
+			'real url after a base64 image' => [ "a{background:url(data:image/png;base64,AAAA);b:url('//evil.example/x')}", true ],
+			'a quote ends the base64'       => [ "x:data:image/png;base64,AA//\"//evil.example/x", true ],
+			'a selector naming a site'      => [ 'a[href^="https://twitter.com"]{}', true ],
+			'relative'                      => [ 'background:url(/a.png),url(b.png)', false ],
+			'a base64 image with slashes'   => [ 'background:url(data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7)', false ],
+			'a selector with http in it'    => [ '.btn-http:hover,.icon-https::before,.http:hover{--http:1}', false ],
+			'a path with two slashes'       => [ 'background:url(/img//a.png)', false ],
+			'this host with a port'         => [ 'background:url(http://site.example:8889/a.png)', false ],
+			'text with two slashes in it'   => [ 'a::after{content:"a//b"}', false ],
+			'xlink namespace'               => [ "x:'http://www.w3.org/1999/xlink'", false ],
+			'this host'                     => [ 'background:url(https://site.example/a.png)', false ],
+			'this host, two urls'           => [ 'background:url(https://site.example/a.png),url(//www.site.example/b.png)', false ],
+			'no url at all'                 => [ 'color:red;fill:var(--x)', false ],
+			'fragment'                      => [ 'fill:url(#g)', false ],
+			'svg namespace'                 => [ "background:url(\"data:image/svg+xml,xmlns='http://www.w3.org/2000/svg'\")", false ],
+			'names nothing'                 => [ 'a[href^="https://"]{}', false ],
+		];
+	}
+
+	#[DataProvider( 'site_names' )]
+	public function test_the_plain_search_for_another_site( string $text, bool $leaves ): void {
+		$this->assertSame( $leaves, ( new ReflectionMethod( IATO_MCP_Inline_Markup::class, 'text_leaves_site' ) )->invoke( null, $text ), $text );
+	}
+
+	public function test_a_long_run_of_slashes_costs_no_memory_and_does_not_pass(): void {
+		$before = memory_get_peak_usage();
+		$this->assertTrue( ( new ReflectionMethod( IATO_MCP_Inline_Markup::class, 'text_leaves_site' ) )->invoke( null, str_repeat( '/', 200000 ) ) );
+		$this->assertLessThan( 8 * 1024 * 1024, memory_get_peak_usage() - $before, 'a capture per position once ran out of memory at 20 KB' );
+	}
+
+	public static function style_attributes(): array {
+		return [
+			'other scheme in a url'  => [ "background-image:url('ftp:evil.example/s.png')", true ],
+			'unquoted other scheme'  => [ 'background-image:url(gopher:evil.example/s.png)', true ],
+			'image-set inside var'   => [ "background-image:var(--n,image-set('https://evil.example/b.png' 1x))", true ],
+			'a string naming a site' => [ "--u:'https://evil.example/b.png'", true ],
+			'an unterminated string' => [ 'content:"x', true ],
+			'escaped url'            => [ 'background:\\75rl(https://evil.example/a)', true ],
+			'a colour'               => [ 'color:red;--brand:#fff;fill:var(--brand)', false ],
+			'on this site'           => [ "background:url('/a.png')", false ],
+			'this host'              => [ 'background:url(https://site.example/a.png)', false ],
+		];
+	}
+
+	#[DataProvider( 'style_attributes' )]
+	public function test_a_style_attribute( string $value, bool $leaves ): void {
+		$this->assertSame( $leaves, ( new ReflectionMethod( IATO_MCP_Inline_Markup::class, 'style_attribute_leaves_site' ) )->invoke( null, $value ), $value );
 	}
 
 	public function test_a_large_inline_image_is_not_a_problem(): void {

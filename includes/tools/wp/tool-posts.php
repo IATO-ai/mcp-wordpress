@@ -162,6 +162,7 @@ IATO_MCP_Server::register_tool(
 				'content'   => [ 'type' => 'string', 'description' => 'Post content (HTML or plain text)' ],
 				'status'    => [ 'type' => 'string', 'description' => 'draft|publish (default: draft)' ],
 				'post_type' => [ 'type' => 'string', 'description' => 'post|page (default: post)' ],
+				'dry_run'   => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'title' ],
 		],
@@ -192,10 +193,31 @@ IATO_MCP_Server::register_tool(
 
 		$postarr = [
 			'post_title'   => sanitize_text_field( $args['title'] ),
-			'post_content' => wp_kses_post( $args['content'] ?? '' ),
+			'post_content' => IATO_MCP_Elementor_Sanitizer::clean_markup( (string) ( $args['content'] ?? '' ) ),
 			'post_status'  => $status,
 			'post_type'    => $post_type,
 		];
+
+		if ( ! empty( $args['dry_run'] ) ) {
+			if ( '' === $postarr['post_title'] && '' === $postarr['post_content'] ) {
+				return new WP_Error( 'empty_content', 'Content, title, and excerpt are empty.' );
+			}
+			$data = [
+				'dry_run'     => true,
+				'action'      => 'would_create',
+				'post_type'   => $post_type,
+				'status'      => $status,
+				'title'       => $postarr['post_title'],
+				'content'     => $postarr['post_content'],
+				'not_checked' => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
+			];
+			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, (object) $postarr ) );
+			$notice = iato_mcp_page_builder_notice( 'create' );
+			if ( null !== $notice ) {
+				$data['notice'] = $notice;
+			}
+			return IATO_MCP_Server::ok( $data );
+		}
 
 		// Slashed: wp_insert_post() unslashes, which would strip every backslash.
 		$post_id = wp_insert_post( wp_slash( $postarr ), true );
@@ -273,6 +295,7 @@ IATO_MCP_Server::register_tool(
 				'excerpt'            => [ 'type' => 'string',  'description' => 'New excerpt (manual summary shown on archive/listing pages)' ],
 				'status'             => [ 'type' => 'string',  'description' => 'New status: draft|publish' ],
 				'confirm_url_break'  => [ 'type' => 'boolean', 'description' => 'Required true when changing the slug of a non-draft post; acknowledges the URL break.' ],
+				'dry_run'            => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'id' ],
 		],
@@ -301,7 +324,7 @@ IATO_MCP_Server::register_tool(
 			$before['title']       = $post->post_title;
 		}
 		if ( isset( $args['content'] ) ) {
-			$postarr['post_content'] = wp_kses_post( $args['content'] );
+			$postarr['post_content'] = IATO_MCP_Elementor_Sanitizer::clean_markup( (string) $args['content'] );
 			$before['content']       = $post->post_content;
 		}
 		if ( isset( $args['excerpt'] ) ) {
@@ -340,12 +363,6 @@ IATO_MCP_Server::register_tool(
 			$before['slug']       = $post->post_name;
 		}
 
-		// Slashed: wp_update_post() unslashes, which would strip every backslash.
-		$result = wp_update_post( wp_slash( $postarr ), true );
-		if ( is_wp_error( $result ) ) {
-			return $result;
-		}
-
 		$field_to_postkey = [
 			'title'   => 'post_title',
 			'content' => 'post_content',
@@ -353,6 +370,37 @@ IATO_MCP_Server::register_tool(
 			'status'  => 'post_status',
 			'slug'    => 'post_name',
 		];
+
+		if ( ! empty( $args['dry_run'] ) ) {
+			$would = [];
+			foreach ( $before as $field => $before_value ) {
+				$after_value = $postarr[ $field_to_postkey[ $field ] ];
+				if ( $before_value !== $after_value ) {
+					$would[ $field ] = [ 'before' => $before_value, 'after' => $after_value ];
+				}
+			}
+			$data = [
+				'dry_run'      => true,
+				'action'       => [] === $would ? 'no_change' : 'would_update',
+				'id'           => $post_id,
+				'would_change' => (object) $would,
+				'not_checked'  => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
+			];
+			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, (object) ( $postarr + [ 'post_title' => $post->post_title, 'post_content' => $post->post_content, 'post_excerpt' => $post->post_excerpt ] ) ) );
+			if ( isset( $args['content'] ) ) {
+				$notice = iato_mcp_page_builder_notice( 'update' );
+				if ( null !== $notice ) {
+					$data['notice'] = $notice;
+				}
+			}
+			return IATO_MCP_Server::ok( $data );
+		}
+
+		// Only what this call names: the other columns stay as they are, filters aside.
+		$result = IATO_MCP_Auth::update_post_fields( $postarr );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
 
 		// After values as WordPress stored them: wp_update_post() runs the
 		// content filters (kses normalises entities, for one), and the rollback

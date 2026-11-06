@@ -149,6 +149,14 @@ The existing `dry_run` flag — already supported by `tool-page-builder`, `tool-
 | `elementor_cannot_edit` / `elementor_validation_failed` | 1.14.0, atomic path: Elementor refused the save / its save rejected the page | 403 / 400 |
 | `iato_mcp_token_unbound` | 1.14.0, atomic path: the site key has no owner (Settings > IATO MCP, Token owner) | 403 |
 | `tool_exception` | 1.14.0: a Throwable inside a tool handler (JSON text names the tool and the exception) | — |
+| `elementor_not_active` | 1.16.0: the post holds Elementor data but Elementor is turned off for it, so a write would replace the content visitors see. Dry runs too. `content_chars`, `content_is_elementor_text`. `update_elementor_data` accepts `activate_builder: true` | 409 |
+| `elementor_empty_tree` | 1.16.0: an empty element list sent to a post with Elementor off | — |
+| `elementor_invalid_tree` | 1.16.0: a tree Elementor cannot render: an object with named keys, a node that is not an object, no `elType`, a widget with no `widgetType`, `settings` that are not an object. Dry runs too. `invalid_nodes` lists up to ten. An element with no `id` or an unknown type is allowed | — |
+| `revision_target` | 1.16.0: a write named a revision's ID. WordPress would send it to the parent post | 400 |
+| `meta_key_mismatch` | 1.16.0: the database reads this key as a different one already stored on the post, or, when the post has no such key yet, as another spelling stored anywhere on the site (`stored_key`). Dry runs too, and `force` does not lift it | — |
+| `meta_key_too_long` | 1.16.0: over 255 characters, which the column cannot store | — |
+| `invalid_meta_key` | Empty; since 1.16.0 also a key holding a backslash, which WordPress removes before looking the key up | — |
+| `dry_run_unsupported` | 1.16.0: `dry_run` passed to a tool that does not declare it. The tool is not run | — |
 | `reserved_shortcode` | 1.15.1: the arguments of a tool that writes contain `[elementor-element`, a shortcode Elementor reserves for its own cache. The call is refused before the tool runs. Read tools may search for it | — |
 
 The atomic codes come back as an `isError` result whose text is JSON: `{ error, message, element_id?, ... }`.
@@ -167,11 +175,15 @@ Every Elementor write records a receipt through `IATO_MCP_Change_Receipt::record
 
 | `target_type` | Written by | `field` | `before_value` / `after_value` | Rollback |
 |---|---|---|---|---|
-| `elementor_widget` | classic `update_elementor_widget`, `set_widget_setting`, `set_heading_level`, bulk rows; `update_elementor_patch`; `update_elementor_data` | `elementor:<widget_id>:<pointer>`, `elementor:document:patch`, `elementor:document:replace` | the stored tree as it was (1.13.0; pruned after the retention period) / the revision hash of what was stored | restores the whole tree |
+| `elementor_widget` | classic `update_elementor_widget`, `set_widget_setting`, `set_heading_level`, bulk rows; `update_elementor_patch`; `update_elementor_data` | `elementor:<widget_id>:<pointer>`, `elementor:document:patch`, `elementor:document:replace`, `elementor:document:activate` (1.16.0: the write replaced the content visitors saw, and the before value holds what a rollback restores) | the stored tree as it was (1.13.0; pruned after the retention period) / the revision hash of what was stored | restores the whole tree |
 | `elementor_atomic` (1.14.0) | edits of Atomic Editor (V4) elements through the writer | `elementor:<element_id>:settings` | `{element_id, type, path, keys: {key: stored value, or null when absent}}` / the same keys as read back after the write | restores those keys of that element only, validated by Elementor; refused (`rollback_unavailable`) when the element is gone or Elementor's code is missing |
 | `image` (`alt_text`) | `update_alt_text`, including the alt of a Media Library image routed from an atomic element | `alt_text` | the attachment's alt | restores the attachment's alt |
 
-Bulk results drop `change_receipt` from classic rows (lean payloads); atomic rows keep it, one receipt per element (two rows on one element share it).
+Bulk results drop `change_receipt` from classic rows (lean payloads), unless it carries a `warning`; atomic rows keep it, one receipt per element (two rows on one element share it).
+
+Since 1.16.0 an ID is returned only if the receipt was saved. If it was not: `change_id: null`, `stored: false`, and a `warning` saying rollback cannot undo the change, which was still applied. If a database column for the actor is missing, the receipt is saved with a `warning` that who made the change was not recorded. `rollback` adds a `warning` if it could not mark the receipt.
+
+An `update_elementor_data` write on a post with Elementor off stores an envelope as its before value: a JSON object with the content, the flag and any old tree, which rollback restores (`restored: "content_and_elementor_off"` or `"no_elementor_data"`). Rollback of a stored tree also brings `post_content` in line: `content_refreshed`, dry run `would_refresh_content`, on failure `content_note`.
 
 ---
 

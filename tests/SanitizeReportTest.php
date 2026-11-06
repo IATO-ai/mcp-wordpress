@@ -77,10 +77,22 @@ final class SanitizeReportTest extends TestCase {
 		$this->assertSame( [ 'script' ], IATO_MCP_Sanitize_Report::for_value( 'c', 'html', '<script>x</script>', 'x' )['removed_tags'] );
 	}
 
-	public function test_the_note_warns_that_style_text_stays_visible(): void {
+	public function test_the_note_warns_only_when_style_text_really_stays_visible(): void {
 		$note = IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<style>a{}</style>', 'a{}' )['note'];
 		$this->assertStringContainsString( 'visible text', $note );
 		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<svg></svg>', '' ), 'nothing to warn about' );
+		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<p>x</p><style>a{}</style><script>b()</script>', '<p>x</p>' ), 'whole elements were removed' );
+		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<style></style>', '' ), 'an empty element leaves nothing' );
+		$this->assertArrayHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<p>x</p><style>a{}', '<p>x</p>a{}' ), 'an unclosed tag stays as text' );
+		$this->assertArrayHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<script>a>b</script>', 'a&gt;b' ), 'kses encodes what it keeps' );
+		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<img alt="<style>x</style>" src="y">', 'x' ), 'a lookalike in an attribute is no style element' );
+	}
+
+	public function test_without_the_tokenizer_the_value_goes_to_kses_unchanged(): void {
+		$this->assertFalse( method_exists( 'WP_HTML_Tag_Processor', 'next_token' ), 'PHPUnit runs without WordPress; the tokenizer path is covered live' );
+		$html = '<p>x</p><style>a{}</style>';
+		$this->assertSame( $html, IATO_MCP_Inline_Markup::remove_style_and_script( $html ) );
+		$this->assertSame( '<p>plain</p>', IATO_MCP_Inline_Markup::remove_style_and_script( '<p>plain</p>' ) );
 	}
 
 	public function test_cap_uses_the_same_form_as_sanitized_paths(): void {

@@ -34,12 +34,18 @@ class IATO_MCP_Call_Log {
 	 * Create the call log table. Called on plugin activation.
 	 */
 	public static function create_table(): void {
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( self::schema_sql() );
+	}
+
+	/** The table's definition, for dbDelta and IATO_MCP_Schema::table_problems(). */
+	public static function schema_sql(): string {
 		global $wpdb;
 
 		$table   = self::table_name();
 		$charset = $wpdb->get_charset_collate();
 
-		$sql = "CREATE TABLE {$table} (
+		return "CREATE TABLE {$table} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			created_at DATETIME NOT NULL,
 			ip_address VARCHAR(45) DEFAULT NULL,
@@ -59,9 +65,6 @@ class IATO_MCP_Call_Log {
 			KEY rpc_method (rpc_method),
 			KEY response_status (response_status)
 		) {$charset};";
-
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-		dbDelta( $sql );
 	}
 
 	/**
@@ -102,27 +105,32 @@ class IATO_MCP_Call_Log {
 			$ua = substr( $ua, 0, 255 );
 		}
 
+		$row    = [
+			'created_at'      => current_time( 'mysql', true ),
+			'ip_address'      => $ip ? substr( (string) $ip, 0, 45 ) : null,
+			'user_agent'      => $ua,
+			'auth_user_id'    => (int) ( $fields['auth_user_id'] ?? 0 ),
+			'rpc_method'      => isset( $fields['rpc_method'] ) ? substr( (string) $fields['rpc_method'], 0, 50 ) : null,
+			'tool_name'       => isset( $fields['tool_name'] ) ? substr( (string) $fields['tool_name'], 0, 100 ) : null,
+			'request_args'    => $args_json,
+			'response_status' => isset( $fields['response_status'] ) ? substr( (string) $fields['response_status'], 0, 20 ) : null,
+			'error_code'      => isset( $fields['error_code'] ) ? substr( (string) $fields['error_code'], 0, 50 ) : null,
+			'error_message'   => $fields['error_message'] ?? null,
+			'duration_ms'     => (int) ( $fields['duration_ms'] ?? 0 ),
+		];
+		$format = [ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ];
+		$extra  = self::credential_columns( $fields );
+
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
-		$wpdb->insert(
-			self::table_name(),
-			[
-				'created_at'      => current_time( 'mysql', true ),
-				'ip_address'      => $ip ? substr( (string) $ip, 0, 45 ) : null,
-				'user_agent'      => $ua,
-				'auth_user_id'    => (int) ( $fields['auth_user_id'] ?? 0 ),
-				'rpc_method'      => isset( $fields['rpc_method'] ) ? substr( (string) $fields['rpc_method'], 0, 50 ) : null,
-				'tool_name'       => isset( $fields['tool_name'] ) ? substr( (string) $fields['tool_name'], 0, 100 ) : null,
-				'request_args'    => $args_json,
-				'response_status' => isset( $fields['response_status'] ) ? substr( (string) $fields['response_status'], 0, 20 ) : null,
-				'error_code'      => isset( $fields['error_code'] ) ? substr( (string) $fields['error_code'], 0, 50 ) : null,
-				'error_message'   => $fields['error_message'] ?? null,
-				'duration_ms'     => (int) ( $fields['duration_ms'] ?? 0 ),
-			] + self::credential_columns( $fields ),
-			array_merge(
-				[ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ],
-				self::has_credential_columns() ? [ '%s', '%s' ] : []
-			)
-		);
+		$inserted = $wpdb->insert( self::table_name(), $row + $extra, array_merge( $format, array_fill( 0, count( $extra ), '%s' ) ) );
+
+		// 1.16.0: a damaged table must not hide what is happening, so the row is
+		// saved without these columns when one of them is really missing.
+		if ( false === $inserted && ! empty( $extra ) && class_exists( 'IATO_MCP_Schema' )
+			&& ! empty( IATO_MCP_Schema::missing_columns( self::table_name(), array_keys( $extra ) ) ) ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
+			$wpdb->insert( self::table_name(), $row, $format );
+		}
 
 		// Trim the log if it exceeds MAX_ENTRIES. Cheap because the table is tiny.
 		self::trim_old( self::MAX_ENTRIES );

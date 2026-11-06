@@ -31,17 +31,23 @@ class IATO_MCP_Change_Receipt {
 	 * Uses dbDelta() for safe creation and future schema upgrades.
 	 */
 	public static function create_table(): void {
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( self::schema_sql() );
+	}
+
+	/** The table's definition, for dbDelta and IATO_MCP_Schema::table_problems(). */
+	public static function schema_sql(): string {
 		global $wpdb;
 
 		$table   = self::table_name();
 		$charset = $wpdb->get_charset_collate();
 
-		$sql = "CREATE TABLE {$table} (
+		return "CREATE TABLE {$table} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			change_id VARCHAR(19) NOT NULL,
 			post_id BIGINT UNSIGNED DEFAULT NULL,
 			target_type VARCHAR(50) NOT NULL,
-			field VARCHAR(100) NOT NULL,
+			field VARCHAR(255) NOT NULL,
 			before_value LONGTEXT DEFAULT NULL,
 			after_value LONGTEXT DEFAULT NULL,
 			applied_at DATETIME NOT NULL,
@@ -60,13 +66,23 @@ class IATO_MCP_Change_Receipt {
 			KEY actor_user_id (actor_user_id),
 			KEY target_applied (target_type, applied_at)
 		) {$charset};";
-
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-		dbDelta( $sql );
 	}
 
 	/** Schema version that added the actor columns (IATO_MCP_Schema step 4). */
 	public const ACTOR_SCHEMA = 4;
+
+	/** Columns a receipt can be saved without when they are really missing. */
+	public const ACTOR_COLUMNS = [ 'actor_user_id', 'actor_kind', 'actor_client_id' ];
+
+	/** Columns the rollback mark can be saved without when they are really missing. */
+	public const ROLLED_BACK_BY_COLUMNS = [ 'rolled_back_by_user_id', 'rolled_back_by_kind', 'rolled_back_by_client_id' ];
+
+	/** Option counting undo records that could not be saved in full. */
+	public const FAILURES_OPTION = 'iato_mcp_receipt_failures';
+
+	public const WARNING_NOT_STORED = 'This change was applied, but its undo record could not be saved, so rollback cannot undo it. The plugin\'s Diagnostics page has details.';
+
+	public const WARNING_NO_ACTOR = 'This change was applied and can be rolled back, but who made it was not recorded, because a database column is missing. Rollback\'s same-user rule does not apply to it. The plugin\'s Diagnostics page has details.';
 
 	/**
 	 * Do the actor columns exist yet? False only between an upgrade and its
@@ -434,7 +450,26 @@ class IATO_MCP_Change_Receipt {
 		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate, insert is the canonical source of truth.
-		$wpdb->insert( self::table_name(), $row, $format );
+		$inserted = $wpdb->insert( self::table_name(), $row, $format );
+		$error    = false === $inserted ? (string) $wpdb->last_error : '';
+		$warning  = null;
+
+		// 1.16.0: only a column that is really missing justifies saving the row
+		// without the actor. A one-off failure must not lose who made the change.
+		if ( false === $inserted && self::has_actor_columns() && class_exists( 'IATO_MCP_Schema' )
+			&& ! empty( IATO_MCP_Schema::missing_columns( self::table_name(), self::ACTOR_COLUMNS ) ) ) {
+			$row      = array_diff_key( $row, array_flip( self::ACTOR_COLUMNS ) );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
+			$inserted = $wpdb->insert( self::table_name(), $row, array_slice( $format, 0, count( $row ) ) );
+			if ( false !== $inserted ) {
+				$warning = self::WARNING_NO_ACTOR;
+				self::note_failure( $target_type, $field, $error );
+			}
+		}
+		if ( false === $inserted ) {
+			$warning = self::WARNING_NOT_STORED;
+			self::note_failure( $target_type, $field, $error );
+		}
 
 		// 1.15.0: a recorded change is what purges page caches (IATO_MCP_Cache).
 		if ( class_exists( 'IATO_MCP_Cache' ) ) {
@@ -447,8 +482,9 @@ class IATO_MCP_Change_Receipt {
 			IATO_MCP_Receipt_Retention::maybe_run_overdue();
 		}
 
-		return [
-			'change_id'    => $change_id,
+		$receipt = [
+			// 1.16.0: never an ID that was not stored, which rollback could not find.
+			'change_id'    => false === $inserted ? null : $change_id,
 			'post_id'      => $post_id,
 			'target_type'  => $target_type,
 			'field'        => $field,
@@ -457,6 +493,56 @@ class IATO_MCP_Change_Receipt {
 			'applied_at'   => gmdate( 'c', strtotime( $applied_at ) ),
 			'actor'        => self::describe_actor( $actor ),
 		];
+		if ( false === $inserted ) {
+			$receipt['stored'] = false;
+		}
+		if ( null !== $warning ) {
+			$receipt['warning'] = $warning;
+		}
+		return $receipt;
+	}
+
+	/**
+	 * The receipt as Elementor tools return it: the stored row keeps the full
+	 * values. `stored` and `warning` are there only when something went wrong.
+	 */
+	public static function slim( array $receipt ): array {
+		return [
+			'change_id'   => $receipt['change_id'] ?? null,
+			'target_type' => $receipt['target_type'] ?? null,
+			'field'       => $receipt['field'] ?? null,
+			'applied_at'  => $receipt['applied_at'] ?? null,
+			'actor'       => $receipt['actor'] ?? null,
+		] + array_intersect_key( $receipt, [ 'stored' => true, 'warning' => true ] );
+	}
+
+	/** Count an undo record that could not be saved in full, for the Diagnostics page. */
+	private static function note_failure( string $target_type, string $field, string $error ): void {
+		$failures = self::failures();
+		update_option(
+			self::FAILURES_OPTION,
+			[
+				'count'      => (int) ( $failures['count'] ?? 0 ) + 1,
+				'last_at'    => time(),
+				'last_what'  => substr( $target_type . ' / ' . $field, 0, 120 ),
+				'last_error' => substr( $error, 0, 300 ),
+			],
+			false
+		);
+	}
+
+	/**
+	 * Undo records that could not be saved in full, or an empty array.
+	 *
+	 * @return array{count?:int,last_at?:int,last_what?:string,last_error?:string}
+	 */
+	public static function failures(): array {
+		$failures = get_option( self::FAILURES_OPTION, [] );
+		return is_array( $failures ) ? $failures : [];
+	}
+
+	public static function clear_failures(): void {
+		delete_option( self::FAILURES_OPTION );
 	}
 
 	/**
@@ -505,6 +591,24 @@ class IATO_MCP_Change_Receipt {
 			$format,
 			[ '%s' ]
 		);
+		$error = false === $updated ? (string) $wpdb->last_error : '';
+
+		// 1.16.0: the mark is what stops a second rollback, so it is saved without
+		// the "by whom" columns when one of them is really missing.
+		if ( false === $updated && self::has_actor_columns() && class_exists( 'IATO_MCP_Schema' )
+			&& ! empty( IATO_MCP_Schema::missing_columns( self::table_name(), self::ROLLED_BACK_BY_COLUMNS ) ) ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Custom table write; no cache to invalidate.
+			$updated = $wpdb->update(
+				self::table_name(),
+				[ 'rolled_back_at' => $data['rolled_back_at'] ],
+				[ 'change_id' => $change_id ],
+				[ '%s' ],
+				[ '%s' ]
+			);
+		}
+		if ( false === $updated ) {
+			self::note_failure( 'rollback', $change_id, $error );
+		}
 
 		return false !== $updated;
 	}

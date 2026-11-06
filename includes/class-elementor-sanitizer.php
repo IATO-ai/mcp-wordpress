@@ -23,7 +23,7 @@
  *                                                           sanitize_textarea_field
  *         (what Elementor's Style_Parser::sanitize_custom_css() does; keeps
  *         `>` selectors, removes tags and `</style><script>` sequences)
- *       strings containing `<`                               wp_kses_post
+ *       strings containing `<`                               clean_markup()
  *       everything else (plain text, numbers, booleans)      unchanged
  *         (wp_kses_post would turn & into &amp;, which double-encodes in
  *         widgets that escape on output, e.g. the heading's wp_kses_post())
@@ -70,7 +70,7 @@ class IATO_MCP_Elementor_Sanitizer {
 	/** @return array{kses:callable,url:callable,css:callable,inline_policy:callable,inline_filter:callable} */
 	private static function functions(): array {
 		$defaults = [
-			'kses'          => 'wp_kses_post',
+			'kses'          => [ self::class, 'clean_markup' ],
 			'url'           => 'esc_url_raw',
 			'css'           => 'sanitize_textarea_field',
 			'inline_policy' => [ 'IATO_MCP_Inline_Markup', 'policy' ],
@@ -163,6 +163,14 @@ class IATO_MCP_Elementor_Sanitizer {
 			$extra['removed_css'] = $filtered['removed_css'];
 		}
 		return [ (string) $filtered['html'], $extra ];
+	}
+
+	/**
+	 * The markup rule: whole STYLE and SCRIPT elements go first, so their contents do
+	 * not stay on the page as text, then wp_kses_post, always last (1.16.0).
+	 */
+	public static function clean_markup( string $html ): string {
+		return (string) wp_kses_post( IATO_MCP_Inline_Markup::remove_style_and_script( $html ) );
 	}
 
 	public static function is_url_key( string $key ): bool {

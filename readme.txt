@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.15.1
+Stable tag: 1.16.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -181,6 +181,26 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.16.0 =
+* Security: Hardened which stored data a post meta write can reach, and how a rollback treats stored data. Update recommended.
+* Change: update_post_meta refuses a key the database would read as a different key already stored on the post or, for a key new to the post, as another spelling stored on the site (meta_key_mismatch). A new key with spaces or characters outside ASCII needs force. A key over 255 characters is refused (meta_key_too_long); nothing was stored before, though the response said it was.
+* Fix: Changing a page's title, status, slug or excerpt with update_post no longer removes iframes and scripts from content the call did not mention. Rolling back a post field now restores it as it was stored; the same filter used to remove them from the restored value, and rollback still reported success.
+* Fix: An Elementor element tree that would crash the page for visitors, such as a JSON object or an element with no elType, is refused with elementor_invalid_tree. It used to be stored and reported as a success.
+* Fix: A revision's ID can no longer be used as a write target (revision_target). WordPress sent the change to the parent post, past the checks made on it.
+* Fix: Rolling back an Elementor write on a page with no elements yet now restores the content visitors saw, also when Elementor's flag was on.
+* Fix: Rolling back "Elementor turned off" after the page was edited is now a conflict, because turning it back on would hide that edit.
+* Fix: update_seo_data, and its rollback, no longer damage SEO plugin variables such as %%category%% and %%date%%, or encoded characters in a canonical URL when it is read.
+* Fix: A widget that fails while rendering can no longer corrupt the response of the tool call, which lost the change_id of a write that had happened.
+* Fix: A write could return a change_id that was never saved, so rollback could not find it. This happened on healthy sites when a meta key was longer than 100 characters, and when a database column was missing. Long keys now save. If an undo record really cannot be saved, the response says so, with no change_id, and Diagnostics shows it.
+* Fix: Elementor writes no longer overwrite the content of a page sent "Back to WordPress Editor". They are refused unless update_elementor_data is called with activate_builder: true, and rollback then restores the content, the setting and the old layout. get_page_builder reports these pages with elementor_tree_present.
+* Fix: A new page given a layout with update_elementor_data now renders as an Elementor page.
+* Fix: Rolling back an Elementor change now also updates post_content, which search and feeds read.
+* Fix: A stripped style or script no longer leaves its CSS or code on the page as visible text (WordPress 6.5 or later).
+* Change: The inline style block setting checks CSS more strictly. An independent review, with Chrome, found ways past the old check to load files from other sites. A style block is now dropped whole if its text names another site, including in a // comment or an attribute selector, and a url() pointing at this site needs a path.
+* New: create_post, update_post, update_seo_data, assign_term, create_term, update_term and delete_term now honour dry_run. They used to ignore it and really write. A tool with no dry run now refuses the flag with dry_run_unsupported instead of running.
+* Fix: delete_term no longer reports the default category as deleted when used with a key that has no owner.
+* New: Diagnostics shows database table problems and undo records that could not be saved. Table problems are retried automatically.
 
 = 1.15.1 =
 * Security: Hardened how Elementor's cached page data is handled. Update recommended. Elementor rebuilds each page once on its next view, and page caches are purged once shortly after the update.
@@ -476,6 +496,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.16.0 =
+Security update; update recommended. Also fixes undo records that were never saved, title edits removing iframes from content, and Elementor writes overwriting classic pages (now refused unless activate_builder is passed). dry_run works on seven more tools.
 
 = 1.15.1 =
 Security update; update recommended. Elementor rebuilds each page once on its next view.

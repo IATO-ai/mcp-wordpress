@@ -42,6 +42,8 @@ IATO_MCP_Server::register_tool(
 		}
 
 		$content = $post->post_content;
+		// 1.16.0: the page holds Elementor data, but Elementor is turned off for it.
+		$off = 'inactive_tree' === IATO_MCP_Elementor_Adapter::builder_state( $post_id ) ? [ 'elementor_tree_present' => true ] : [];
 
 		// Elementor.
 		if ( get_post_meta( $post_id, '_elementor_edit_mode', true ) === 'builder' ) {
@@ -71,7 +73,7 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( [
 				'post_id' => $post_id,
 				'builder' => 'wpbakery',
-			] );
+			] + $off );
 		}
 
 		// Divi.
@@ -79,7 +81,7 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( [
 				'post_id' => $post_id,
 				'builder' => 'divi',
-			] );
+			] + $off );
 		}
 
 		// Beaver Builder.
@@ -87,7 +89,7 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( [
 				'post_id' => $post_id,
 				'builder' => 'beaver-builder',
-			] );
+			] + $off );
 		}
 
 		// Gutenberg blocks.
@@ -95,14 +97,14 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( [
 				'post_id' => $post_id,
 				'builder' => 'gutenberg',
-			] );
+			] + $off );
 		}
 
 		// Classic editor / no builder.
 		return IATO_MCP_Server::ok( [
 			'post_id' => $post_id,
 			'builder' => 'classic',
-		] );
+		] + $off );
 	}
 );
 
@@ -228,13 +230,14 @@ function iato_mcp_apply_compact_recursive( array $elements ): array {
 IATO_MCP_Server::register_tool(
 	'update_elementor_data',
 	[
-		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Optional inherit_settings_from copies a curated set of theme + Elementor page-level meta keys from a source post in the same call (one change_receipt per inherited key). Requires edit_posts capability. Plain values set on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later) are converted and validated with Elementor\'s own code; elsewhere atomic elements accept only $$type envelope values.',
+		'description' => 'Updates the _elementor_data JSON for a post, clears Elementor CSS cache, and regenerates rendered post_content. Supports dry_run. Optional inherit_settings_from copies a curated set of theme + Elementor page-level meta keys from a source post in the same call (one change_receipt per inherited key). A post with no Elementor data is switched to Elementor by this call; rollback restores it. Requires edit_posts capability. Plain values set on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later) are converted and validated with Elementor\'s own code; elsewhere atomic elements accept only $$type envelope values.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
 				'id'                    => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
 				'elementor_data'        => [ 'type' => 'string',  'description' => 'Full Elementor JSON data string (required).' ],
 				'dry_run'               => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+				'activate_builder'      => [ 'type' => 'boolean', 'description' => 'Required for a post that holds Elementor data while Elementor is turned off for it (get_page_builder reports elementor_tree_present: true). Switches it to Elementor, which replaces what visitors see, so ask the user first. Rollback restores it.' ],
 				'inherit_settings_from' => [ 'type' => 'integer', 'description' => 'Optional source post ID. When set, copies a curated set of theme + Elementor page-level meta keys onto the target.' ],
 				'inherit_keys'          => [ 'type' => 'array',   'description' => 'Optional override of the inherited key list. Defaults to a built-in curated list when omitted.', 'items' => [ 'type' => 'string' ] ],
 			],
@@ -268,6 +271,9 @@ IATO_MCP_Server::register_tool(
 		if ( empty( $elementor_data ) ) {
 			return new WP_Error( 'missing_data', 'elementor_data is required.' );
 		}
+		if ( ! is_string( $elementor_data ) ) {
+			return new WP_Error( 'invalid_json', 'elementor_data must be a string holding JSON, not an array or object. Nothing was written.' );
+		}
 
 		// Validate JSON.
 		$decoded = json_decode( $elementor_data, true );
@@ -278,6 +284,22 @@ IATO_MCP_Server::register_tool(
 			return new WP_Error( 'invalid_json', 'elementor_data must be a JSON array of elements.' );
 		}
 		$decoded = IATO_MCP_Elementor_Adapter::force_arrays( $decoded );
+		$shape   = IATO_MCP_Elementor_Adapter::tree_shape_error( $decoded );
+		if ( null !== $shape ) {
+			return IATO_MCP_Elementor_Adapter::tool_error( $shape );
+		}
+
+		// 1.16.0: a post with Elementor turned off shows post_content, which this
+		// write replaces. With no elements stored it becomes an Elementor page; with
+		// some, only when the caller says so, because someone turned Elementor off.
+		$state = IATO_MCP_Elementor_Adapter::builder_state( $post_id );
+		if ( 'inactive_tree' === $state && empty( $args['activate_builder'] ) ) {
+			return IATO_MCP_Elementor_Adapter::tool_error( IATO_MCP_Elementor_Adapter::inactive_tree_refusal( $post_id ) );
+		}
+		$set_builder = 'active' !== $state;
+		if ( $set_builder && [] === $decoded ) {
+			return new WP_Error( 'elementor_empty_tree', 'An empty element list would replace this post\'s content with nothing. Send at least one element. Nothing was written.' );
+		}
 
 		// What is stored now: the sanitising pass compares against it so only the
 		// values this request changes are touched, and the revision guards use it.
@@ -285,13 +307,12 @@ IATO_MCP_Server::register_tool(
 		$stored_raw      = get_post_meta( $post_id, '_elementor_data', true );
 		$stored_raw      = is_array( $stored_raw ) ? (string) wp_json_encode( $stored_raw ) : (string) $stored_raw;
 		$previous_revision = IATO_MCP_Elementor_Adapter::compute_revision( $stored_raw );
-		// What a rollback must put back when the post had no Elementor data:
-		// Elementor's save replaces post_content with its rendering of the tree,
-		// so the receipt keeps the original content and builder flag (1.13.0).
-		$receipt_before = '' !== $stored_raw ? $stored_raw : IATO_MCP_Rollback::no_elementor_envelope(
-			(string) get_post_field( 'post_content', $post_id ),
-			(string) get_post_meta( $post_id, '_elementor_edit_mode', true )
-		);
+		// What a rollback must put back when Elementor was off or the post had no
+		// elements: Elementor's save replaces post_content with its rendering of the
+		// tree, so the receipt keeps the original content, the builder flag and any
+		// stored tree (1.13.0; the tree since 1.16.0).
+		$old_content = (string) get_post_field( 'post_content', $post_id );
+		[ $receipt_before, $receipt_field ] = IATO_MCP_Rollback::tree_receipt( $post_id, $stored_raw, $set_builder, 'elementor:document:replace' );
 
 		// Elementor Atomic (V4) elements this tree changes: plain values are
 		// converted and validated with Elementor's code (1.14.0) and the page
@@ -365,6 +386,10 @@ IATO_MCP_Server::register_tool(
 				if ( is_wp_error( $policy ) ) {
 					return $policy;
 				}
+				$stored_key = IATO_MCP_Meta_Policy::check_stored_key( $post_id, $key );
+				if ( is_wp_error( $stored_key ) ) {
+					return $stored_key;
+				}
 				// Only the allowlisted _elementor_ keys may be copied; the element
 				// tree and the other builder data go through the Elementor tools.
 				$elementor_policy = IATO_MCP_Meta_Policy::check_elementor_meta_write( $key );
@@ -421,7 +446,8 @@ IATO_MCP_Server::register_tool(
 				'json_valid'        => true,
 				'inherit_planned'   => $inherit_plan,
 				'inherited_skipped' => $inherit_skipped,
-			] + $atomic_check['report'] + ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ? [ 'elementor_save' => 'skipped', 'skipped_reason' => $atomic_check['pipeline_opts']['skip_save'] ] : [] ) + IATO_MCP_Elementor_Adapter::preview_report( $decoded, $stored_elements );
+			] + ( $set_builder ? [ 'would_set_builder_mode' => true, 'would_replace_content_chars' => strlen( $old_content ) ] : [] )
+				+ $atomic_check['report'] + ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ? [ 'elementor_save' => 'skipped', 'skipped_reason' => $atomic_check['pipeline_opts']['skip_save'] ] : [] ) + IATO_MCP_Elementor_Adapter::preview_report( $decoded, $stored_elements );
 			IATO_MCP_Sanitize_Report::add_to( $preview, $atomic_check['sanitized_report'] ?? [] );
 			return IATO_MCP_Server::ok( $preview );
 		}
@@ -429,11 +455,14 @@ IATO_MCP_Server::register_tool(
 		// The shared pipeline (IATO_MCP_Elementor_Adapter::write_pipeline): sanitise
 		// what changed, Elementor's own save first, the plugin's write only when
 		// Elementor did not store the tree, frontend fallback, persistence check.
-		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $decoded, $previous_revision, $stored_elements, $atomic_check['pipeline_opts'] );
+		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $decoded, $previous_revision, $stored_elements, $atomic_check['pipeline_opts'] + ( $set_builder ? [ 'set_builder_mode' => true ] : [] ) );
 		if ( is_wp_error( $pipeline ) ) {
 			return IATO_MCP_Elementor_Adapter::tool_error( $pipeline );
 		}
 		$meta_persisted = (bool) $pipeline['meta_persisted'];
+		// 1.16.0: what this write left, so a rollback can tell when the content was
+		// edited afterwards (IATO_MCP_Rollback_Conflict).
+		$receipt_before = IATO_MCP_Rollback::envelope_with_content_after( $receipt_before, (string) get_post_field( 'post_content', $post_id ) );
 
 		// One receipt for the whole document, like update_elementor_patch. Before:
 		// the stored tree as it was, or, when the post had none, the original
@@ -442,7 +471,7 @@ IATO_MCP_Server::register_tool(
 		$receipt = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'elementor_widget',
-			'elementor:document:replace',
+			$receipt_field,
 			$receipt_before,
 			$pipeline['current_revision']
 		);
@@ -481,13 +510,10 @@ IATO_MCP_Server::register_tool(
 			'current_revision'     => $pipeline['current_revision'],
 		] + $atomic_check['report'] + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
 		IATO_MCP_Sanitize_Report::add_to( $response, $atomic_check['sanitized_report'] ?? [] );
-		$response['change_receipt'] = [
-			'change_id'   => $receipt['change_id'],
-			'target_type' => $receipt['target_type'],
-			'field'       => $receipt['field'],
-			'applied_at'  => $receipt['applied_at'],
-			'actor'       => $receipt['actor'] ?? null,
-		];
+		$response['change_receipt'] = IATO_MCP_Change_Receipt::slim( $receipt );
+		if ( $set_builder ) {
+			$response['replaced_content_chars'] = strlen( $old_content );
+		}
 		$inherit_sanitized = array_merge( ...array_map( fn( $st ) => $st['sanitized_paths'] ?? [], $inherit_plan ?: [ [] ] ) );
 		if ( ! empty( $inherit_sanitized ) ) {
 			$response['inherited_sanitized_paths']  = $inherit_sanitized;

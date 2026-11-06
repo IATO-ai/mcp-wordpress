@@ -33,7 +33,7 @@ def record(name, ok, detail=None):
 
 
 def wp(*args):
-    r = subprocess.run(['npx', '@wordpress/env', 'run', 'cli', 'wp', *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    r = subprocess.run(['npx', '@wordpress/env', 'run', os.environ.get('WPENV_SVC', 'cli'), 'wp', *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     return '\n'.join(l for l in r.stdout.splitlines() if l and not l.startswith(('ℹ', '✔'))).strip()
 
 
@@ -352,6 +352,222 @@ st, body = rest_rollback('key', rr.get('change_id'), 'not the tree')
 record('REST route: an Elementor receipt with the wrong before_value is rejected (400)', st == 400 and 'mismatch' in json.dumps(body), (st, body))
 st, body = rest_rollback('key', rr.get('change_id'), before_text)
 record('REST route: with the whole stored tree as before_value it rolls back byte for byte', st == 200 and body.get('restored_revision') == rev(before_text) and wp('post', 'meta', 'get', str(EP), '_elementor_data') == before_text, (st, body))
+
+
+# ── 1.16.0: Elementor turned off for a page, and new pages ──────────────────
+print('\n# Elementor turned off for a page (Back to WordPress Editor)')
+MARK = 'CLASSIC-MARK-116'
+CLASSIC = f'<p>{MARK} written by hand &amp; kept</p>'
+
+
+def tree(text, wid='h116off'):
+    return json.dumps([{'id': 'c116off', 'elType': 'container', 'isInner': False, 'settings': {}, 'elements': [{'id': wid, 'elType': 'widget', 'widgetType': 'heading', 'settings': {'title': text}, 'elements': []}]}])
+
+
+def page_html(pid):
+    url = wp('post', 'url', str(pid)).splitlines()[-1]
+    return urllib.request.urlopen(url + ('&' if '?' in url else '?') + 'nocache=' + secrets.token_hex(4), timeout=60).read().decode('utf-8', 'replace')
+
+
+def flag(pid):
+    return wp('post', 'meta', 'get', str(pid), '_elementor_edit_mode')
+
+
+def content(pid):
+    return wp('post', 'get', str(pid), '--field=post_content')
+
+
+def stored_tree(pid):
+    return wp('post', 'meta', 'get', str(pid), '_elementor_data')
+
+
+def new_off_page(body=CLASSIC, tree_text=None):
+    pid = int(wp('post', 'create', '--user=admin', '--post_type=page', '--post_status=publish', '--post_title=rollback-live off', f'--post_content={body}', '--porcelain'))
+    wp('post', 'meta', 'update', str(pid), '_elementor_data', tree_text if tree_text is not None else tree('Old layout heading'))
+    wp('post', 'meta', 'update', str(pid), '_elementor_template_type', 'wp-page')
+    return pid
+
+
+OFF = new_off_page()
+OLD_TREE = stored_tree(OFF)
+OLD_CONTENT = content(OFF)
+pb = call('key', 'get_page_builder', {'id': OFF})
+record('get_page_builder says classic and that a tree is present', pb.get('builder') == 'classic' and pb.get('elementor_tree_present') is True, pb)
+record('visitors see the classic content', MARK in page_html(OFF))
+record('the stored data can still be read', ok(call('key', 'get_elementor_data', {'id': OFF, 'format': 'summary'})))
+
+refusals = {
+    'update_elementor_widget': ('update_elementor_widget', {'id': OFF, 'widget_id': 'h116off', 'settings_patch': {'title': 'x'}}),
+    'set_widget_setting': ('set_widget_setting', {'id': OFF, 'widget_id': 'h116off', 'key': 'title', 'value': 'x'}),
+    'set_heading_level': ('set_heading_level', {'id': OFF, 'widget_id': 'h116off', 'level': 'h3'}),
+    'update_elementor_patch': ('update_elementor_patch', {'id': OFF, 'ops': [{'op': 'replace', 'path': '/0/elements/0/settings/title', 'value': 'x'}]}),
+    'update_elementor_data': ('update_elementor_data', {'id': OFF, 'elementor_data': tree('x')}),
+}
+for who in ('key', 'editor', 'oauth'):
+    for name, (tool, args) in refusals.items():
+        for extra in ({}, {'dry_run': True}):
+            r = call(who, tool, {**args, **extra})
+            label = f"{who}: {name}{' dry run' if extra else ''} refused"
+            record(label, err(r) == 'elementor_not_active' or 'elementor_not_active' in json.dumps(r), r)
+b = call('key', 'update_elementor_widgets_bulk', {'updates': [{'id': OFF, 'widget_id': 'h116off', 'settings_patch': {'title': 'x'}}]})
+record('update_elementor_widgets_bulk: the row is refused', (b.get('results') or [{}])[0].get('error') == 'elementor_not_active', b)
+for value in ('builder', '1'):
+    r = call('key', 'update_post_meta', {'id': OFF, 'key': '_elementor_edit_mode', 'value': value})
+    record(f'update_post_meta cannot turn it on with {value!r}', err(r) == 'elementor_not_active', r)
+one = call('key', 'update_elementor_data', {'id': OFF, 'elementor_data': tree('x')})
+record('the refusal tells the caller how much content is at stake', (one.get('body') or {}).get('content_chars') == len(OLD_CONTENT) and (one.get('body') or {}).get('content_is_elementor_text') is False, one)
+record('after all that the content is untouched', content(OFF) == OLD_CONTENT)
+record('the flag is untouched', flag(OFF) == '')
+record('the stored data is untouched', stored_tree(OFF) == OLD_TREE)
+record('visitors still see the classic content', MARK in page_html(OFF))
+
+print('# activating, and rolling the activation back')
+d = call('key', 'update_elementor_data', {'id': OFF, 'elementor_data': tree('Activated heading'), 'activate_builder': True, 'dry_run': True})
+record('the dry run says what would happen', d.get('would_set_builder_mode') is True and d.get('would_replace_content_chars') == len(OLD_CONTENT), d)
+record('the dry run wrote nothing', flag(OFF) == '' and content(OFF) == OLD_CONTENT and stored_tree(OFF) == OLD_TREE)
+a = call('key', 'update_elementor_data', {'id': OFF, 'elementor_data': tree('Activated heading'), 'activate_builder': True})
+cid = receipt(a).get('change_id')
+record('activating succeeds and says so', a.get('builder_mode_set') is True and a.get('replaced_content_chars') == len(OLD_CONTENT) and a.get('meta_persisted') is True, a)
+record('the flag is on', flag(OFF) == 'builder')
+html = page_html(OFF)
+record('visitors see the Elementor layout, not the classic content', 'Activated heading' in html and 'data-id="h116off"' in html and MARK not in html)
+record('get_page_builder says elementor', call('key', 'get_page_builder', {'id': OFF}).get('builder') == 'elementor')
+dr = call('key', 'rollback', {'change_id': cid, 'dry_run': True})
+record('a rollback dry run names what comes back', dr.get('would_roll_back') is True and dr.get('would_restore') == 'content_and_elementor_off', dr)
+record('the rollback dry run wrote nothing', flag(OFF) == 'builder')
+rb = call('key', 'rollback', {'change_id': cid})
+record('rollback succeeds and says what it restored', rb.get('success') is True and rb.get('restored') == 'content_and_elementor_off', rb)
+record('the content is back byte for byte', content(OFF) == OLD_CONTENT, content(OFF))
+record('the flag is off again', flag(OFF) == '')
+record('the old data is back byte for byte', stored_tree(OFF) == OLD_TREE)
+record('visitors see the classic content again', MARK in page_html(OFF))
+record('and the page is refused again', err(call('key', 'update_elementor_data', {'id': OFF, 'elementor_data': tree('x')})) == 'elementor_not_active')
+again = call('key', 'rollback', {'change_id': cid})
+record('a second rollback is refused', err(again) == 'already_rolled_back', again)
+
+print('# edits made after activation are not silently overwritten')
+a = call('key', 'update_elementor_data', {'id': OFF, 'elementor_data': tree('Activated again'), 'activate_builder': True})
+cid = receipt(a).get('change_id')
+wp('post', 'update', str(OFF), '--post_content=<p>Edited by hand after activation</p>')
+c = call('key', 'rollback', {'change_id': cid})
+record('a classic edit afterwards is a conflict', err(c) == 'rollback_conflict' and 'post content' in json.dumps(c), c)
+record('the edit is still there', 'Edited by hand after activation' in content(OFF))
+f = call('key', 'rollback', {'change_id': cid, 'force': True})
+record('force restores the original', f.get('success') is True and content(OFF) == OLD_CONTENT and flag(OFF) == '' and stored_tree(OFF) == OLD_TREE, f)
+a = call('key', 'update_elementor_data', {'id': OFF, 'elementor_data': tree('Activated a third time'), 'activate_builder': True})
+cid = receipt(a).get('change_id')
+call('key', 'update_elementor_widget', {'id': OFF, 'widget_id': 'h116off', 'settings_patch': {'title': 'A later Elementor edit'}})
+c = call('key', 'rollback', {'change_id': cid})
+record('a later Elementor edit is a conflict too', err(c) == 'rollback_conflict', c)
+wp('post', 'delete', str(OFF), '--force')
+
+print('# rollback keeps post_content in line')
+RC = new_off_page('x', tree('Original text', 'h116rc'))
+wp('post', 'meta', 'update', str(RC), '_elementor_edit_mode', 'builder')
+base = call('key', 'update_elementor_widget', {'id': RC, 'widget_id': 'h116rc', 'settings_patch': {'title': 'First \\\\ version'}})
+edit = call('key', 'update_elementor_widget', {'id': RC, 'widget_id': 'h116rc', 'settings_patch': {'title': 'Second version'}})
+record('the edit is in post_content', 'Second version' in content(RC), content(RC))
+dr = call('key', 'rollback', {'change_id': receipt(edit).get('change_id'), 'dry_run': True})
+record('a dry run says it would refresh and writes nothing', dr.get('would_refresh_content') is True and 'Second version' in content(RC), dr)
+rb = call('key', 'rollback', {'change_id': receipt(edit).get('change_id')})
+record('rollback reports the refresh', rb.get('content_refreshed') is True, rb)
+record('post_content holds the restored text, backslash included', 'First \\\\ version' in content(RC) and 'Second version' not in content(RC), content(RC))
+record('visitors see the restored page', 'Second version' not in page_html(RC) and 'First' in page_html(RC))
+second = call('key', 'rollback', {'change_id': receipt(base).get('change_id'), 'dry_run': True})
+record('nothing left to refresh is not reported as a refresh', 'content_refreshed' not in second, second)
+wp('post', 'meta', 'delete', str(RC), '_elementor_edit_mode')
+wp('post', 'update', str(RC), '--post_content=<p>Now classic</p>')
+wp('post', 'delete', str(RC), '--force')
+
+print('# empty trees')
+EMPTY = new_off_page(tree_text='[]')
+EMPTY_CONTENT = content(EMPTY)
+r = call('key', 'update_elementor_widget', {'id': EMPTY, 'widget_id': 'nope', 'settings_patch': {'title': 'x'}})
+record('other tools refuse a stored empty tree', err(r) == 'elementor_not_active' or 'elementor_not_active' in json.dumps(r), r)
+r = call('key', 'update_elementor_patch', {'id': EMPTY, 'ops': [{'op': 'add', 'path': '/0', 'value': json.loads(tree('Added'))[0]}]})
+record('update_elementor_patch cannot fill it', err(r) == 'elementor_not_active', r)
+r = call('key', 'update_elementor_data', {'id': EMPTY, 'elementor_data': '[]'})
+record('sending an empty tree to it is refused', 'elementor_empty_tree' in json.dumps(r) or 'empty element list' in json.dumps(r), r)
+r = call('key', 'update_elementor_data', {'id': EMPTY, 'elementor_data': tree('From empty')})
+cid = receipt(r).get('change_id')
+record('update_elementor_data turns it on', r.get('builder_mode_set') is True and flag(EMPTY) == 'builder', r)
+rb = call('key', 'rollback', {'change_id': cid})
+record('rollback restores its content and the empty tree', rb.get('success') is True and content(EMPTY) == EMPTY_CONTENT and flag(EMPTY) == '' and stored_tree(EMPTY) == '[]', rb)
+wp('post', 'delete', str(EMPTY), '--force')
+
+print('# a new page becomes an Elementor page')
+NEW = call('key', 'create_post', {'title': 'rollback-live new page', 'status': 'publish', 'type': 'page', 'content': 'Plain draft text'})
+NEW_ID = NEW.get('id') or NEW.get('post_id')
+record('create_post notice says the next call turns Elementor on', 'turns Elementor on' in NEW.get('notice', ''), NEW.get('notice'))
+NEW_CONTENT = content(NEW_ID)
+pb = call('key', 'get_page_builder', {'id': NEW_ID})
+record('it starts with no tree', 'elementor_tree_present' not in pb and pb.get('builder') != 'elementor', pb)
+d = call('key', 'update_elementor_data', {'id': NEW_ID, 'elementor_data': tree('Fresh Elementor page', 'h116new'), 'dry_run': True})
+record('the dry run says it would turn Elementor on', d.get('would_set_builder_mode') is True, d)
+r = call('key', 'update_elementor_data', {'id': NEW_ID, 'elementor_data': tree('Fresh Elementor page', 'h116new')})
+cid = receipt(r).get('change_id')
+record('no activate_builder needed', r.get('builder_mode_set') is True and flag(NEW_ID) == 'builder', r)
+html = page_html(NEW_ID)
+record('it renders with the Elementor layout', 'Fresh Elementor page' in html and 'data-id="h116new"' in html)
+record('with its own CSS', f'post-{NEW_ID}.css' in html or 'elementor-post-' in html)
+later = call('key', 'update_elementor_widget', {'id': NEW_ID, 'widget_id': 'h116new', 'settings_patch': {'title': 'Edited fresh page'}})
+record('it can be edited as any Elementor page', ok(later) and 'Edited fresh page' in page_html(NEW_ID), later)
+lr = call('key', 'rollback', {'change_id': receipt(later).get('change_id')})
+record('rolling the edit back brings post_content into line', lr.get('content_refreshed') is True and 'Edited fresh page' not in content(NEW_ID) and 'Fresh Elementor page' in content(NEW_ID), lr)
+rb = call('key', 'rollback', {'change_id': cid})
+record('rollback makes it a plain page again', rb.get('success') is True and flag(NEW_ID) == '' and stored_tree(NEW_ID) == '' and content(NEW_ID) == NEW_CONTENT, rb)
+wp('post', 'delete', str(NEW_ID), '--force')
+
+print('# a page from the old new-page bug: nothing written by hand is at stake')
+BUG = call('key', 'create_post', {'title': 'rollback-live bug page', 'status': 'publish', 'type': 'page', 'content': 'x'})
+BUG_ID = BUG.get('id') or BUG.get('post_id')
+call('key', 'update_elementor_data', {'id': BUG_ID, 'elementor_data': tree('Old bug heading', 'h116bug')})
+wp('post', 'meta', 'delete', str(BUG_ID), '_elementor_edit_mode')
+r = call('key', 'update_elementor_data', {'id': BUG_ID, 'elementor_data': tree('x', 'h116bug')})
+record('it is still refused, never switched on by itself', err(r) == 'elementor_not_active' and flag(BUG_ID) == '', r)
+record('but the refusal says its content is Elementor text', (r.get('body') or {}).get('content_is_elementor_text') is True and 'loses nothing' in r.get('text', ''), r)
+wp('post', 'delete', str(BUG_ID), '--force')
+
+print('# what the refusal must not catch')
+ON = new_off_page()
+wp('post', 'meta', 'update', str(ON), '_elementor_edit_mode', 'builder')
+w = call('key', 'update_elementor_widget', {'id': ON, 'widget_id': 'h116off', 'settings_patch': {'title': 'Normal edit'}})
+record('a page with Elementor on writes as before', ok(w) and 'builder_mode_set' not in w, w)
+wp('post', 'delete', str(ON), '--force')
+for post_type in ('elementor_library', 'e-floating-buttons'):
+    tpl = int(wp('post', 'create', '--user=admin', f'--post_type={post_type}', '--post_status=publish', f'--post_title=rollback-live {post_type}', '--porcelain'))
+    wp('post', 'meta', 'update', str(tpl), '_elementor_data', tree('Template heading', 'h116tpl'))
+    wp('post', 'meta', 'update', str(tpl), '_elementor_template_type', 'container' if post_type == 'e-floating-buttons' else 'section')
+    r = call('key', 'update_elementor_data', {'id': tpl, 'elementor_data': tree('Template edit', 'h116tpl'), 'dry_run': True})
+    record(f'{post_type} with no flag is not refused', ok(r) and 'would_set_builder_mode' not in r, r)
+    wp('post', 'delete', str(tpl), '--force')
+kit = wp('option', 'get', 'elementor_active_kit')
+if kit.isdigit():
+    record('the active kit has the flag', flag(kit) == 'builder', flag(kit))
+    record('so writes to it are not refused', call('key', 'get_page_builder', {'id': int(kit)}).get('builder') == 'elementor')
+orphans = wp('db', 'query', f"SELECT COUNT(*) FROM {PREFIX}posts p JOIN {PREFIX}postmeta d ON d.post_id = p.ID AND d.meta_key = '_elementor_data' AND d.meta_value NOT IN ('', '[]') LEFT JOIN {PREFIX}postmeta e ON e.post_id = p.ID AND e.meta_key = '_elementor_edit_mode' WHERE e.meta_id IS NULL AND p.post_type NOT IN ('revision', 'elementor_library', 'e-floating-buttons') AND p.post_status NOT IN ('auto-draft', 'trash') AND p.post_title NOT LIKE 'rollback-live%'", '--skip-column-names').splitlines()[-1]
+print(f'  info  other pages on this site the refusal would catch: {orphans}')
+
+if int(wp('plugin', 'get', 'elementor', '--field=version').split('.')[0]) >= 4:
+    print('# an atomic element on a page that was then turned off')
+    atomic_tree = json.dumps([{'id': 'a116box', 'elType': 'e-flexbox', 'settings': {}, 'elements': [{'id': 'a116h', 'elType': 'widget', 'widgetType': 'e-heading', 'settings': {'tag': {'$$type': 'string', 'value': 'h1'}, 'title': {'$$type': 'escaped-html', 'value': 'Atomic heading'}}, 'elements': [], 'version': '0.0'}]}])
+    AT = new_off_page(tree_text=atomic_tree)
+    wp('post', 'meta', 'update', str(AT), '_elementor_edit_mode', 'builder')
+    w = call('key', 'set_heading_level', {'id': AT, 'widget_id': 'a116h', 'level': 'h3'})
+    acid = receipt(w).get('change_id')
+    record('the atomic edit works while Elementor is on', ok(w) and acid, w)
+    wp('post', 'meta', 'delete', str(AT), '_elementor_edit_mode')
+    kept = content(AT)
+    b = call('key', 'update_elementor_widgets_bulk', {'updates': [{'id': AT, 'widget_id': 'a116h', 'settings_patch': {'tag': 'h4'}}]})
+    record('a bulk atomic row is refused', (b.get('results') or [{}])[0].get('error') == 'elementor_not_active', b)
+    for extra in ({'dry_run': True}, {}):
+        r = call('key', 'rollback', {'change_id': acid, **extra})
+        record(f"rolling it back is refused{' in a dry run too' if extra else ''}", 'elementor_not_active' in json.dumps(r), r)
+    record('nothing changed', content(AT) == kept and flag(AT) == '')
+    wp('post', 'meta', 'update', str(AT), '_elementor_edit_mode', 'builder')
+    r = call('key', 'rollback', {'change_id': acid})
+    record('with Elementor back on, it rolls back', r.get('success') is True, r)
+    wp('post', 'delete', str(AT), '--force')
 
 print(f'\n# {passes} passed, {len(fails)} failed')
 sys.exit(1 if fails else 0)

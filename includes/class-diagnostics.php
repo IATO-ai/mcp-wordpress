@@ -20,6 +20,8 @@ class IATO_MCP_Diagnostics {
 	public static function init(): void {
 		add_action( 'admin_post_iato_mcp_diag_clear_log', [ self::class, 'handle_clear_log' ] );
 		add_action( 'admin_post_iato_mcp_diag_clear_media_log', [ self::class, 'handle_clear_media_log' ] );
+		add_action( 'admin_post_iato_mcp_diag_repair_tables', [ self::class, 'handle_repair_tables' ] );
+		add_action( 'admin_notices', [ self::class, 'table_health_notice' ] );
 	}
 
 	/**
@@ -125,6 +127,7 @@ CSS;
 						<td><?php esc_html_e( 'Receipt cleanup', 'iato-mcp' ); ?></td>
 						<td><?php echo esc_html( self::describe_retention() ); ?></td>
 					</tr>
+					<?php self::render_table_health(); ?>
 					<tr>
 						<td><?php esc_html_e( 'IATO API key', 'iato-mcp' ); ?></td>
 						<td>
@@ -145,6 +148,131 @@ CSS;
 			<?php self::render_media_phase_log(); ?>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Table health and undo records that could not be saved (1.16.0), with a
+	 * button that checks the tables again and starts the count over.
+	 */
+	private static function render_table_health(): void {
+		$health   = IATO_MCP_Schema::health();
+		$failures = IATO_MCP_Change_Receipt::failures();
+		?>
+		<tr>
+			<td><?php esc_html_e( 'Database tables', 'iato-mcp' ); ?></td>
+			<td>
+				<?php if ( null === $health ) : ?>
+					<span class="badge success"><?php esc_html_e( 'OK', 'iato-mcp' ); ?></span>
+				<?php else : ?>
+					<span class="badge error"><?php esc_html_e( 'Problem', 'iato-mcp' ); ?></span>
+					<?php echo esc_html( self::describe_table_problems( $health['problems'] ?? [] ) ); ?>
+					<?php if ( ! empty( $health['error'] ) ) : ?>
+						<br><?php esc_html_e( 'Database message:', 'iato-mcp' ); ?> <code><?php echo esc_html( (string) $health['error'] ); ?></code>
+					<?php endif; ?>
+					<br>
+					<?php
+					printf(
+						/* translators: 1: number of attempts, 2: date and time of the last attempt */
+						esc_html__( 'Tried %1$d times, last on %2$s. Tried again automatically every hour.', 'iato-mcp' ),
+						(int) ( $health['attempts'] ?? 1 ),
+						esc_html( wp_date( 'Y-m-d H:i', (int) ( $health['checked_at'] ?? 0 ) ) )
+					);
+					?>
+				<?php endif; ?>
+			</td>
+		</tr>
+		<tr>
+			<td><?php esc_html_e( 'Undo records', 'iato-mcp' ); ?></td>
+			<td>
+				<?php if ( empty( $failures['count'] ) ) : ?>
+					<span class="badge success"><?php esc_html_e( 'All saved', 'iato-mcp' ); ?></span>
+				<?php else : ?>
+					<span class="badge error">
+						<?php
+						printf(
+							/* translators: %d: number of undo records */
+							esc_html__( '%d could not be saved in full', 'iato-mcp' ),
+							(int) $failures['count']
+						);
+						?>
+					</span>
+					<?php
+					printf(
+						/* translators: 1: what was being recorded, 2: date and time */
+						esc_html__( 'Last: %1$s, on %2$s.', 'iato-mcp' ),
+						esc_html( (string) ( $failures['last_what'] ?? '' ) ),
+						esc_html( wp_date( 'Y-m-d H:i', (int) ( $failures['last_at'] ?? 0 ) ) )
+					);
+					?>
+					<?php if ( ! empty( $failures['last_error'] ) ) : ?>
+						<br><?php esc_html_e( 'Database message:', 'iato-mcp' ); ?> <code><?php echo esc_html( (string) $failures['last_error'] ); ?></code>
+					<?php endif; ?>
+				<?php endif; ?>
+				<?php if ( null !== $health || ! empty( $failures['count'] ) ) : ?>
+					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:8px;">
+						<input type="hidden" name="action" value="iato_mcp_diag_repair_tables">
+						<?php wp_nonce_field( 'iato_mcp_diag_repair_tables' ); ?>
+						<button type="submit" class="button"><?php esc_html_e( 'Check the tables again', 'iato-mcp' ); ?></button>
+					</form>
+				<?php endif; ?>
+			</td>
+		</tr>
+		<?php
+	}
+
+	/** One line per table: what is missing or the wrong type. */
+	private static function describe_table_problems( array $problems ): string {
+		$lines = [];
+		foreach ( $problems as $table => $problem ) {
+			if ( ! empty( $problem['table_missing'] ) ) {
+				$lines[] = sprintf( '%s: table missing.', $table );
+				continue;
+			}
+			$parts = [];
+			if ( ! empty( $problem['missing'] ) ) {
+				$parts[] = 'missing ' . implode( ', ', (array) $problem['missing'] );
+			}
+			foreach ( (array) ( $problem['wrong_type'] ?? [] ) as $column => $type ) {
+				$parts[] = sprintf( '%s is %s', $column, $type );
+			}
+			$lines[] = $table . ': ' . implode( '; ', $parts ) . '.';
+		}
+		return implode( ' ', $lines );
+	}
+
+	/** On the plugin's own pages only: changes may have no undo record. */
+	public static function table_health_notice(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		if ( ! $screen || false === strpos( (string) $screen->id, 'iato-mcp' ) ) {
+			return;
+		}
+		if ( null === IATO_MCP_Schema::health() && empty( IATO_MCP_Change_Receipt::failures()['count'] ) ) {
+			return;
+		}
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<strong><?php esc_html_e( 'IATO MCP:', 'iato-mcp' ); ?></strong>
+				<?php esc_html_e( 'some changes may not have a full undo record, because of a problem saving to the plugin\'s database tables.', 'iato-mcp' ); ?>
+				<a href="<?php echo esc_url( admin_url( 'options-general.php?page=iato-mcp&tab=diagnostics' ) ); ?>"><?php esc_html_e( 'See Diagnostics', 'iato-mcp' ); ?></a>
+			</p>
+		</div>
+		<?php
+	}
+
+	/** Check the tables again and start the count of unsaved undo records over. */
+	public static function handle_repair_tables(): void {
+		check_admin_referer( 'iato_mcp_diag_repair_tables' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Unauthorized.', 'iato-mcp' ) );
+		}
+		IATO_MCP_Schema::repair();
+		IATO_MCP_Change_Receipt::clear_failures();
+		wp_safe_redirect( admin_url( 'options-general.php?page=iato-mcp&tab=diagnostics' ) );
+		exit;
 	}
 
 	/**

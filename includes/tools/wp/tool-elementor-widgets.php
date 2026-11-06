@@ -261,6 +261,10 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $decoded ) ) {
 			return $decoded;
 		}
+		$refusal = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( $post_id );
+		if ( null !== $refusal ) {
+			return IATO_MCP_Elementor_Adapter::tool_error( $refusal );
+		}
 		[ $elements, $raw ] = $decoded;
 		$previous_revision  = IATO_MCP_Elementor_Adapter::compute_revision( $raw );
 		$stored_elements    = $elements; // before the patch
@@ -277,6 +281,10 @@ IATO_MCP_Server::register_tool(
 		$applied = IATO_MCP_Elementor_Adapter::apply_rfc6902( $elements, $ops );
 		if ( is_wp_error( $applied ) ) {
 			return $applied;
+		}
+		$shape = IATO_MCP_Elementor_Adapter::tree_shape_error( IATO_MCP_Elementor_Adapter::force_arrays( $elements ) );
+		if ( null !== $shape ) {
+			return IATO_MCP_Elementor_Adapter::tool_error( $shape );
 		}
 
 		// Elementor Atomic (V4) elements the ops change: plain values are
@@ -319,6 +327,10 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::ok( $preview );
 		}
 
+		// 1.16.0: on a post with no elements yet, this write replaces the content
+		// visitors see, as update_elementor_data does.
+		[ $receipt_before, $receipt_field ] = IATO_MCP_Rollback::tree_receipt( $post_id, (string) $raw, false, 'elementor:document:patch' );
+
 		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline(
 			$post_id,
 			$elements,
@@ -329,6 +341,7 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $pipeline ) ) {
 			return IATO_MCP_Elementor_Adapter::tool_error( $pipeline );
 		}
+		$receipt_before = IATO_MCP_Rollback::envelope_with_content_after( $receipt_before, (string) get_post_field( 'post_content', $post_id ) );
 
 		$response = [
 			'post_id'             => $post_id,
@@ -351,17 +364,11 @@ IATO_MCP_Server::register_tool(
 		$receipt = IATO_MCP_Change_Receipt::record(
 			$post_id,
 			'elementor_widget',
-			'elementor:document:patch',
-			$raw,
+			$receipt_field,
+			$receipt_before,
 			$pipeline['current_revision']
 		);
-		$response['change_receipt'] = [
-			'change_id'   => $receipt['change_id'],
-			'target_type' => $receipt['target_type'],
-			'field'       => $receipt['field'],
-			'applied_at'  => $receipt['applied_at'],
-			'actor'       => $receipt['actor'] ?? null,
-		];
+		$response['change_receipt'] = IATO_MCP_Change_Receipt::slim( $receipt );
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'update_elementor_patch', $key, $args, $response );
 		return IATO_MCP_Server::ok( $response );

@@ -60,15 +60,46 @@ namespace Elementor {
 			return '<h2>frontend fallback render</h2>';
 		}
 	}
+	/** Elementor's text version of a page (includes/db.php). */
+	final class FakeDb {
+		/** @var 'ok'|'throw' */
+		public static string $mode = 'ok';
+		public static string $text = 'the text of the page';
+		public static ?array $rendered = null;
+		public function get_plain_text( int $id ): string { return $this->render( null ); }
+		public function get_plain_text_from_data( array $data ): string { return $this->render( $data ); }
+		private function render( ?array $data ): string {
+			self::$rendered = $data;
+			ob_start(); // Elementor's own unguarded ob_start()
+			if ( 'throw' === self::$mode ) {
+				throw new \RuntimeException( 'a widget failed' );
+			}
+			ob_end_clean();
+			return self::$text;
+		}
+	}
+	final class FakeDynamicTags {
+		public string $mode = 'all';
+		public function get_parsing_mode(): string { return $this->mode; }
+		public function set_parsing_mode( string $mode ): void { $this->mode = $mode; }
+	}
 	final class Plugin {
 		public static ?Plugin $instance = null;
 		public FakeDocuments $documents;
 		public FakeFilesManager $files_manager;
 		public FakeFrontend $frontend;
-		public function __construct() { $this->documents = new FakeDocuments(); $this->files_manager = new FakeFilesManager(); $this->frontend = new FakeFrontend(); }
+		public FakeDb $db;
+		public FakeDynamicTags $dynamic_tags;
+		public function __construct() { $this->db = new FakeDb(); $this->dynamic_tags = new FakeDynamicTags(); $this->documents = new FakeDocuments(); $this->files_manager = new FakeFilesManager(); $this->frontend = new FakeFrontend(); }
 		public static function instance(): Plugin { return self::$instance ??= new Plugin(); }
 	}
 	Plugin::$instance = Plugin::instance();
+}
+
+namespace Elementor\Core\DynamicTags {
+	final class Manager {
+		public const MODE_REMOVE = 'remove';
+	}
 }
 
 // Elementor's per-post CSS file, the calls IATO_MCP_Cache makes.
@@ -137,6 +168,9 @@ namespace {
 	}
 	if ( ! function_exists( 'wp_slash' ) ) {
 		function wp_slash( mixed $v ): mixed { return is_array( $v ) ? array_map( 'wp_slash', $v ) : ( is_string( $v ) ? addslashes( $v ) : $v ); }
+	}
+	if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+		function wp_strip_all_tags( string $text ): string { return trim( strip_tags( $text ) ); }
 	}
 	if ( ! function_exists( 'wp_update_post' ) ) {
 		function wp_update_post( array $postarr ): int { IATO_Test_WP::$posts[ $postarr['ID'] ]['post_content'] = stripslashes( (string) ( $postarr['post_content'] ?? '' ) ); return $postarr['ID']; } // core unslashes

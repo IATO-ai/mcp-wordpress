@@ -333,6 +333,50 @@ finally:
         del_opt('iato_mcp_key_owner')
 record('key owner restored', opt('iato_mcp_key_owner') == owner_before, (owner_before, opt('iato_mcp_key_owner')))
 
+
+# ── 1.16.0: a stripped <style> no longer shows as text ─────────────────────
+print('# whole style and script elements are removed')
+CASES = [
+    ('a closed style block', '<p>Keep A</p><style>.iato-x{color:red}</style><p>Keep B</p>', ['Keep A', 'Keep B'], ['iato-x', 'color:red', '<style'], False),
+    ('upper case with attributes', '<STYLE TYPE="text/css">.iato-y{margin:0}</STYLE><p>Keep</p>', ['Keep'], ['iato-y', 'margin:0'], False),
+    ('a script', '<p>Keep</p><script>alert(116)</script>', ['Keep'], ['alert(116)', '<script'], False),
+    ('a script with a closing tag in a string', '<script>var a = "<\\/script>";</script><p>Keep</p>', ['Keep'], ['var a', '<script'], False),
+    ('markup inside style', '<style><img src=x onerror=alert(1)></style><p>Keep</p>', ['Keep'], ['onerror', '<img'], False),
+    ('a tag rebuilt by removing a block', '<scr<style>a{}</style>ipt>alert(2)</script><p>Keep</p>', ['Keep'], ['<script'], None),
+    ('a lookalike in an attribute is not a block', '<img alt="<style>x</style>" src="https://example.com/y.png"><p>Keep</p>', ['Keep', 'y.png'], ['onerror'], False),
+    ('an unclosed block stays as text, and the report says so', '<p>Keep</p><style>.iato-z{color:blue}', ['Keep', 'iato-z'], ['<style'], True),
+]
+for label, html, present, absent, note in CASES:
+    r = call('key', 'update_elementor_widget', {'id': PAGE, 'widget_id': HTML, 'settings_patch': {'html': html}})
+    stored = widget(meta(), HTML)['settings']['html']
+    missing = [p for p in present if p not in stored]
+    leaked = [a for a in absent if a in stored]
+    record(f'Elementor widget, {label}', not missing and not leaked and not r.get('isError'), {'stored': stored, 'r': r})
+    if note is not None:
+        entry = next((e for e in r.get('sanitized_report', []) if 'html' in e.get('path', '')), {})
+        record(f'the report, {label}', ('visible text' in entry.get('note', '')) is note, entry)
+
+PLAIN_POST = call('key', 'create_post', {'title': 'sanitize-live style', 'status': 'draft', 'content': '<p>Made</p><style>.iato-c{color:red}</style><script>alert(3)</script>'})
+PID = PLAIN_POST.get('id') or PLAIN_POST.get('post_id')
+c = wp('post', 'get', str(PID), '--field=post_content')
+record('create_post: the content keeps only the text', 'Made' in c and 'iato-c' not in c and 'alert(3)' not in c, c)
+record('create_post: no notice about visible text', 'visible text' not in json.dumps(PLAIN_POST), PLAIN_POST)
+up = call('key', 'update_post', {'id': PID, 'content': '<p>Edited</p><style>.iato-u{color:red}</style>'})
+c = wp('post', 'get', str(PID), '--field=post_content')
+record('update_post: the same', 'Edited' in c and 'iato-u' not in c, c)
+wp('post', 'delete', str(PID), '--force')
+PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg=='
+m = call('key', 'create_media', {'source': {'type': 'base64', 'data': PNG}, 'filename': 'sanitize-live.png', 'mime_type': 'image/png', 'description': '<p>Described</p><style>.iato-m{color:red}</style>'})
+mid = m.get('id') or m.get('attachment_id')
+c = wp('post', 'get', str(mid), '--field=post_content')
+record('create_media: the description keeps only the text', 'Described' in c and 'iato-m' not in c, {'content': c, 'r': m})
+wp('post', 'delete', str(mid), '--force')
+
+# The frontend fallback in step 5 writes post_content when Elementor's save left it unchanged.
+call('key', 'update_elementor_widget', {'id': PAGE, 'widget_id': H, 'settings_patch': {'align': 'center'}})
+c = wp('post', 'get', str(PAGE), '--field=post_content')
+record('post_content holds no inline CSS after a layout-only edit', '<style' not in c and '{' not in c.split('<p')[0] and '.elementor-' not in c, c[:300])
+
 print(f'\n# {passes} passed, {len(fails)} failed')
 if fails:
     print('# failed: ' + '; '.join(fails))
