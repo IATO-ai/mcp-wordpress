@@ -30,6 +30,8 @@ delete_option( 'iato_mcp_redirects' );
 delete_option( 'iato_mcp_api_key_valid' );
 delete_option( 'iato_mcp_db_version' );
 delete_option( 'iato_mcp_schema_version' );
+delete_option( 'iato_mcp_schema_health' );
+delete_option( 'iato_mcp_receipt_failures' );
 delete_option( 'iato_mcp_receipt_prune_last' );
 wp_clear_scheduled_hook( 'iato_mcp_prune_receipts' );
 wp_clear_scheduled_hook( 'iato_mcp_element_cache_sweep' );

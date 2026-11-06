@@ -37,11 +37,14 @@ IATO_MCP_Server::register_tool(
 		if ( ! $post_id ) {
 			return new WP_Error( 'missing_id', 'id is required.' );
 		}
-		if ( ! get_post( $post_id ) ) {
+		$post = get_post( $post_id );
+		if ( ! $post ) {
 			return new WP_Error( 'not_found', 'Post not found.' );
 		}
 
-		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
+		// Reading a revision's meta is how old Elementor data is found. Writes refuse
+		// revisions (require_cap), so this asks about the post it belongs to.
+		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', 'revision' === ( $post->post_type ?? '' ) ? (int) $post->post_parent : $post_id );
 		if ( is_wp_error( $object_check ) ) {
 			return $object_check;
 		}
@@ -167,6 +170,10 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $elementor_policy ) ) {
 			return $elementor_policy;
 		}
+		$stored_key = IATO_MCP_Meta_Policy::check_stored_key( $post_id, $key );
+		if ( is_wp_error( $stored_key ) ) {
+			return $stored_key;
+		}
 		// Keys that change site structure (Elementor's template type) need an
 		// administrator, beyond edit_post on the post (1.13.0).
 		$key_cap = IATO_MCP_Meta_Policy::capability_for_key( $key );
@@ -183,6 +190,16 @@ IATO_MCP_Server::register_tool(
 
 		$after_raw = $args['value'] ?? null;
 		$delete    = array_key_exists( 'value', $args ) && null === $after_raw;
+
+		// 1.16.0: turning Elementor on for a page with Elementor data leaves its
+		// content to be replaced by the next write, with no way back. Elementor
+		// treats any truthy value as on. update_elementor_data can do this safely.
+		if ( '_elementor_edit_mode' === strtolower( $key ) && (bool) $after_raw ) {
+			$refusal = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( $post_id );
+			if ( null !== $refusal ) {
+				return IATO_MCP_Elementor_Adapter::tool_error( $refusal );
+			}
+		}
 
 		// Sanitise the after-value by type. Strings get sanitize_text_field;
 		// arrays/objects pass through (update_post_meta serialises them), except

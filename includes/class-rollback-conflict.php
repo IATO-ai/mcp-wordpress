@@ -89,7 +89,10 @@ class IATO_MCP_Rollback_Conflict {
 				if ( ! get_post( $post_id ) ) {
 					return self::unverifiable( 'the post no longer exists' );
 				}
-				return self::compare( get_post_meta( $post_id, $field, true ), $after, "meta {$field}" );
+				$outcome = self::compare( get_post_meta( $post_id, $field, true ), $after, "meta {$field}" );
+				return 'match' === $outcome['status'] && '_elementor_edit_mode' === $field && ! empty( $receipt['before_value'] )
+					? self::elementor_back_on( $receipt, $post_id, $outcome )
+					: $outcome;
 
 			case 'elementor_widget':
 				// The receipt's after value is the revision hash of the tree the
@@ -97,8 +100,19 @@ class IATO_MCP_Rollback_Conflict {
 				if ( ! get_post( $post_id ) ) {
 					return self::unverifiable( 'the post no longer exists' );
 				}
-				$raw = IATO_MCP_Elementor_Adapter::stored_raw( $post_id );
-				return self::compare( IATO_MCP_Elementor_Adapter::compute_revision( $raw ), $after, 'Elementor revision' );
+				$raw     = IATO_MCP_Elementor_Adapter::stored_raw( $post_id );
+				$outcome = self::compare( IATO_MCP_Elementor_Adapter::compute_revision( $raw ), $after, 'Elementor revision' );
+				// 1.16.0: rollback would overwrite post_content here, so an edit made
+				// since (back in the WordPress editor) is a conflict too. Content that is
+				// Elementor's own text of the current tree was not edited by hand.
+				$envelope = IATO_MCP_Rollback::no_elementor_from( $receipt['before_value'] ?? null );
+				if ( 'match' === $outcome['status'] && isset( $envelope['content_after_sha256'] ) ) {
+					$now = (string) get_post_field( 'post_content', $post_id );
+					if ( hash( 'sha256', $now ) !== $envelope['content_after_sha256'] && true !== IATO_MCP_Elementor_Adapter::content_is_elementor_text( $post_id, $now ) ) {
+						return [ 'status' => 'conflict', 'reason' => 'the post content has changed since this change was made' ];
+					}
+				}
+				return $outcome;
 
 			case 'elementor_atomic':
 				// 1.14.0: one atomic element's settings.
@@ -432,6 +446,24 @@ class IATO_MCP_Rollback_Conflict {
 	}
 
 	/** Receipt applied_at as stored (UTC "Y-m-d H:i:s"); tolerates an ISO 8601 value. */
+	/**
+	 * Rolling back "Elementor turned off" turns it on again (1.16.0). If the post was
+	 * edited since, visitors would stop seeing that edit and the next Elementor write
+	 * would replace it. Meta writes do not touch the modified time.
+	 */
+	private static function elementor_back_on( array $receipt, int $post_id, array $outcome ): array {
+		if ( 'inactive_tree' !== IATO_MCP_Elementor_Adapter::builder_state( $post_id ) ) {
+			return $outcome;
+		}
+		$post     = get_post( $post_id );
+		$applied  = (string) ( $receipt['applied_at'] ?? '' );
+		$modified = (string) ( $post->post_modified_gmt ?? '' );
+		if ( '' === $applied || '' === $modified || strcmp( $modified, self::mysql_utc( $applied ) ) <= 0 ) {
+			return $outcome;
+		}
+		return [ 'status' => 'conflict', 'reason' => 'the post was edited after Elementor was turned off, and turning it back on would hide that edit from visitors' ];
+	}
+
 	private static function mysql_utc( string $when ): string {
 		if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $when ) ) {
 			return $when;

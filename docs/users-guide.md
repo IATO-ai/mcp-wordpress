@@ -21,8 +21,9 @@
 6. [SEO Plugin Support](#seo-plugin-support)
 7. [Dry-Run Mode](#dry-run-mode)
 8. [Undoing Changes](#undoing-changes)
-9. [Example Prompts](#example-prompts)
-10. [Troubleshooting](#troubleshooting)
+9. [Pages Sent Back to the WordPress Editor](#pages-sent-back-to-the-wordpress-editor)
+10. [Example Prompts](#example-prompts)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -119,7 +120,7 @@ Navigate to **Settings → IATO MCP** in your WordPress admin.
 
 Content written through MCP is filtered the way WordPress filters a non-administrator's: scripts, event handlers and embeds are removed from post content and from Elementor widgets, whatever the role of the user behind the credential. Elementor edits report `sanitized: true`, the setting paths that were changed, and a `sanitized_report` naming the tags and attributes removed from each value, so the AI client can tell you what was removed; dry runs report the same. Only the values a request changes are filtered; content a person authored in other widgets on the same page stays as it is. If you need raw HTML through MCP, a developer can enable it for Application Password users with the `iato_mcp_allow_unfiltered_html` filter.
 
-`<style>` and `<svg>` are removed like any other disallowed tag, and a removed style block's CSS stays on the page as visible text, which the report warns about. To keep them in Elementor HTML widgets, turn on **Allow inline SVG and style blocks in HTML widgets for administrators** (see [Caching and HTML widgets](#caching-and-html-widgets)).
+`<style>` and `<script>` elements are removed whole, contents included, on WordPress 6.5 or later. `<svg>` is removed like any other disallowed tag. If CSS or a script's text would still stay on the page, for example from an unclosed `<style>` tag, the report warns about it. To keep them in Elementor HTML widgets, turn on **Allow inline SVG and style blocks in HTML widgets for administrators** (see [Caching and HTML widgets](#caching-and-html-widgets)).
 
 The generic `update_post_meta` tool cannot write Elementor's own data (`_elementor_data`, caches, CSS); the Elementor tools are the way to edit pages, and the error says which one to use.
 
@@ -137,7 +138,7 @@ The API key is validated against the IATO API when you save settings. A green "C
 ### Caching and HTML widgets
 
 - **Purge page caches after changes** (on by default). After each change made through MCP, IATO purges the cache plugins it finds: LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache and SiteGround Optimizer. See [Page Caches](#page-caches).
-- **Allow inline SVG and style blocks in HTML widgets for administrators** (off by default, WordPress 6.5 or later). The `html` setting of an Elementor HTML widget keeps `<style>` and these SVG elements: `svg`, `g`, `path`, `rect`, `circle`, `line`, `polyline`, `polygon`, `title`. It applies only when the connection's WordPress user holds both `unfiltered_html` and `manage_options`, on any kind of connection. It does not grant `unfiltered_html`, and every other value stays filtered. Still removed: `<script>`, event attributes, `javascript:` URLs, `foreignObject`, `use`, `image` and animation elements, and from style blocks `@import` and anything that loads from another site. A style block that can't be read safely, for example one with an unterminated `url()` or a character reference such as `&#105;`, is dropped whole, and `removed_css` says why.
+- **Allow inline SVG and style blocks in HTML widgets for administrators** (off by default, WordPress 6.5 or later). The `html` setting of an Elementor HTML widget keeps `<style>` and these SVG elements: `svg`, `g`, `path`, `rect`, `circle`, `line`, `polyline`, `polygon`, `title`. It applies only when the connection's WordPress user holds both `unfiltered_html` and `manage_options`, on any kind of connection. It does not grant `unfiltered_html`, and every other value stays filtered. Still removed: `<script>`, event attributes, `javascript:` URLs, `foreignObject`, `use`, `image` and animation elements, and from style blocks `@import` and anything that loads from another site. A style block that can't be read safely, for example one with an unterminated `url()`, a character reference such as `&#105;`, or text that names another site (even in a `//` comment), is dropped whole, and `removed_css` says why.
 
 ### Tool Toggles
 
@@ -519,14 +520,9 @@ Editing a page clears and rebuilds only that page's Elementor CSS, whichever set
 
 Write operations that modify external data support `dry_run: true`. When enabled, the tool returns a preview of what *would* change without actually making any modifications.
 
-**Tools supporting dry-run:**
+Every tool that writes accepts it, and a tool that cannot preview refuses the flag with `dry_run_unsupported` instead of running.
 
-| Tool | What it previews |
-|------|-----------------|
-| `update_menu_item` | Menu item that would be added |
-| `update_elementor_data` | Whether the supplied JSON is valid and would be written |
-
-Dry-run responses always include `"dry_run": true` and show actions like `"would_update"` instead of executing the write.
+Dry-run responses always include `"dry_run": true`, and an `action` such as `"would_update"`, `"would_create"`, `"would_delete"` or `"no_change"`. A preview runs the same checks as the real call, so it refuses what the real call would refuse. Updates list each field's before and after values in `would_change`. `not_checked` names what only a real write can reveal, such as another plugin's filter changing the value on save.
 
 ---
 
@@ -536,9 +532,22 @@ Every write tool returns a `change_receipt` with a `change_id`. Pass it to the `
 
 - **Who can undo a change.** The user who made it, or an administrator. An Editor cannot undo an Author's change, even on a post the Editor may edit. Changes recorded before version 1.13.0 keep the earlier rule: anyone allowed to edit the object.
 - **Changes that were changed again.** If the value is no longer what the change left behind, because someone edited it afterwards in WordPress or another change came later, `rollback` refuses with `rollback_conflict` and shows the current and expected values. Undo the later change first, or pass `force: true` to overwrite it.
+- **If a change cannot be undone.** A response with `"stored": false` and no `change_id` means the change was applied but its undo record could not be saved. Settings > IATO MCP > Diagnostics shows what went wrong and can check the plugin's database tables again.
 - **Checking first.** `dry_run: true` reports what would be restored and whether the value has changed since, without writing anything.
 - **Site settings.** Each option `update_site_settings` changed has its own receipt. A page that is no longer published cannot be restored as the front page or posts page.
 - **Elementor pages.** Elementor edits made with 1.13.0 or later can be undone exactly for 90 days, including content a person added elsewhere on the page. Each receipt keeps a copy of the page as it was, and a daily cleanup removes copies older than 90 days to keep the database small; the receipt itself stays. Older edits, and edits made with versions before 1.13.0, are restored in Elementor under History, then Revisions. Settings > IATO MCP Diagnostics shows when the cleanup last ran. A developer can change the period with the `iato_mcp_receipt_retention_days` filter (0 keeps every copy).
+
+---
+
+## Pages Sent Back to the WordPress Editor
+
+Elementor's **Back to WordPress Editor** button turns Elementor off for a page but keeps its old layout, and visitors see the page's normal content. An Elementor edit would replace that content, so Elementor write tools refuse these pages with `elementor_not_active`, and `get_page_builder` reports them with `elementor_tree_present: true`.
+
+To switch such a page to Elementor, call `update_elementor_data` with `activate_builder: true`. Try it with `dry_run: true` first. `rollback` then puts back the content, the setting and the old layout. If someone edited the content after the switch, `rollback` reports a conflict rather than overwriting the edit.
+
+A new page with no layout needs none of this: `update_elementor_data` turns Elementor on for it.
+
+Rollback also restores the content when the page had no elements yet and Elementor's flag was already on, which is what opening the Elementor editor and leaving without saving does. Rolling back a change that turned Elementor off is a conflict if the page was edited since, because turning it back on would hide that edit; `force: true` still does it.
 
 ---
 

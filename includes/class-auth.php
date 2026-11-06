@@ -534,6 +534,81 @@ class IATO_MCP_Auth {
 	}
 
 	/**
+	 * Whether this request's user holds unfiltered_html, looking past the kses lock
+	 * that hides it for the rest of the request (the unbound site key passes, as it does
+	 * every check).
+	 */
+	public static function holds_unfiltered_html(): bool {
+		return (bool) self::write_unlocked( static fn() => ! is_wp_error( self::require_cap( 'unfiltered_html' ) ) );
+	}
+
+	/** The post columns WordPress's save filters rewrite. */
+	private const TEXT_COLUMNS = [ 'post_title', 'post_content', 'post_excerpt', 'post_content_filtered' ];
+
+	/**
+	 * Run a write that saves $post_id, with its text columns left as they are given
+	 * (1.16.0). wp_update_post() hands back every stored column and runs them all through
+	 * the save filters, and the kses lock keeps those on, so changing a title removed
+	 * iframes and scripts from the content, with no receipt and no report.
+	 *
+	 * Only this post and the revision a save makes of it: a save can start others (a menu
+	 * item for a newly published page, another plugin's hook), and those keep their own
+	 * values.
+	 *
+	 * @param callable $write    The write.
+	 * @param string[] $named    Columns the write means to change: these stay filtered.
+	 * @param bool     $verbatim Filters none of them, and allows a post left empty: a
+	 *                           rollback puts back what the database held.
+	 * @return mixed What $write returns.
+	 */
+	public static function keeping_post_columns( int $post_id, callable $write, array $named = [], bool $verbatim = false ): mixed {
+		// wp_insert_post() takes an object too, and passes on what it was given.
+		$keep = static function ( array $data, mixed $postarr = [], mixed $given = [] ) use ( $post_id, $named, $verbatim ): array {
+			$postarr     = (array) $postarr;
+			$given       = (array) $given;
+			$is_revision = 'revision' === ( $postarr['post_type'] ?? '' ) && (int) ( $postarr['post_parent'] ?? 0 ) === $post_id;
+			if ( $is_revision || (int) ( $postarr['ID'] ?? 0 ) === $post_id ) {
+				foreach ( self::TEXT_COLUMNS as $column ) {
+					if ( ( $is_revision || $verbatim || ! in_array( $column, $named, true ) ) && array_key_exists( $column, $given ) ) {
+						$data[ $column ] = (string) $given[ $column ]; // Slashed, as $data is. Never null: the columns refuse it.
+					}
+				}
+			}
+			return $data;
+		};
+		// WordPress decides a post is empty from the filtered text, so a post holding only
+		// an iframe would be refused by a call that does not touch its text.
+		$allow_empty = static fn( mixed $is_empty, mixed $postarr = [] ): mixed => (int) ( ( (array) $postarr )['ID'] ?? 0 ) === $post_id ? false : $is_empty;
+		$no_text     = $verbatim || [] === array_intersect( $named, self::TEXT_COLUMNS );
+		add_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX, 3 );
+		add_filter( 'wp_insert_attachment_data', $keep, PHP_INT_MAX, 3 );
+		if ( $no_text ) {
+			add_filter( 'wp_insert_post_empty_content', $allow_empty, PHP_INT_MAX, 2 );
+		}
+		try {
+			return $write();
+		} finally {
+			remove_filter( 'wp_insert_post_data', $keep, PHP_INT_MAX );
+			remove_filter( 'wp_insert_attachment_data', $keep, PHP_INT_MAX );
+			if ( $no_text ) {
+				remove_filter( 'wp_insert_post_empty_content', $allow_empty, PHP_INT_MAX );
+			}
+		}
+	}
+
+	/**
+	 * wp_update_post() for the columns named, with the others left as stored.
+	 *
+	 * @param array $fields   ID and the post columns to write, unslashed.
+	 * @param bool  $verbatim See keeping_post_columns().
+	 * @return int|WP_Error The post ID, as wp_update_post() returns it.
+	 */
+	public static function update_post_fields( array $fields, bool $verbatim = false ): int|WP_Error {
+		// Slashed: wp_update_post() unslashes, which would strip every backslash.
+		return self::keeping_post_columns( (int) $fields['ID'], static fn() => wp_update_post( wp_slash( $fields ), true ), array_keys( $fields ), $verbatim );
+	}
+
+	/**
 	 * Assert the current request has permission for the given capability.
 	 *
 	 * Capability model (v1.10.0, token binding v1.12, OAuth tokens v1.13):
@@ -559,6 +634,17 @@ class IATO_MCP_Auth {
 				/* translators: %s: WordPress capability string */
 				sprintf( __( 'You do not have the required capability: %s', 'iato-mcp' ), $cap ),
 				[ 'status' => 403 ]
+			);
+		}
+
+		// 1.16.0: WordPress sends meta written to a revision to its parent, so a write
+		// naming a revision would change a post that no check here looked at, and some
+		// of what Elementor's flag and tree protect. Before the site key's pass below.
+		if ( in_array( $cap, [ 'edit_post', 'delete_post' ], true ) && isset( $args[0] ) && function_exists( 'get_post_type' ) && 'revision' === get_post_type( (int) $args[0] ) ) {
+			return new WP_Error(
+				'revision_target',
+				sprintf( 'Post %d is a revision, which cannot be edited. Use its parent post instead. Nothing was written.', (int) $args[0] ),
+				[ 'status' => 400 ]
 			);
 		}
 

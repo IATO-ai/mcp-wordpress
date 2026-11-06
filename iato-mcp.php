@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.15.1
+ * Version:     1.16.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.15.1' );
+define( 'IATO_MCP_VERSION', '1.16.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -198,6 +198,9 @@ function iato_mcp_maybe_run_migrations() {
 	// table change. Each step is idempotent; a failing step stops the run and
 	// is retried on the next request. See includes/class-schema.php.
 	IATO_MCP_Schema::run();
+	// 1.16.0: a site with a table problem retries the repair, at most hourly.
+	// Healthy sites have no health option and do no work here.
+	IATO_MCP_Schema::maybe_repair();
 
 	if ( version_compare( $db_version, IATO_MCP_VERSION, '<' ) ) {
 		update_option( 'iato_mcp_db_version', IATO_MCP_VERSION, false );
@@ -304,7 +307,8 @@ END_UNIVERSAL;
 	if ( null !== $primary_builder ) {
 		$port_step = $builders['elementor']
 			? '   3. Create the new post with create_post, then port the reference'
-				. "\n      structure via update_elementor_data on the new post ID."
+				. "\n      structure via update_elementor_data on the new post ID. That call"
+				. "\n      turns Elementor on for the post."
 			: '   3. Create the new post with create_post. ' . $primary_builder
 				. ' content cannot'
 				. "\n      currently be written via MCP — surface this to the user and"
@@ -336,6 +340,12 @@ When get_page_builder returns 'elementor':
   4. Always pass if_revision to prevent write conflicts
   5. Always use dry_run=true before committing
   6. update_post is only permitted for: status, title, excerpt
+
+When get_page_builder returns elementor_tree_present: true, the page holds
+Elementor data but Elementor is turned off for it, so visitors see its
+post_content. Elementor writes are refused there. Ask the user before calling
+update_elementor_data with activate_builder: true, which switches the page to
+Elementor and replaces that content. Rollback restores it.
 END_ELEMENTOR;
 	}
 
@@ -484,7 +494,7 @@ function iato_mcp_page_builder_notice( string $context = 'create' ): ?string {
 		if ( 'update' === $context ) {
 			return "This site uses Elementor. update_post's content field will NOT change what visitors see on this post — Elementor renders from _elementor_data, not post_content. Use update_elementor_widget for single-widget edits, or update_elementor_data for full-document replacements. If you intended to write fresh content, ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and apply it via update_elementor_data.";
 		}
-		return "This site uses Elementor. The post was created with plain HTML in post_content and will not match your site's existing post format. Recommended: ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and call update_elementor_data on this new post to match.";
+		return "This site uses Elementor. The post was created with plain HTML in post_content and will not match your site's existing post format. Recommended: ask the user for a reference post URL, fetch its structure via get_post + get_elementor_data, and call update_elementor_data on this new post to match. That call turns Elementor on for the post.";
 	}
 
 	$action_phrase = 'update' === $context ? 'updated with plain HTML' : 'created with plain HTML';
@@ -503,6 +513,7 @@ function iato_mcp_activate() {
 	// Fresh installs run every schema step (which creates the tables);
 	// reactivations run only the steps the site has not seen.
 	IATO_MCP_Schema::run();
+	IATO_MCP_Schema::maybe_repair( true );
 	update_option( 'iato_mcp_show_wizard', true );
 
 	// Clear stale suggestion generation transients so a fresh install/update

@@ -984,13 +984,49 @@ class IATO_MCP_Elementor_Adapter {
 		?array $stored_elements = null,
 		array $opts = []
 	): array|WP_Error {
+		// Elementor's save and the render below replace post_content: every save they
+		// make would otherwise also filter the title and excerpt (1.16.0).
+		return IATO_MCP_Auth::keeping_post_columns(
+			$post_id,
+			fn() => self::run_write_pipeline( $post_id, $decoded_elements, $previous_revision, $stored_elements, $opts ),
+			[ 'post_content' ]
+		);
+	}
+
+	/** See write_pipeline(). */
+	private static function run_write_pipeline(
+		int $post_id,
+		array $decoded_elements,
+		string $previous_revision,
+		?array $stored_elements,
+		array $opts
+	): array|WP_Error {
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error( 'not_found', "Post {$post_id} not found." );
 		}
 
+		// 1.16.0: Elementor's save replaces post_content, which on a page with
+		// Elementor turned off is what visitors see. Every tool checks this before
+		// its dry run; this is the backstop for anything that reaches the save.
+		if ( empty( $opts['set_builder_mode'] ) ) {
+			$refusal = self::inactive_tree_refusal( $post_id );
+			if ( null !== $refusal ) {
+				return $refusal;
+			}
+		}
+
 		$old_content      = (string) get_post_field( 'post_content', $post_id );
 		$decoded_elements = self::force_arrays( $decoded_elements );
+
+		// 1.16.0: the tools check this before their dry runs; this is the backstop. A
+		// rollback puts back what was stored, whatever that was.
+		if ( empty( $opts['verbatim'] ) ) {
+			$shape = self::tree_shape_error( $decoded_elements );
+			if ( null !== $shape ) {
+				return $shape;
+			}
+		}
 
 		// 0. Sanitise what the request changed (1.13.0). Every value that
 		// differs from the stored tree at the same element + path goes through
@@ -1154,6 +1190,15 @@ class IATO_MCP_Elementor_Adapter {
 			wp_cache_delete( $post_id, 'post_meta' );
 		}
 
+		// 1.16.0: only now, with the tree stored: a save refused above must not
+		// switch visitors to the old tree.
+		$builder_mode_set = false;
+		if ( ! empty( $opts['set_builder_mode'] ) ) {
+			self::write_elementor_meta( fn() => update_post_meta( $post_id, '_elementor_edit_mode', 'builder' ) );
+			wp_cache_delete( $post_id, 'post_meta' );
+			$builder_mode_set = true;
+		}
+
 		// 1.14.0: the tree is stored; the caller records its receipts now, so a
 		// failure in the steps below never leaves a live change without one.
 		if ( isset( $opts['on_written'] ) && is_callable( $opts['on_written'] ) ) {
@@ -1176,7 +1221,9 @@ class IATO_MCP_Elementor_Adapter {
 			try {
 				$frontend = \Elementor\Plugin::instance()->frontend;
 				if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
-					$rendered = $frontend->get_builder_content( $post_id, true );
+					// Without inline CSS: post_content is text for search and feeds, and
+					// kses would leave a style block's CSS in it as visible text (1.16.0).
+					$rendered = $frontend->get_builder_content( $post_id, false );
 					if ( ! empty( $rendered ) && $rendered !== $old_content ) {
 						IATO_MCP_Inline_Markup::write_without_style_in_content(
 							$encoded,
@@ -1235,6 +1282,9 @@ class IATO_MCP_Elementor_Adapter {
 			'elementor_save'      => $elementor_save,
 			'stored_by'           => $stored_by,
 		];
+		if ( $builder_mode_set ) {
+			$result['builder_mode_set'] = true;
+		}
 		if ( null !== $save_error ) {
 			$result['elementor_save_error'] = $save_error;
 		}
@@ -1758,8 +1808,223 @@ class IATO_MCP_Elementor_Adapter {
 		'atomic_library_alt_separate',
 		'elementor_cannot_edit',
 		'elementor_validation_failed',
+		'elementor_invalid_tree',
 		'elementor_editor_unsaved_changes',
+		// 1.16.0.
+		'elementor_not_active',
 	];
+
+	/** Post types whose classic content never shows; revisions follow their parent. */
+	private const NO_CLASSIC_CONTENT_POST_TYPES = [ 'elementor_library', 'e-floating-buttons', 'revision' ];
+
+	/**
+	 * Where a post stands with Elementor (1.16.0).
+	 *
+	 * "Back to WordPress Editor" clears Elementor's flag and keeps the elements, so
+	 * a post can hold both. Visitors then see post_content, which Elementor's save
+	 * replaces.
+	 *
+	 * @return string `active`: the flag is on (any truthy value, Elementor's own
+	 *                rule), or the post type never shows classic content.
+	 *                `no_tree`: flag off and no elements stored.
+	 *                `inactive_tree`: flag off with elements stored, or stored
+	 *                data that cannot be read, which is treated the same way.
+	 */
+	public static function builder_state( int $post_id ): string {
+		if ( (bool) get_post_meta( $post_id, '_elementor_edit_mode', true ) ) {
+			return 'active';
+		}
+		$post = get_post( $post_id );
+		if ( $post && in_array( (string) ( $post->post_type ?? '' ), self::NO_CLASSIC_CONTENT_POST_TYPES, true ) ) {
+			return 'active';
+		}
+		$raw = get_post_meta( $post_id, '_elementor_data', true );
+		if ( empty( $raw ) ) {
+			return 'no_tree';
+		}
+		$tree = is_array( $raw ) ? $raw : json_decode( (string) $raw, true );
+		return [] === $tree ? 'no_tree' : 'inactive_tree';
+	}
+
+	/**
+	 * A tree Elementor cannot render: storing one turns the page into an HTTP 500 for
+	 * every visitor, and Elementor's save reports nothing wrong (1.16.0). Limited to
+	 * what was seen to break it (checked on Elementor 4.3.5): an element with no id or
+	 * an unknown type, or elements with gaps in their numbering, render and stay
+	 * allowed, so old pages are not refused. It looks at the tree's shape, not at each
+	 * widget's settings: a setting of the wrong type can still break a page.
+	 *
+	 * @param array $tree The decoded tree, objects as arrays.
+	 * @return WP_Error|null WP_Error('elementor_invalid_tree'), with invalid_nodes.
+	 */
+	public static function tree_shape_error( array $tree ): ?WP_Error {
+		$problems = [];
+		// Numbered, with or without gaps: a tree is never an object with named keys,
+		// which is also what an envelope is (IATO_MCP_Rollback).
+		if ( [] !== array_filter( array_keys( $tree ), 'is_string' ) ) {
+			$problems[] = 'the tree is an object, not a list of elements';
+		} else {
+			self::collect_tree_problems( $tree, '', $problems );
+		}
+		if ( [] === $problems ) {
+			return null;
+		}
+		return new WP_Error(
+			'elementor_invalid_tree',
+			'This is not a valid Elementor element tree, and storing it would break the page for visitors. Nothing was written. Send a JSON array of elements, each with an elType, and a widgetType on widgets.',
+			[ 'invalid_nodes' => array_slice( $problems, 0, 10 ) ]
+		);
+	}
+
+	/** @param array $nodes A tree or an element's children. */
+	private static function collect_tree_problems( array $nodes, string $path, array &$problems ): void {
+		foreach ( $nodes as $i => $node ) {
+			$here = $path . '/' . $i;
+			if ( ! is_array( $node ) ) {
+				$problems[] = $here . ' is not an element';
+				continue;
+			}
+			if ( ! is_string( $node['elType'] ?? null ) || '' === $node['elType'] ) {
+				$problems[] = $here . ' has no elType';
+				continue;
+			}
+			if ( 'widget' === $node['elType'] && ( ! is_string( $node['widgetType'] ?? null ) || '' === $node['widgetType'] ) ) {
+				$problems[] = $here . ' is a widget with no widgetType';
+			}
+			if ( array_key_exists( 'settings', $node ) && ! is_array( $node['settings'] ) ) {
+				$problems[] = $here . ' has settings that are not an object';
+			}
+			if ( isset( $node['id'] ) && ! is_scalar( $node['id'] ) ) {
+				$problems[] = $here . ' has an id that is not a string';
+			}
+			if ( is_array( $node['elements'] ?? null ) ) {
+				self::collect_tree_problems( $node['elements'], $here . '/elements', $problems );
+			}
+		}
+	}
+
+	/**
+	 * Refuses an Elementor write to a post with Elementor turned off, whose
+	 * post_content the save would replace. A stored empty tree counts too: only
+	 * update_elementor_data can start a page from one, because it saves what it
+	 * replaces. A post with no Elementor data at all gets null, since the tools
+	 * that need data answer not_elementor themselves.
+	 */
+	public static function inactive_tree_refusal( int $post_id ): ?WP_Error {
+		if ( 'active' === self::builder_state( $post_id ) || empty( get_post_meta( $post_id, '_elementor_data', true ) ) ) {
+			return null;
+		}
+		$content = (string) get_post_field( 'post_content', $post_id );
+		$is_text = self::content_is_elementor_text( $post_id, $content );
+		$detail  = true === $is_text
+			? 'Its content is only Elementor\'s own text version of that data, so switching loses nothing written by hand.'
+			: 'Visitors see the post\'s own content, which an Elementor write would replace, so ask the user first.';
+		return new WP_Error(
+			'elementor_not_active',
+			"Post {$post_id} holds Elementor data, but Elementor is turned off for it. Nothing was written. {$detail} To switch it to Elementor, call update_elementor_data with activate_builder: true; rollback then restores the content, the setting and the old data.",
+			[
+				'status'                            => 409,
+				'post_id'                           => $post_id,
+				'content_chars'                     => strlen( $content ),
+				'content_is_elementor_text'         => $is_text,
+			]
+		);
+	}
+
+	/**
+	 * After a rollback puts a tree back directly, post_content still holds the text
+	 * of the tree it replaced, which search and feeds read. This brings it in line,
+	 * as Elementor's own save does. Elementor's page output comes from the tree, so
+	 * visitors are unaffected either way, and a failure is only a note.
+	 *
+	 * Skipped when Elementor is off (post_content is what visitors see) or the page
+	 * holds elements Elementor cannot load, whose text would go missing.
+	 *
+	 * @param array|null $elements the tree a dry run would restore; null after the
+	 *                             real restore, when it is the stored one
+	 * @return array{content_refreshed?:true,would_refresh_content?:true,content_note?:string}
+	 */
+	public static function refresh_post_content( int $post_id, ?array $elements = null ): array {
+		$dry_run = null !== $elements;
+		$tree    = $elements ?? self::stored_elements( $post_id ) ?? [];
+		if ( 'active' !== self::builder_state( $post_id ) || ! empty( self::unregistered_element_types( $tree ) ) ) {
+			return [];
+		}
+		$text = self::plain_text_of( $post_id, $elements );
+		if ( null === $text ) {
+			return class_exists( '\Elementor\Plugin' ) ? [ 'content_note' => 'The page was restored, but its post_content could not be brought up to date. Search and feeds may show the older text until the page is next saved.' ] : [];
+		}
+		if ( $text === (string) get_post_field( 'post_content', $post_id ) ) {
+			return [];
+		}
+		if ( $dry_run ) {
+			return [ 'would_refresh_content' => true ];
+		}
+		try {
+			$result = IATO_MCP_Inline_Markup::write_without_style_in_content(
+				(string) wp_json_encode( $tree ),
+				fn() => IATO_MCP_Auth::write_unlocked( fn() => IATO_MCP_Auth::update_post_fields( [ 'ID' => $post_id, 'post_content' => $text ] ) )
+			);
+		} catch ( \Throwable $e ) {
+			$result = new WP_Error( 'refresh_failed', $e->getMessage() );
+		}
+		if ( is_wp_error( $result ) || empty( $result ) ) {
+			return [ 'content_note' => 'The page was restored, but its post_content could not be brought up to date. Search and feeds may show the older text until the page is next saved.' ];
+		}
+		wp_cache_delete( $post_id, 'posts' );
+		return [ 'content_refreshed' => true ];
+	}
+
+	/**
+	 * Is this content only Elementor's text version of the post's own data? Then
+	 * nothing written by hand is at stake (a page from before 1.16.0, when
+	 * update_elementor_data did not turn Elementor on). Used for wording only, never
+	 * to let a write through. Null when it cannot be told.
+	 */
+	public static function content_is_elementor_text( int $post_id, string $content ): ?bool {
+		if ( '' === trim( $content ) ) {
+			return true;
+		}
+		$text = self::plain_text_of( $post_id );
+		if ( null === $text ) {
+			return null;
+		}
+		$visible = static fn( string $html ): string => trim( (string) preg_replace( '/\s+/u', ' ', html_entity_decode( wp_strip_all_tags( $html ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
+		return $visible( $content ) === $visible( $text );
+	}
+
+	/**
+	 * Elementor's text version of a post's elements, or null when it cannot be
+	 * had. Elementor's save_plain_text() hides errors and can leave an output buffer
+	 * open when a widget throws, which would corrupt the JSON response, so the
+	 * parsing mode and the buffers are restored here whatever happens.
+	 *
+	 * @param array|null $elements a tree to render instead of the stored one
+	 */
+	public static function plain_text_of( int $post_id, ?array $elements = null ): ?string {
+		if ( ! class_exists( '\Elementor\Plugin' ) || empty( \Elementor\Plugin::$instance->db ) ) {
+			return null;
+		}
+		$plugin = \Elementor\Plugin::$instance;
+		$tags   = $plugin->dynamic_tags ?? null;
+		$mode   = null;
+		$level  = ob_get_level();
+		try {
+			if ( $tags && class_exists( '\Elementor\Core\DynamicTags\Manager' ) ) {
+				$mode = $tags->get_parsing_mode();
+				$tags->set_parsing_mode( \Elementor\Core\DynamicTags\Manager::MODE_REMOVE );
+			}
+			$text = null === $elements ? $plugin->db->get_plain_text( $post_id ) : $plugin->db->get_plain_text_from_data( $elements );
+			return is_string( $text ) ? $text : null;
+		} catch ( \Throwable $e ) {
+			return null;
+		} finally {
+			IATO_MCP_Server::close_buffers( $level );
+			if ( null !== $mode ) {
+				$tags->set_parsing_mode( $mode );
+			}
+		}
+	}
 
 	/**
 	 * Tool-level form of the atomic refusals: an isError result whose text is
@@ -1802,6 +2067,9 @@ class IATO_MCP_Elementor_Adapter {
 	 */
 	public static function pipeline_report( array $pipeline ): array {
 		$out = [ 'elementor_save' => $pipeline['elementor_save'] ?? null, 'stored_by' => $pipeline['stored_by'] ?? null ];
+		if ( ! empty( $pipeline['builder_mode_set'] ) ) {
+			$out['builder_mode_set'] = true;
+		}
 		if ( isset( $pipeline['elementor_save_error'] ) ) {
 			$out['elementor_save_error'] = $pipeline['elementor_save_error'];
 		}
@@ -1897,6 +2165,10 @@ class IATO_MCP_Elementor_Adapter {
 		if ( is_wp_error( $decoded ) ) {
 			return $decoded;
 		}
+		$refusal = self::inactive_tree_refusal( $post_id );
+		if ( null !== $refusal ) {
+			return $refusal;
+		}
 		[ $elements, $raw ] = $decoded;
 		$previous_revision  = self::compute_revision( $raw );
 		$stored_elements    = $elements; // the tree before this request's change
@@ -1991,6 +2263,11 @@ class IATO_MCP_Elementor_Adapter {
 		}
 
 		if ( $dry_run ) {
+			// A page already holding what the write's backstop refuses.
+			$shape = self::tree_shape_error( self::force_arrays( $elements ) );
+			if ( null !== $shape ) {
+				return $shape;
+			}
 			// 1.13.1: the per-element validation the write would run.
 			if ( $atomic_target ) {
 				$refusal = self::dry_run_validation_error( $post_id, $elements, $stored_elements, [], [ $widget_path ] );
@@ -2048,13 +2325,7 @@ class IATO_MCP_Elementor_Adapter {
 		// Slim receipt for the API response — client already has applied_patch
 		// at the top level + previous_revision / current_revision as dedicated
 		// fields. Stored row keeps full before/after for audit/rollback.
-		$response['change_receipt'] = [
-			'change_id'   => $receipt['change_id'],
-			'target_type' => $receipt['target_type'],
-			'field'       => $receipt['field'],
-			'applied_at'  => $receipt['applied_at'],
-			'actor'       => $receipt['actor'] ?? null,
-		];
+		$response['change_receipt'] = IATO_MCP_Change_Receipt::slim( $receipt );
 
 		return $response;
 	}

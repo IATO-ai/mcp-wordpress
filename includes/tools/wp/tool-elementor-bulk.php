@@ -166,7 +166,11 @@ IATO_MCP_Server::register_tool(
 			// who need them can query the audit table by post_id + applied_at.
 			// Singleton update_elementor_widget / update_elementor_patch responses
 			// keep the slim receipt for backward-compat and convenience.
-			unset( $result['change_receipt'] );
+			// 1.16.0: a receipt with a warning stays: the caller must see that this
+			// change has no undo record.
+			if ( empty( $result['change_receipt']['warning'] ) ) {
+				unset( $result['change_receipt'] );
+			}
 
 			$result['index']   = $i;
 			$result['success'] = true;

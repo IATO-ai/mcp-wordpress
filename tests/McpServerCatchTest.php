@@ -43,6 +43,27 @@ final class McpServerCatchTest extends TestCase {
 		$this->assertSame( 'TypeError', json_decode( $bad['content'][0]['text'], true )['exception'], 'arguments that are not an object no longer fatal' );
 	}
 
+	public function test_a_buffer_a_tool_left_open_cannot_come_out_ahead_of_the_response(): void {
+		$level = ob_get_level();
+		self::register( '_test_open_buffer', function ( array $args ): array {
+			ob_start();
+			echo '<div>half a render</div>';
+			return IATO_MCP_Server::ok( [ 'ok' => true ] );
+		} );
+		ob_start();
+		$r = self::call( '_test_open_buffer' );
+		$this->assertSame( $level + 1, ob_get_level(), 'only what the tool opened is closed' );
+		$this->assertSame( '', ob_get_clean(), 'and what it held is gone' );
+		$this->assertSame( IATO_MCP_Server::ok( [ 'ok' => true ] ), $r );
+
+		self::register( '_test_throws_with_buffer', function ( array $args ): array {
+			ob_start();
+			throw new RuntimeException( 'render failed' );
+		} );
+		$this->assertSame( 'tool_exception', json_decode( self::call( '_test_throws_with_buffer' )['content'][0]['text'], true )['error'] );
+		$this->assertSame( $level, ob_get_level() );
+	}
+
 	public function test_normal_results_and_wp_errors_are_unchanged(): void {
 		self::register( '_test_ok', fn( array $args ): array => IATO_MCP_Server::ok( [ 'ok' => true ] ) );
 		$this->assertSame( IATO_MCP_Server::ok( [ 'ok' => true ] ), self::call( '_test_ok' ) );

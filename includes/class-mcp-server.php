@@ -14,6 +14,9 @@ defined( 'ABSPATH' ) || exit;
 
 class IATO_MCP_Server {
 
+	/** What a dry run cannot know, for its `not_checked` field (1.16.0). */
+	public const DRY_RUN_NOT_CHECKED = [ 'Filters from WordPress and other plugins that run on save, which can change or refuse the value.' ];
+
 	/** @var array<string,array{definition:array,handler:callable}> Tools exposed on the MCP endpoint, keyed by tool name. */
 	private static array $tools = [];
 
@@ -433,8 +436,27 @@ class IATO_MCP_Server {
 	 * @return array|WP_Error
 	 */
 	private static function handle_tools_call( array $params ): array|WP_Error {
-		$result = self::run_tool( $params );
+		$level = ob_get_level();
+		try {
+			$result = self::run_tool( $params );
+		} finally {
+			self::close_buffers( $level );
+		}
 		return is_array( $result ) ? IATO_MCP_Element_Cache_Guard::scrub( $result ) : $result;
+	}
+
+	/**
+	 * Throw away output buffers opened since $level (1.16.0). A render that throws, in
+	 * Elementor or an addon, leaves its buffer open, and what is in it would come out
+	 * ahead of the JSON response: the client then cannot read the result, or its
+	 * change_id, of a write that happened.
+	 */
+	public static function close_buffers( int $level ): void {
+		while ( ob_get_level() > $level ) {
+			if ( ! @ob_end_clean() ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors -- PHP refuses a buffer started as not removable, and says so with a notice.
+				break;
+			}
+		}
 	}
 
 	/**
@@ -463,6 +485,21 @@ class IATO_MCP_Server {
 					'content' => [ [ 'type' => 'text', 'text' => $cap_check->get_error_message() ] ],
 				];
 			}
+		}
+
+		// 1.16.0: a tool that cannot honour a dry run must not run when asked for one.
+		// A tool with no inputs declares its properties as an empty object.
+		if ( is_array( $arguments ) && ! empty( $arguments['dry_run'] ) && ! array_key_exists( 'dry_run', (array) ( self::$tools[ $name ]['definition']['inputSchema']['properties'] ?? [] ) ) ) {
+			return [
+				'isError' => true,
+				'content' => [ [
+					'type' => 'text',
+					'text' => (string) wp_json_encode( [
+						'error'   => 'dry_run_unsupported',
+						'message' => "{$name} has no dry run, so it was not run. Nothing was changed.",
+					] ),
+				] ],
+			];
 		}
 
 		// 1.15.1: not for reads, which store nothing, or for a user allowed to store

@@ -61,6 +61,7 @@ IATO_MCP_Server::register_tool(
 				'id'          => [ 'type' => 'integer', 'description' => 'Post ID (required)' ],
 				'title'       => [ 'type' => 'string',  'description' => 'New SEO title' ],
 				'description' => [ 'type' => 'string',  'description' => 'New meta description' ],
+				'dry_run'     => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'id' ],
 		],
@@ -96,6 +97,32 @@ IATO_MCP_Server::register_tool(
 		// Accept both schema names (title/description) and Autopilot names (seo_title/meta_description).
 		$new_title = $args['title'] ?? $args['seo_title'] ?? null;
 		$new_desc  = $args['description'] ?? $args['meta_description'] ?? null;
+
+		if ( ! empty( $args['dry_run'] ) ) {
+			$would = [];
+			foreach ( [ 'title' => $new_title, 'description' => $new_desc ] as $field => $value ) {
+				if ( null === $value ) {
+					continue;
+				}
+				$refusal = IATO_MCP_SEO_Adapter::write_refusal( $field );
+				if ( null !== $refusal ) {
+					return $refusal;
+				}
+				// In the form it would read back as (IATO_MCP_SEO_Adapter::get_meta()).
+				$after = IATO_MCP_SEO_Adapter::clean_text( $value );
+				if ( $after !== $before[ $field ] ) {
+					$would[ $field ] = [ 'before' => $before[ $field ], 'after' => $after ];
+				}
+			}
+			return IATO_MCP_Server::ok( [
+				'dry_run'      => true,
+				'action'       => [] === $would ? 'no_change' : 'would_update',
+				'id'           => $post_id,
+				'plugin'       => $before['plugin'],
+				'would_change' => (object) $would,
+				'not_checked'  => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
+			] );
+		}
 
 		if ( null !== $new_title ) {
 			$result = IATO_MCP_SEO_Adapter::update_title( $post_id, $new_title );

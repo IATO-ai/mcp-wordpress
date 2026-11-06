@@ -63,6 +63,18 @@ class IATO_MCP_OAuth_Store {
 	 * Create or update the tables. Idempotent (dbDelta).
 	 */
 	public static function create_tables(): void {
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		foreach ( self::schema_sql() as $sql ) {
+			dbDelta( $sql );
+		}
+	}
+
+	/**
+	 * The tables' definitions, for dbDelta and IATO_MCP_Schema::table_problems().
+	 *
+	 * @return array<string,string> table name => CREATE TABLE statement
+	 */
+	public static function schema_sql(): array {
 		global $wpdb;
 
 		$clients = self::clients_table();
@@ -120,10 +132,7 @@ class IATO_MCP_OAuth_Store {
 			KEY expires_at (expires_at)
 		) {$charset};";
 
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-		dbDelta( $sql_clients );
-		dbDelta( $sql_grants );
-		dbDelta( $sql_tokens );
+		return [ $clients => $sql_clients, $grants => $sql_grants, $tokens => $sql_tokens ];
 	}
 
 	/**

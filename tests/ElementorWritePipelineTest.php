@@ -18,6 +18,48 @@ namespace {
 	final class ElementorWritePipelineTest extends TestCase {
 		private const POST = ElementorWritePipelineHelper::POST;
 
+		#[\PHPUnit\Framework\Attributes\DataProvider( 'trees_elementor_cannot_render' )]
+		public function test_a_tree_elementor_cannot_render_is_refused( string $json ): void {
+			$tree = json_decode( $json, true );
+			$this->assertInstanceOf( WP_Error::class, IATO_MCP_Elementor_Adapter::tree_shape_error( $tree ), $json );
+			$before = IATO_Test_WP::$meta[ self::POST ]['_elementor_data'];
+			$result = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $tree, 'sha256:x', [] );
+			$this->assertSame( 'elementor_invalid_tree', $result->get_error_code() );
+			$this->assertContains( 'elementor_invalid_tree', IATO_MCP_Elementor_Adapter::DETAILED_ERRORS, 'a client sees why' );
+			$this->assertSame( $before, IATO_Test_WP::$meta[ self::POST ]['_elementor_data'], 'nothing was written' );
+			$this->assertSame( [], \Elementor\FakeDocument::$received, 'Elementor was not called' );
+		}
+
+		public static function trees_elementor_cannot_render(): array {
+			$cases = [ '{"a":1}', '{"elements":[]}', '[1]', '[null]', '["x"]', '[{}]', '[[]]', '[{"id":"a","settings":[]}]', '[{"id":"a","elType":1}]',
+				'[{"id":"a","elType":"widget","settings":[]}]', '[{"id":"a","elType":"container","settings":1}]', '[{"id":"a","elType":"container","settings":"x"}]',
+				'[{"id":"a","elType":"widget","widgetType":"heading","settings":1}]', '[{"id":["x"],"elType":"container"}]', '[{"id":"a","elType":"container","settings":null}]', '[{"id":"a","elType":"widget","widgetType":"heading","settings":null}]',
+				'[{"id":"a","elType":"container","elements":[1]}]', '[{"id":"a","elType":"container","elements":[{}]}]', '[{"id":"a","elType":"container","elements":{"k":{"elType":"widget"}}}]',
+				'{"iato_no_elementor_data":true,"post_content":"x"}', '{"iato_no_elementor_data":{"elType":"container"},"post_content":{"elType":"container"}}' ];
+			return array_combine( $cases, array_map( fn( $c ) => [ $c ], $cases ) );
+		}
+
+		#[\PHPUnit\Framework\Attributes\DataProvider( 'trees_that_stay_allowed' )]
+		public function test_old_and_unusual_trees_stay_allowed( string $json ): void {
+			$this->assertNull( IATO_MCP_Elementor_Adapter::tree_shape_error( json_decode( $json, true ) ), $json );
+		}
+
+		public static function trees_that_stay_allowed(): array {
+			$cases = [ '[]', '[{"elType":"container"}]', '[{"id":7,"elType":"container","settings":[],"elements":[]}]', '[{"id":"a","elType":"bogus"}]',
+				'[{"id":"a","elType":"widget","widgetType":"nosuch","settings":{"a":1}}]', '[{"id":"a","elType":"e-flexbox","settings":{"tag":{"$$type":"string","value":"div"}},"elements":[]}]',
+				'{"0":{"id":"a","elType":"container"},"2":{"id":"b","elType":"container"}}', '[{"id":"a","elType":"container","elements":{"0":{"elType":"container"},"2":{"elType":"container"}}}]',
+				'[{"id":"a","elType":"container","elements":{"k":{"elType":"container"}}}]', '[{"id":"a","elType":"container","elements":null}]', '[{"id":"a","elType":"container","elements":1}]' ];
+			return array_combine( $cases, array_map( fn( $c ) => [ $c ], $cases ) );
+		}
+
+		public function test_every_fixture_page_passes_the_tree_check(): void {
+			foreach ( glob( __DIR__ . '/fixtures/elementor/*.json' ) as $file ) {
+				if ( ! str_contains( $file, 'expected' ) ) {
+					$this->assertNull( IATO_MCP_Elementor_Adapter::tree_shape_error( json_decode( (string) file_get_contents( $file ), true ) ), basename( $file ) );
+				}
+			}
+		}
+
 		private function tree(): array {
 			return [ [ 'id' => 'c1', 'elType' => 'container', 'settings' => [], 'elements' => [
 				[ 'id' => 'w1', 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => [ 'title' => 'Edited title', 'header_size' => 'h2' ], 'elements' => [] ],
@@ -25,9 +67,13 @@ namespace {
 		}
 
 		protected function setUp(): void {
-			IATO_Test_WP::$meta   = [ self::POST => [ '_elementor_data' => '[]' ] ];
+			IATO_Test_WP::$meta   = [ self::POST => [ '_elementor_data' => '[]', '_elementor_edit_mode' => 'builder' ] ];
 			IATO_Test_WP::$posts  = [ self::POST => [ 'post_content' => '<h2>old content</h2>' ] ];
 			IATO_Test_WP::$writes = [];
+			\Elementor\FakeDocument::$mode          = 'ok';
+			\Elementor\FakeDb::$mode                = 'ok';
+			\Elementor\FakeDb::$text                = 'the text of the page';
+			\Elementor\FakeDb::$rendered            = null;
 			\Elementor\FakeDocument::$received      = [];
 			\Elementor\FakeDocument::$throw_message = 'Settings validation failed. simulated Elementor failure';
 			\Elementor\FakeDocuments::$absent       = false;
@@ -89,6 +135,260 @@ namespace {
 			$t = $this->stored();
 			$t[0]['elements'][0]['settings']['title'] = self::PAYLOAD;
 			return $t;
+		}
+
+		// ── 1.16.0: Elementor turned off for a page ─────────────────────
+
+		private function turn_elementor_off( mixed $tree = null ): void {
+			IATO_Test_WP::$meta[ self::POST ] = [ '_elementor_data' => $tree ?? json_encode( $this->stored() ) ];
+			IATO_Test_WP::$posts[ self::POST ]['post_content'] = '<p>Written by hand</p>';
+		}
+
+		public function test_builder_state(): void {
+			$state = fn( array $meta, string $type = 'page' ) => [ IATO_Test_WP::$meta[ self::POST ] = $meta, IATO_Test_WP::$posts[ self::POST ]['post_type'] = $type, IATO_MCP_Elementor_Adapter::builder_state( self::POST ) ][2];
+			$tree  = '[{"id":"a"}]';
+			$this->assertSame( 'active', $state( [ '_elementor_data' => $tree, '_elementor_edit_mode' => 'builder' ] ) );
+			$this->assertSame( 'active', $state( [ '_elementor_data' => $tree, '_elementor_edit_mode' => '1' ] ), 'Elementor treats any truthy value as on' );
+			$this->assertSame( 'no_tree', $state( [] ) );
+			$this->assertSame( 'no_tree', $state( [ '_elementor_data' => '[]' ] ) );
+			$this->assertSame( 'no_tree', $state( [ '_elementor_data' => [] ] ) );
+			$this->assertSame( 'inactive_tree', $state( [ '_elementor_data' => $tree ] ) );
+			$this->assertSame( 'inactive_tree', $state( [ '_elementor_data' => [ [ 'id' => 'a' ] ] ] ), 'stored as an array by an old write' );
+			$this->assertSame( 'inactive_tree', $state( [ '_elementor_data' => '{broken' ] ), 'data that cannot be read might still be someone\'s' );
+			$this->assertSame( 'inactive_tree', $state( [ '_elementor_data' => $tree, '_elementor_edit_mode' => '0' ] ) );
+			foreach ( [ 'elementor_library', 'e-floating-buttons', 'revision' ] as $type ) {
+				$this->assertSame( 'active', $state( [ '_elementor_data' => $tree ], $type ), $type );
+			}
+		}
+
+		public function test_the_pipeline_refuses_a_page_with_elementor_off_and_writes_nothing(): void {
+			$this->turn_elementor_off();
+			$result = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->tree(), 'r' );
+			$this->assertSame( 'elementor_not_active', $result->get_error_code() );
+			$this->assertSame( [], \Elementor\FakeDocument::$received, 'Elementor\'s save never ran' );
+			$this->assertSame( [], IATO_Test_WP::$writes );
+			$this->assertSame( '<p>Written by hand</p>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_a_stored_empty_tree_is_refused_for_the_other_tools(): void {
+			$this->turn_elementor_off( '[]' );
+			$this->assertSame( 'elementor_not_active', IATO_MCP_Elementor_Adapter::inactive_tree_refusal( self::POST )->get_error_code() );
+		}
+
+		public function test_a_post_with_no_data_is_left_to_the_tools_own_answer(): void {
+			IATO_Test_WP::$meta[ self::POST ] = [];
+			$this->assertNull( IATO_MCP_Elementor_Adapter::inactive_tree_refusal( self::POST ) );
+			$this->assertSame( 'not_elementor', IATO_MCP_Elementor_Adapter::do_update_widget( [ 'id' => self::POST, 'widget_id' => 'w1', 'settings_patch' => [] ] )->get_error_code() );
+		}
+
+		public function test_the_refusal_carries_its_details_as_tool_text(): void {
+			$this->turn_elementor_off();
+			$error = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( self::POST );
+			$this->assertStringContainsString( 'activate_builder: true', $error->get_error_message() );
+			$this->assertStringContainsString( 'ask the user first', $error->get_error_message() );
+			$tool = IATO_MCP_Elementor_Adapter::tool_error( $error );
+			$this->assertTrue( $tool['isError'] );
+			$text = json_decode( $tool['content'][0]['text'], true );
+			$this->assertSame( 'elementor_not_active', $text['error'] );
+			$this->assertSame( strlen( '<p>Written by hand</p>' ), $text['content_chars'] );
+		}
+
+		public function test_the_widget_tools_refuse_dry_runs_included(): void {
+			$this->turn_elementor_off();
+			foreach ( [ false, true ] as $dry_run ) {
+				$result = IATO_MCP_Elementor_Adapter::do_update_widget( [ 'id' => self::POST, 'widget_id' => 'w1', 'settings_patch' => [ 'title' => 'New' ], 'dry_run' => $dry_run ] );
+				$this->assertSame( 'elementor_not_active', $result->get_error_code() );
+			}
+			$this->assertSame( [], IATO_Test_WP::$writes );
+		}
+
+		public function test_a_page_with_elementor_on_is_not_refused(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$result = IATO_MCP_Elementor_Adapter::do_update_widget( [ 'id' => self::POST, 'widget_id' => 'w1', 'settings_patch' => [ 'title' => 'New' ], 'dry_run' => true ] );
+			$this->assertFalse( is_wp_error( $result ) );
+		}
+
+		public function test_activating_sets_the_flag_after_the_tree_is_stored(): void {
+			$this->turn_elementor_off();
+			self::authenticate( true );
+			$result = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->tree(), 'r', null, [ 'set_builder_mode' => true ] );
+			$this->assertTrue( $result['builder_mode_set'] );
+			$this->assertTrue( IATO_MCP_Elementor_Adapter::pipeline_report( $result )['builder_mode_set'] );
+			$this->assertSame( 'builder', IATO_Test_WP::$meta[ self::POST ]['_elementor_edit_mode'] );
+			$this->assertSame( 'active', IATO_MCP_Elementor_Adapter::builder_state( self::POST ) );
+		}
+
+		public function test_a_refused_save_never_turns_elementor_on(): void {
+			$this->turn_elementor_off();
+			\Elementor\FakeDocument::$mode = 'refuse';
+			$result = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->tree(), 'r', null, [ 'set_builder_mode' => true, 'atomic' => true ] );
+			$this->assertSame( 'elementor_cannot_edit', $result->get_error_code() );
+			$this->assertArrayNotHasKey( '_elementor_edit_mode', IATO_Test_WP::$meta[ self::POST ], 'visitors must not be switched to the old tree' );
+		}
+
+		/** Calls update_elementor_data; a refusal comes back as [isError, text]. */
+		private function data_tool( array $args ): array {
+			require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-builder.php';
+			$r = ( IATO_MCP_Server::get_catalog_entry( 'update_elementor_data' )['handler'] )( $args + [ 'id' => self::POST, 'elementor_data' => json_encode( $this->tree() ) ] );
+			if ( is_wp_error( $r ) ) {
+				return [ 'error' => $r->get_error_code(), 'message' => $r->get_error_message() ];
+			}
+			return json_decode( $r['content'][0]['text'], true );
+		}
+
+		public function test_update_elementor_data_refuses_a_page_with_elementor_off_unless_told(): void {
+			self::authenticate( true );
+			$this->turn_elementor_off();
+			foreach ( [ [], [ 'dry_run' => true ] ] as $extra ) {
+				$r = $this->data_tool( $extra );
+				$this->assertSame( 'elementor_not_active', $r['error'] );
+				$this->assertSame( strlen( '<p>Written by hand</p>' ), $r['content_chars'] );
+			}
+			$this->assertSame( [], \Elementor\FakeDocument::$received );
+			$this->assertSame( '<p>Written by hand</p>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			$this->assertArrayNotHasKey( '_elementor_edit_mode', IATO_Test_WP::$meta[ self::POST ] );
+		}
+
+		public function test_activate_builder_previews_then_switches_and_keeps_what_it_replaced(): void {
+			self::authenticate( true );
+			$old_tree = json_encode( $this->stored() );
+			$this->turn_elementor_off( $old_tree );
+
+			$dry = $this->data_tool( [ 'activate_builder' => true, 'dry_run' => true ] );
+			$this->assertTrue( $dry['would_set_builder_mode'] );
+			$this->assertSame( strlen( '<p>Written by hand</p>' ), $dry['would_replace_content_chars'] );
+			$this->assertArrayNotHasKey( '_elementor_edit_mode', IATO_Test_WP::$meta[ self::POST ], 'a dry run writes nothing' );
+
+			$GLOBALS['wpdb']->inserts = [];
+			$r = $this->data_tool( [ 'activate_builder' => true ] );
+			$this->assertTrue( $r['builder_mode_set'] );
+			$this->assertSame( strlen( '<p>Written by hand</p>' ), $r['replaced_content_chars'] );
+			$this->assertSame( 'builder', IATO_Test_WP::$meta[ self::POST ]['_elementor_edit_mode'] );
+
+			$envelope = IATO_MCP_Rollback::no_elementor_from( $GLOBALS['wpdb']->inserts[0][1]['before_value'] );
+			$this->assertSame( '<p>Written by hand</p>', $envelope['post_content'] );
+			$this->assertSame( $old_tree, $envelope['elementor_data'] );
+			$this->assertSame( hash( 'sha256', '<h2>rendered by elementor</h2>' ), $envelope['content_after_sha256'] );
+		}
+
+		public function test_a_new_page_becomes_an_elementor_page(): void {
+			self::authenticate( true );
+			IATO_Test_WP::$meta[ self::POST ] = [];
+			IATO_Test_WP::$posts[ self::POST ]['post_content'] = '<p>Draft</p>';
+
+			$dry = $this->data_tool( [ 'dry_run' => true ] );
+			$this->assertTrue( $dry['would_set_builder_mode'] );
+
+			$GLOBALS['wpdb']->inserts = [];
+			$r = $this->data_tool( [] );
+			$this->assertTrue( $r['builder_mode_set'] );
+			$this->assertSame( 'builder', IATO_Test_WP::$meta[ self::POST ]['_elementor_edit_mode'] );
+			$envelope = IATO_MCP_Rollback::no_elementor_from( $GLOBALS['wpdb']->inserts[0][1]['before_value'] );
+			$this->assertSame( '<p>Draft</p>', $envelope['post_content'] );
+			$this->assertArrayNotHasKey( 'elementor_data', $envelope );
+		}
+
+		public function test_a_stored_empty_tree_gets_the_flag_and_the_full_undo_record(): void {
+			self::authenticate( true );
+			$this->turn_elementor_off( '[]' );
+			$GLOBALS['wpdb']->inserts = [];
+			$r = $this->data_tool( [] );
+			$this->assertTrue( $r['builder_mode_set'] );
+			$envelope = IATO_MCP_Rollback::no_elementor_from( $GLOBALS['wpdb']->inserts[0][1]['before_value'] );
+			$this->assertSame( '<p>Written by hand</p>', $envelope['post_content'], 'the same loss as a full tree, so the same undo' );
+			$this->assertSame( '[]', $envelope['elementor_data'] );
+		}
+
+		public function test_an_empty_tree_cannot_start_or_activate_a_page(): void {
+			self::authenticate( true );
+			IATO_Test_WP::$meta[ self::POST ] = [];
+			$this->assertSame( 'elementor_empty_tree', $this->data_tool( [ 'elementor_data' => '[]' ] )['error'] );
+			$this->turn_elementor_off();
+			$this->assertSame( 'elementor_empty_tree', $this->data_tool( [ 'elementor_data' => '[]', 'activate_builder' => true ] )['error'] );
+			$this->assertSame( '<p>Written by hand</p>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_an_elementor_page_can_still_be_emptied_and_keeps_its_plain_undo_record(): void {
+			self::authenticate( true );
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$GLOBALS['wpdb']->inserts = [];
+			$r = $this->data_tool( [ 'elementor_data' => '[]' ] );
+			$this->assertArrayNotHasKey( 'error', $r );
+			$this->assertArrayNotHasKey( 'builder_mode_set', $r );
+			$this->assertSame( json_encode( $this->stored() ), $GLOBALS['wpdb']->inserts[0][1]['before_value'] );
+		}
+
+		public function test_the_refusal_says_when_the_content_is_only_elementor_text(): void {
+			$this->turn_elementor_off();
+			\Elementor\FakeDb::$text = "<h2>Written by hand</h2>\n";
+			IATO_Test_WP::$posts[ self::POST ]['post_content'] = '<p>Written  by hand</p>';
+			$error = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( self::POST );
+			$this->assertTrue( $error->get_error_data()['content_is_elementor_text'] );
+			$this->assertStringContainsString( 'loses nothing', $error->get_error_message() );
+
+			IATO_Test_WP::$posts[ self::POST ]['post_content'] = '';
+			$this->assertTrue( IATO_MCP_Elementor_Adapter::inactive_tree_refusal( self::POST )->get_error_data()['content_is_elementor_text'], 'no content, nothing to lose' );
+
+			\Elementor\FakeDb::$mode = 'throw';
+			IATO_Test_WP::$posts[ self::POST ]['post_content'] = '<p>Written by hand</p>';
+			$unsure = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( self::POST );
+			$this->assertNull( $unsure->get_error_data()['content_is_elementor_text'] );
+			$this->assertStringContainsString( 'ask the user first', $unsure->get_error_message(), 'when it cannot tell, the standard warning' );
+		}
+
+		public function test_plain_text_restores_buffers_and_parsing_mode_when_a_widget_throws(): void {
+			\Elementor\FakeDb::$mode = 'throw';
+			$level = ob_get_level();
+			$this->assertNull( IATO_MCP_Elementor_Adapter::plain_text_of( self::POST ) );
+			$this->assertSame( $level, ob_get_level(), 'an open buffer would corrupt the JSON response' );
+			$this->assertSame( 'all', \Elementor\Plugin::$instance->dynamic_tags->mode );
+		}
+
+		public function test_a_rollback_refresh_brings_post_content_into_line(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			IATO_Test_WP::$posts[ self::POST ]['post_content']   = 'text of the tree that was replaced';
+			$this->assertSame( [ 'content_refreshed' => true ], IATO_MCP_Elementor_Adapter::refresh_post_content( self::POST ) );
+			$this->assertSame( 'the text of the page', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			$this->assertSame( [], IATO_MCP_Elementor_Adapter::refresh_post_content( self::POST ), 'nothing to do the second time' );
+		}
+
+		public function test_a_dry_run_refresh_renders_the_tree_it_would_restore_and_writes_nothing(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			IATO_Test_WP::$posts[ self::POST ]['post_content']   = 'current';
+			$tree = $this->tree();
+			$this->assertSame( [ 'would_refresh_content' => true ], IATO_MCP_Elementor_Adapter::refresh_post_content( self::POST, $tree ) );
+			$this->assertSame( $tree, \Elementor\FakeDb::$rendered );
+			$this->assertSame( 'current', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_the_refresh_leaves_a_page_with_elementor_off_alone(): void {
+			$this->turn_elementor_off();
+			$this->assertSame( [], IATO_MCP_Elementor_Adapter::refresh_post_content( self::POST ) );
+			$this->assertSame( '<p>Written by hand</p>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_the_refresh_leaves_a_page_with_unloadable_elements_alone(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			IATO_Test_WP::$posts[ self::POST ]['post_content']   = 'current';
+			IATO_MCP_Elementor_Adapter::set_type_checker( fn( string $el, string $widget ): bool => false );
+			$this->assertSame( [], IATO_MCP_Elementor_Adapter::refresh_post_content( self::POST ), 'their text would go missing' );
+			$this->assertSame( 'current', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_a_refresh_that_fails_is_only_a_note(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			IATO_Test_WP::$posts[ self::POST ]['post_content']   = 'current';
+			\Elementor\FakeDb::$mode = 'throw';
+			$result = IATO_MCP_Elementor_Adapter::refresh_post_content( self::POST );
+			$this->assertStringContainsString( 'could not be brought up to date', $result['content_note'] );
+			$this->assertSame( 'current', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_a_normal_write_reports_no_mode_change(): void {
+			IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = json_encode( $this->stored() );
+			$result = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->tree(), 'r' );
+			$this->assertArrayNotHasKey( 'builder_mode_set', $result );
+			$this->assertArrayNotHasKey( 'builder_mode_set', IATO_MCP_Elementor_Adapter::pipeline_report( $result ) );
 		}
 
 		public function test_a_classic_write_never_clears_every_pages_css(): void {

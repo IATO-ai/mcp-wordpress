@@ -258,7 +258,6 @@ final class ElementCacheGuardTest extends TestCase {
 
 	public function test_the_schema_step_is_the_refresh(): void {
 		$this->assertSame( [ IATO_MCP_Schema::class, 'step_element_cache_refresh' ], IATO_MCP_Schema::steps()[6] );
-		$this->assertSame( 6, IATO_MCP_Schema::VERSION );
 		IATO_Test_Abilities_State::$options[ IATO_MCP_Element_Cache_Guard::KEY_OPTION ] = self::KEY;
 		IATO_MCP_Schema::step_element_cache_refresh();
 		$this->assertNotSame( self::KEY, IATO_Test_Abilities_State::$options[ IATO_MCP_Element_Cache_Guard::KEY_OPTION ] );

@@ -253,7 +253,7 @@ class IATO_MCP_Media_Uploader {
 		$attach_data = [
 			'post_mime_type' => $sideloaded['type'],
 			'post_title'     => $title,
-			'post_content'   => isset( $args['description'] ) ? wp_kses_post( (string) $args['description'] ) : '',
+			'post_content'   => isset( $args['description'] ) ? IATO_MCP_Elementor_Sanitizer::clean_markup( (string) $args['description'] ) : '',
 			'post_excerpt'   => isset( $args['caption'] ) ? sanitize_text_field( (string) $args['caption'] ) : '',
 			'post_status'    => 'inherit',
 			'post_parent'    => $attach_to_post,

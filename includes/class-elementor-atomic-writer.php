@@ -594,6 +594,10 @@ class IATO_MCP_Elementor_Atomic_Writer {
 		if ( is_wp_error( $bound ) ) {
 			return $bound;
 		}
+		$refusal = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( $post_id );
+		if ( null !== $refusal ) {
+			return $refusal;
+		}
 		$missing = self::engine()->missing();
 		if ( null !== $missing ) {
 			return new WP_Error( 'atomic_write_unavailable', $missing . ' Nothing was written.', [ 'status' => 400, 'elementor_version' => self::engine()->version() ] );
@@ -624,6 +628,10 @@ class IATO_MCP_Elementor_Atomic_Writer {
 		}
 		if ( null === $tree ) {
 			return new WP_Error( 'no_elementor_data', "Post {$post_id} has no Elementor data.", [ 'status' => 400 ] );
+		}
+		$shape = IATO_MCP_Elementor_Adapter::tree_shape_error( $tree );
+		if ( null !== $shape ) {
+			return $shape;
 		}
 
 		// Build every edit against the working tree, so two rows that edit the
@@ -1345,7 +1353,12 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			return $bound;
 		}
 		$post_id = (int) ( $receipt['post_id'] ?? 0 );
-		$lock    = self::editor_lock( $post_id );
+		// 1.16.0: here as well as in the pipeline, so a dry run answers the same.
+		$refusal = IATO_MCP_Elementor_Adapter::inactive_tree_refusal( $post_id );
+		if ( null !== $refusal ) {
+			return $refusal;
+		}
+		$lock = self::editor_lock( $post_id );
 		if ( null !== $lock ) {
 			return $lock;
 		}
@@ -1406,13 +1419,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 
 	/** Slim receipt for tool responses (the stored row keeps the full values). */
 	public static function slim_receipt( array $receipt ): array {
-		return [
-			'change_id'   => $receipt['change_id'] ?? null,
-			'target_type' => $receipt['target_type'] ?? null,
-			'field'       => $receipt['field'] ?? null,
-			'applied_at'  => $receipt['applied_at'] ?? null,
-			'actor'       => $receipt['actor'] ?? null,
-		];
+		return IATO_MCP_Change_Receipt::slim( $receipt );
 	}
 
 	// ── Verification ──────────────────────────────────────────────────────

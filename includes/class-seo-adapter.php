@@ -27,6 +27,24 @@ class IATO_MCP_SEO_Adapter {
 	private static ?string $active_plugin = null;
 
 	/**
+	 * sanitize_text_field() without one of its steps (1.16.0): it removes anything shaped
+	 * like %xx, which takes the front off SEO plugins' variables and encoded URLs:
+	 * %%category%% became %tegory%%, %%date%% became %te%%. Recorded and restored too,
+	 * since the reads went through it as well.
+	 *
+	 * @param mixed $value Non-scalars become '', as in core.
+	 */
+	public static function clean_text( mixed $value, bool $keep_newlines = false ): string {
+		if ( ! is_scalar( $value ) ) {
+			return '';
+		}
+		$percent = "\xEE\x80\x80"; // A private-use character: core leaves it alone.
+		$value   = str_replace( '%', $percent, (string) $value );
+		$value   = $keep_newlines ? sanitize_textarea_field( $value ) : sanitize_text_field( $value );
+		return str_replace( $percent, '%', $value );
+	}
+
+	/**
 	 * Get SEO meta for a post.
 	 *
 	 * @param int $post_id
@@ -38,11 +56,11 @@ class IATO_MCP_SEO_Adapter {
 		$desc_key  = self::description_key();
 
 		$title = $title_key
-			? sanitize_text_field( get_post_meta( $post_id, $title_key, true ) )
-			: sanitize_text_field( get_the_title( $post_id ) );
+			? self::clean_text( get_post_meta( $post_id, $title_key, true ) )
+			: self::clean_text( get_the_title( $post_id ) );
 
 		$description = $desc_key
-			? sanitize_text_field( get_post_meta( $post_id, $desc_key, true ) )
+			? self::clean_text( get_post_meta( $post_id, $desc_key, true ) )
 			: '';
 
 		return [
@@ -62,13 +80,10 @@ class IATO_MCP_SEO_Adapter {
 	public static function update_title( int $post_id, string $title ): bool|WP_Error {
 		$key = self::title_key();
 		if ( null === $key ) {
-			return new WP_Error(
-				'iato_mcp_no_seo_plugin',
-				__( 'No supported SEO plugin is active. Install Yoast, RankMath, or SEOPress to manage SEO titles.', 'iato-mcp' )
-			);
+			return self::no_plugin_error( 'title' );
 		}
 
-		$title = sanitize_text_field( $title );
+		$title = self::clean_text( $title );
 		update_post_meta( $post_id, $key, wp_slash( $title ) ); // update_post_meta() unslashes
 
 		return true;
@@ -84,16 +99,35 @@ class IATO_MCP_SEO_Adapter {
 	public static function update_description( int $post_id, string $description ): bool|WP_Error {
 		$key = self::description_key();
 		if ( null === $key ) {
-			return new WP_Error(
-				'iato_mcp_no_seo_plugin',
-				__( 'No supported SEO plugin is active. Install Yoast, RankMath, or SEOPress to manage meta descriptions.', 'iato-mcp' )
-			);
+			return self::no_plugin_error( 'description' );
 		}
 
-		$description = sanitize_textarea_field( $description );
+		$description = self::clean_text( $description, true );
 		update_post_meta( $post_id, $key, wp_slash( $description ) );
 
 		return true;
+	}
+
+	/**
+	 * Why this field cannot be written, or null when it can (1.16.0: dry runs ask).
+	 *
+	 * @param string $field title or description
+	 */
+	public static function write_refusal( string $field ): ?WP_Error {
+		return null === ( 'title' === $field ? self::title_key() : self::description_key() ) ? self::no_plugin_error( $field ) : null;
+	}
+
+	private static function no_plugin_error( string $field ): WP_Error {
+		if ( 'title' === $field ) {
+			return new WP_Error(
+				'iato_mcp_no_seo_plugin',
+				__( 'No supported SEO plugin is active. Install Yoast, RankMath, or SEOPress to manage SEO titles.', 'iato-mcp' )
+			);
+		}
+		return new WP_Error(
+			'iato_mcp_no_seo_plugin',
+			__( 'No supported SEO plugin is active. Install Yoast, RankMath, or SEOPress to manage meta descriptions.', 'iato-mcp' )
+		);
 	}
 
 	/**
@@ -134,7 +168,7 @@ class IATO_MCP_SEO_Adapter {
 		if ( null === $key ) {
 			return '';
 		}
-		return sanitize_text_field( get_post_meta( $post_id, $key, true ) );
+		return self::clean_text( get_post_meta( $post_id, $key, true ) );
 	}
 
 	/**

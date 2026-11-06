@@ -75,7 +75,7 @@ final class ElementorWriterAtomicTest extends TestCase {
 		IATO_Test_WP::$posts    = $posts;
 		IATO_Test_Roles::$posts = $posts;
 		IATO_Test_Roles::$users = [ 1 => 'administrator', 7 => 'author' ];
-		IATO_Test_WP::$meta     = [ self::POST => [ '_elementor_data' => json_encode( $this->page() ) ] ];
+		IATO_Test_WP::$meta     = [ self::POST => [ '_elementor_edit_mode' => 'builder', '_elementor_data' => json_encode( $this->page() ) ] ];
 		IATO_Test_WP::$writes   = [];
 		IATO_Test_Writer_State::$locks          = [];
 		IATO_Test_OAuth_State::$transients      = [];

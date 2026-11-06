@@ -9,9 +9,12 @@
 # HTML (seeded through Elementor's own save). Then runs rollback-actor-live.py.
 #   tests/wp-env/rollback-actor-live.sh [base-url]
 #   tests/wp-env/rollback-actor-live.sh --cleanup
+# Another site: WPENV_DIR (its wp-env folder) and WPENV_SVC (default cli; tests-cli).
 set -u
-cd "$(dirname "$0")/../.."
-W() { npx @wordpress/env run cli "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "${WPENV_DIR:-$REPO}"
+export WPENV_SVC="${WPENV_SVC:-cli}"
+W() { npx @wordpress/env run "$WPENV_SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
 P=$(W wp db prefix)
 CLIENT=rollback-live-client
 
@@ -69,4 +72,4 @@ export FIXTURE=$(W wp eval-file wp-content/plugins/mcp-wordpress/tests/wp-env/cr
 echo "users: admin=$ADMIN_ID editor=$EDITOR_ID author=$AUTHOR_ID key_owner=$KEY_OWNER"
 echo "fixtures: author_draft=$AUTHOR_DRAFT admin_page=$ADMIN_PAGE admin_post=$ADMIN_POST cat=$CAT tag=$TAG menu_item=$MENU_ITEM"
 echo "elementor: $FIXTURE"
-python3 -I tests/wp-env/rollback-actor-live.py
+python3 -I "$REPO/tests/wp-env/rollback-actor-live.py"

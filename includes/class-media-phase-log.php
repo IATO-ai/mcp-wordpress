@@ -35,12 +35,18 @@ class IATO_MCP_Media_Phase_Log {
 	 * Create the table. Called on plugin activation.
 	 */
 	public static function create_table(): void {
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( self::schema_sql() );
+	}
+
+	/** The table's definition, for dbDelta and IATO_MCP_Schema::table_problems(). */
+	public static function schema_sql(): string {
 		global $wpdb;
 
 		$table   = self::table_name();
 		$charset = $wpdb->get_charset_collate();
 
-		$sql = "CREATE TABLE {$table} (
+		return "CREATE TABLE {$table} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL,
@@ -60,9 +66,6 @@ class IATO_MCP_Media_Phase_Log {
 			KEY created_at (created_at),
 			KEY req_id (req_id)
 		) {$charset};";
-
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-		dbDelta( $sql );
 	}
 
 	/**

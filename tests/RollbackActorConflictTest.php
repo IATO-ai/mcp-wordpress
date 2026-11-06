@@ -14,6 +14,12 @@ require_once IATO_MCP_DIR . 'includes/class-rollback.php';
 require_once IATO_MCP_DIR . 'includes/class-rollback-conflict.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-rollback.php';
 
+if ( ! function_exists( 'wp_kses_post' ) ) {
+	function wp_kses_post( string $html ): string {
+		return strip_tags( $html, '<p><h2><a><b>' );
+	}
+}
+
 /**
  * Part 3 (1.13.0): receipts record who made each change; only that user or an
  * administrator may roll it back (on top of the object-level checks); a
@@ -290,6 +296,32 @@ final class RollbackActorConflictTest extends TestCase {
 		$this->assertFalse( $conflicted['would_roll_back'], 'a dry run reports a conflict instead of failing' );
 	}
 
+	public function test_a_rollback_that_cannot_be_marked_says_so(): void {
+		$this->as_user( self::AUTHOR );
+		$receipt = $this->meta_receipt();
+		IATO_Test_WP::$meta[ self::POST ]['rollback_key'] = 'mine';
+		$GLOBALS['wpdb']->update_results = [ false ];
+		$GLOBALS['wpdb']->described      = [ IATO_MCP_Change_Receipt::table_name() => array_fill_keys( IATO_MCP_Change_Receipt::ROLLED_BACK_BY_COLUMNS, 'varchar(64)' ) ];
+		$result = IATO_MCP_Rollback::execute( $receipt );
+		$GLOBALS['wpdb']->described = [];
+		$this->assertTrue( $result['success'] );
+		$this->assertStringContainsString( 'could not be marked', $result['warning'] );
+		$this->assertCount( 1, $GLOBALS['wpdb']->updates, 'every column exists, so a one-off failure is not retried' );
+	}
+
+	public function test_a_rollback_with_a_missing_column_is_still_marked(): void {
+		$this->as_user( self::AUTHOR );
+		$receipt = $this->meta_receipt();
+		IATO_Test_WP::$meta[ self::POST ]['rollback_key'] = 'mine';
+		$GLOBALS['wpdb']->update_results = [ false, 1 ];
+		$GLOBALS['wpdb']->described      = [ IATO_MCP_Change_Receipt::table_name() => [ 'rolled_back_by_user_id' => 'bigint', 'rolled_back_by_kind' => 'varchar(30)' ] ];
+		$result = IATO_MCP_Rollback::execute( $receipt );
+		$GLOBALS['wpdb']->described = [];
+		$this->assertTrue( $result['success'] );
+		$this->assertArrayNotHasKey( 'warning', $result );
+		$this->assertSame( [ 'rolled_back_at' ], array_keys( $GLOBALS['wpdb']->updates[1][1] ), 'the mark is what stops a second rollback' );
+	}
+
 	public function test_an_already_rolled_back_receipt_names_who_did_it(): void {
 		$receipt = self::receipt( 'post', 'title', self::POST, 'a', 'Now', null, null, [ 'rolled_back_at' => '2026-10-02 10:00:00', 'rolled_back_by_user_id' => self::EDITOR, 'rolled_back_by_kind' => 'application_password' ] );
 		$result  = IATO_MCP_Rollback::execute( $receipt );
@@ -317,6 +349,135 @@ final class RollbackActorConflictTest extends TestCase {
 		$this->assertSame( $tree, IATO_Test_WP::$meta[ self::PAGE ]['_elementor_data'], 'byte for byte, backslashes included' );
 		$this->assertSame( IATO_MCP_Elementor_Adapter::compute_revision( $tree ), $result['restored_revision'] );
 		$this->assertArrayNotHasKey( 'restored_value', $result, 'the tree is not echoed back' );
+	}
+
+	public function test_a_rollback_of_an_activation_restores_the_content_the_flag_and_the_old_tree(): void {
+		$this->as_user( 0, 'site_key', null, true );
+		$old_tree = '[{"id":"o","settings":{"title":"Tom & Jerry \\\\ old"}}]';
+		$new_tree = '[{"id":"n"}]';
+		IATO_Test_WP::$meta[ self::PAGE ]  = [ '_elementor_data' => $new_tree, '_elementor_edit_mode' => 'builder' ];
+		IATO_Test_WP::$posts[ self::PAGE ]['post_content'] = '<h2>rendered by Elementor</h2>';
+		$before  = IATO_MCP_Rollback::envelope_with_content_after(
+			IATO_MCP_Rollback::no_elementor_envelope( '<p>Written by hand</p>', '', $old_tree ),
+			'<h2>rendered by Elementor</h2>'
+		);
+		$receipt = self::receipt( 'elementor_widget', IATO_MCP_Rollback::ACTIVATE_FIELD, self::PAGE, $before, IATO_MCP_Elementor_Adapter::compute_revision( $new_tree ) );
+
+		$dry = IATO_MCP_Rollback::execute( $receipt, [ 'dry_run' => true ] );
+		$this->assertSame( [ IATO_MCP_Elementor_Adapter::compute_revision( $old_tree ), 'content_and_elementor_off' ], [ $dry['would_restore_revision'], $dry['would_restore'] ] );
+		$this->assertSame( $new_tree, IATO_Test_WP::$meta[ self::PAGE ]['_elementor_data'], 'a dry run writes nothing' );
+
+		$result = IATO_MCP_Rollback::execute( $receipt );
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( 'content_and_elementor_off', $result['restored'] );
+		$this->assertSame( $old_tree, IATO_Test_WP::$meta[ self::PAGE ]['_elementor_data'], 'byte for byte' );
+		$this->assertArrayNotHasKey( '_elementor_edit_mode', IATO_Test_WP::$meta[ self::PAGE ] );
+		$this->assertSame( '<p>Written by hand</p>', IATO_Test_WP::$posts[ self::PAGE ]['post_content'] );
+	}
+
+	public function test_a_classic_edit_after_activation_is_a_conflict(): void {
+		$this->as_user( 0, 'site_key', null, true );
+		$tree = '[{"id":"n"}]';
+		IATO_Test_WP::$meta[ self::PAGE ]  = [ '_elementor_data' => $tree, '_elementor_edit_mode' => 'builder' ];
+		IATO_Test_WP::$posts[ self::PAGE ]['post_content'] = '<p>Edited in the WordPress editor afterwards</p>';
+		$before  = IATO_MCP_Rollback::envelope_with_content_after(
+			IATO_MCP_Rollback::no_elementor_envelope( '<p>Written by hand</p>', '', '[]' ),
+			'<h2>rendered by Elementor</h2>'
+		);
+		$receipt = self::receipt( 'elementor_widget', IATO_MCP_Rollback::ACTIVATE_FIELD, self::PAGE, $before, IATO_MCP_Elementor_Adapter::compute_revision( $tree ) );
+		$result  = IATO_MCP_Rollback::execute( $receipt );
+		$this->assertSame( 'rollback_conflict', $result->get_error_code() );
+		$this->assertStringContainsString( 'post content has changed', $result->get_error_message() );
+		$this->assertSame( '<p>Edited in the WordPress editor afterwards</p>', IATO_Test_WP::$posts[ self::PAGE ]['post_content'] );
+
+		$forced = IATO_MCP_Rollback::execute( $receipt, [ 'force' => true ] );
+		$this->assertTrue( $forced['success'] );
+		$this->assertSame( '<p>Written by hand</p>', IATO_Test_WP::$posts[ self::PAGE ]['post_content'] );
+		$this->assertSame( '[]', IATO_Test_WP::$meta[ self::PAGE ]['_elementor_data'], 'a stored empty tree comes back too' );
+	}
+
+	public function test_text_that_only_looks_like_an_envelope_brings_back_nothing_unfiltered(): void {
+		// A stored value shaped like the plugin's envelope, under a receipt that no
+		// request can give the plugin's field: only the kept tree's text would be
+		// restored verbatim, so it must not be, and the content is filtered.
+		$this->as_user( 5, 'application_password' );
+		$current = '[{"id":"n","elType":"container"}]';
+		IATO_Test_WP::$meta[ self::PAGE ]  = [ '_elementor_data' => $current, '_elementor_edit_mode' => 'builder' ];
+		IATO_Test_WP::$posts[ self::PAGE ]['post_content'] = '<h2>rendered</h2>';
+		$looks_like = IATO_MCP_Rollback::no_elementor_envelope( '<p>x</p><script>1</script>', '', '[{"id":"z","elType":"widget","widgetType":"html","settings":{"html":"RAW"}}]' );
+		$receipt    = self::receipt( 'elementor_widget', 'elementor:document:patch', self::PAGE, $looks_like, IATO_MCP_Elementor_Adapter::compute_revision( $current ), 'application_password', 5 );
+
+		$dry = IATO_MCP_Rollback::execute( $receipt, [ 'dry_run' => true ] );
+		$this->assertSame( [ null, 'no_elementor_data' ], [ $dry['would_restore_revision'], $dry['would_restore'] ], 'the preview says the same' );
+
+		$result = IATO_MCP_Rollback::execute( $receipt );
+		$this->assertTrue( $result['success'] );
+		$this->assertArrayNotHasKey( '_elementor_data', IATO_Test_WP::$meta[ self::PAGE ], 'the text inside is not restored' );
+		$this->assertStringNotContainsString( '<script>', IATO_Test_WP::$posts[ self::PAGE ]['post_content'], 'the content goes through the filter' );
+	}
+
+	public function test_an_old_receipt_keeps_its_content_for_someone_allowed_to_store_it(): void {
+		$this->as_user( 0, 'site_key', null, true );
+		IATO_Test_WP::$meta[ self::PAGE ]  = [ '_elementor_data' => '[{"id":"n"}]', '_elementor_edit_mode' => 'builder' ];
+		IATO_Test_WP::$posts[ self::PAGE ]['post_content'] = '<h2>rendered</h2>';
+		$before  = IATO_MCP_Rollback::no_elementor_envelope( '<p>x</p><iframe src="/a"></iframe>', '' );
+		$receipt = self::receipt( 'elementor_widget', 'elementor:document:replace', self::PAGE, $before, IATO_MCP_Elementor_Adapter::compute_revision( '[{"id":"n"}]' ), 'site_key', 0 );
+		$this->assertTrue( IATO_MCP_Rollback::execute( $receipt )['success'] );
+		$this->assertSame( '<p>x</p><iframe src="/a"></iframe>', IATO_Test_WP::$posts[ self::PAGE ]['post_content'] );
+	}
+
+	#[DataProvider( 'tree_receipts' )]
+	public function test_a_write_keeps_an_envelope_when_it_replaces_what_visitors_see( string $stored, string $flag, bool $turning_on, bool $envelope ): void {
+		IATO_Test_WP::$meta[ self::PAGE ] = [ '_elementor_edit_mode' => $flag ];
+		IATO_Test_WP::$posts[ self::PAGE ]['post_content'] = '<p>Hand</p>';
+		[ $before, $field ] = IATO_MCP_Rollback::tree_receipt( self::PAGE, $stored, $turning_on, 'elementor:document:replace' );
+		if ( ! $envelope ) {
+			$this->assertSame( [ $stored, 'elementor:document:replace' ], [ $before, $field ] );
+			return;
+		}
+		$this->assertSame( IATO_MCP_Rollback::ACTIVATE_FIELD, $field );
+		$this->assertSame( '<p>Hand</p>', IATO_MCP_Rollback::no_elementor_from( $before )['post_content'] );
+		$this->assertSame( $flag, IATO_MCP_Rollback::no_elementor_from( $before )['edit_mode'] );
+	}
+
+	public static function tree_receipts(): array {
+		return [
+			'elements, flag on'          => [ '[{"id":"a"}]', 'builder', false, false ],
+			'elements, turning on'       => [ '[{"id":"a"}]', '', true, true ],
+			'no data, turning on'        => [ '', '', true, true ],
+			'no data, flag on'           => [ '', 'builder', false, true ],
+			'stored empty tree, flag on' => [ '[]', 'builder', false, true ],
+			'unreadable data, flag on'   => [ 'not json', 'builder', false, true ],
+			'a JSON null, flag on'       => [ 'null', 'builder', false, true ],
+		];
+	}
+
+	public function test_turning_elementor_back_on_after_a_hand_edit_is_a_conflict(): void {
+		$this->as_user( 0, 'site_key', null, true );
+		IATO_Test_WP::$meta[ self::PAGE ] = [ '_elementor_data' => '[{"id":"n"}]' ];
+		$modified = function ( string $when ): void {
+			IATO_Test_Roles::$posts[ self::PAGE ]['post_modified_gmt'] = $when;
+			IATO_Test_WP::$posts[ self::PAGE ]['post_modified_gmt']    = $when;
+		};
+		$modified( '2026-01-02 00:00:00' );
+		$receipt = array_merge( self::receipt( 'post_meta', '_elementor_edit_mode', self::PAGE, 'builder', null ), [ 'applied_at' => '2026-01-01 00:00:00' ] );
+		$check   = IATO_MCP_Rollback_Conflict::check( $receipt );
+		$this->assertSame( 'conflict', $check['status'] );
+		$this->assertStringContainsString( 'hide that edit', $check['reason'] );
+
+		$modified( '2025-12-31 00:00:00' );
+		$this->assertSame( 'match', IATO_MCP_Rollback_Conflict::check( $receipt )['status'], 'not edited since: nothing to hide' );
+
+		$off = array_merge( self::receipt( 'post_meta', '_elementor_edit_mode', self::PAGE, null, null ), [ 'applied_at' => '2026-01-01 00:00:00' ] );
+		$modified( '2026-01-02 00:00:00' );
+		$this->assertSame( 'match', IATO_MCP_Rollback_Conflict::check( $off )['status'], 'rolling back to off hides nothing' );
+	}
+
+	public function test_only_an_envelope_gains_the_content_hash(): void {
+		$this->assertSame( '[{"id":"a"}]', IATO_MCP_Rollback::envelope_with_content_after( '[{"id":"a"}]', 'x' ) );
+		$envelope = IATO_MCP_Rollback::no_elementor_from( IATO_MCP_Rollback::envelope_with_content_after( IATO_MCP_Rollback::no_elementor_envelope( 'c', '' ), 'x' ) );
+		$this->assertSame( hash( 'sha256', 'x' ), $envelope['content_after_sha256'] );
+		$this->assertSame( 'c', $envelope['post_content'] );
 	}
 
 	public function test_elementor_rollback_of_a_post_that_had_no_elementor_data_puts_its_content_back(): void {

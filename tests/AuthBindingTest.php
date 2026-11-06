@@ -42,6 +42,67 @@ final class AuthBindingTest extends TestCase {
 
 	// ── Owner recorded ────────────────────────────────────────────────────
 
+	public function test_keeping_columns_touches_only_the_post_being_written(): void {
+		$saved = fn( int $id ) => apply_filters(
+			'wp_insert_post_data',
+			[ 'post_title' => 'filtered', 'post_content' => 'filtered', 'post_excerpt' => 'filtered' ],
+			[ 'ID' => $id ],
+			[ 'post_title' => 'given', 'post_content' => 'given', 'post_excerpt' => 'given' ]
+		);
+		$result = IATO_MCP_Auth::keeping_post_columns( 7, fn() => [ 'this' => $saved( 7 ), 'other' => $saved( 8 ) ], [ 'post_title' ] );
+		$this->assertSame( [ 'post_title' => 'filtered', 'post_content' => 'given', 'post_excerpt' => 'given' ], $result['this'], 'a named column stays filtered, the rest as given' );
+		$this->assertSame( [ 'post_title' => 'filtered', 'post_content' => 'filtered', 'post_excerpt' => 'filtered' ], $result['other'], 'a post saved during this one keeps its own' );
+		$this->assertSame( 'filtered', $saved( 7 )['post_content'], 'gone afterwards' );
+
+		$verbatim = IATO_MCP_Auth::keeping_post_columns( 7, fn() => [ $saved( 7 ), apply_filters( 'wp_insert_post_empty_content', true, [ 'ID' => 7 ] ), apply_filters( 'wp_insert_post_empty_content', true, [ 'ID' => 8 ] ) ], [ 'post_title' ], true );
+		$this->assertSame( 'given', $verbatim[0]['post_title'], 'verbatim: named columns too' );
+		$this->assertFalse( $verbatim[1], 'this post may be left empty' );
+		$this->assertTrue( $verbatim[2], 'and only this one' );
+		$this->assertTrue( apply_filters( 'wp_insert_post_empty_content', true, [ 'ID' => 7 ] ), 'gone afterwards' );
+
+		$revision = IATO_MCP_Auth::keeping_post_columns(
+			7,
+			fn() => [
+				apply_filters( 'wp_insert_post_data', [ 'post_title' => 'filtered' ], [ 'post_type' => 'revision', 'post_parent' => 7 ], [ 'post_title' => 'given' ] ),
+				apply_filters( 'wp_insert_post_data', [ 'post_title' => 'filtered' ], [ 'post_type' => 'revision', 'post_parent' => 8 ], [ 'post_title' => 'given' ] ),
+				apply_filters( 'wp_insert_post_data', [ 'post_title' => 'filtered' ], [ 'ID' => 9 ], (object) [ 'post_title' => 'given' ] ),
+			],
+			[ 'post_title' ]
+		);
+		$this->assertSame( 'given', $revision[0]['post_title'], 'this post\'s revision holds what the post holds' );
+		$this->assertSame( 'filtered', $revision[1]['post_title'], 'another post\'s does not' );
+		$this->assertSame( 'filtered', $revision[2]['post_title'], 'an object from another plugin\'s save is no error' );
+
+		$empty = fn( array $named ) => IATO_MCP_Auth::keeping_post_columns( 7, fn() => apply_filters( 'wp_insert_post_empty_content', true, [ 'ID' => 7 ] ), $named );
+		$this->assertFalse( $empty( [ 'post_status' ] ), 'a call that touches no text cannot empty the post' );
+		$this->assertTrue( $empty( [ 'post_content' ] ), 'one that does can, and WordPress decides' );
+
+		try {
+			IATO_MCP_Auth::keeping_post_columns( 7, function () { throw new RuntimeException( 'boom' ); } );
+			$this->fail( 'a throw passes through' );
+		} catch ( RuntimeException $e ) {
+			$this->assertSame( 'filtered', $saved( 7 )['post_content'], 'removed on a throw too' );
+		}
+	}
+
+	public function test_a_revision_cannot_be_the_target_of_a_write(): void {
+		if ( ! function_exists( 'get_post_type' ) ) {
+			require_once __DIR__ . '/stubs-cache.php';
+		}
+		$ref = new ReflectionClass( IATO_MCP_Auth::class );
+		$ref->getProperty( 'authenticated' )->setValue( null, true );
+		$ref->getProperty( 'site_key_full_access' )->setValue( null, true );
+		IATO_Test_Cache_State::$post_types = [ 77 => 'revision', 78 => 'page' ];
+		foreach ( [ 'edit_post', 'delete_post' ] as $cap ) {
+			$this->assertSame( 'revision_target', IATO_MCP_Auth::require_cap( $cap, 77 )->get_error_code(), 'the site key passes every other check' );
+			$this->assertTrue( IATO_MCP_Auth::require_cap( $cap, 78 ) );
+		}
+		$this->assertTrue( IATO_MCP_Auth::require_cap( 'edit_posts' ), 'not an object check' );
+		IATO_Test_Cache_State::$post_types = [];
+		$ref->getProperty( 'site_key_full_access' )->setValue( null, false );
+		$ref->getProperty( 'authenticated' )->setValue( null, false );
+	}
+
 	public function test_generate_key_records_the_generating_user_as_owner(): void {
 		unset( IATO_Test_Abilities_State::$options['iato_mcp_key'] );
 		IATO_Test_Auth_State::$current_user_id = 1;

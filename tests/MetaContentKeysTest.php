@@ -26,6 +26,8 @@ final class MetaContentKeysTest extends TestCase {
 		IATO_Test_WP::$meta   = [ self::POST => [] ];
 		IATO_Test_WP::$posts  = [ self::POST => [ 'post_content' => '', 'post_type' => 'page' ] ];
 		IATO_Test_WP::$writes = [];
+		$GLOBALS['wpdb']->stored_keys    = [];
+		$GLOBALS['wpdb']->other_spelling = null;
 		$ref = new ReflectionClass( IATO_MCP_Auth::class );
 		foreach ( [ 'authenticated' => true, 'authenticated_user' => null, 'site_key_full_access' => true, 'unfiltered_html_allowed' => false, 'credential' => [ 'kind' => 'site_key', 'user_id' => 0 ] ] as $name => $value ) {
 			$ref->getProperty( $name )->setValue( null, $value );
@@ -51,6 +53,12 @@ final class MetaContentKeysTest extends TestCase {
 		return json_decode( $r['content'][0]['text'], true );
 	}
 
+	/** What the handler returned, undecoded: tool_error() results keep their isError. */
+	private function raw( array $args ): array {
+		$r = ( IATO_MCP_Server::get_catalog_entry( 'update_post_meta' )['handler'] )( $args + [ 'id' => self::POST ] );
+		return is_wp_error( $r ) ? [ 'isError' => true, 'error' => $r->get_error_code() ] : $r;
+	}
+
 	#[\PHPUnit\Framework\Attributes\DataProvider( 'content_keys' )]
 	public function test_builder_keys_are_refused_with_and_without_force( string $key ): void {
 		foreach ( [ [], [ 'force' => true ], [ 'dry_run' => true ], [ 'force' => true, 'dry_run' => true ] ] as $extra ) {
@@ -73,6 +81,98 @@ final class MetaContentKeysTest extends TestCase {
 			[ '_ELEMENTOR_DATA' ],
 			[ '_elementor_anything_an_addon_adds' ],
 		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'keys_the_database_matches' )]
+	public function test_a_key_the_database_reads_as_another_is_refused( string $key, string $row, array $extra ): void {
+		IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = 'stored';
+		$GLOBALS['wpdb']->stored_keys = [ $row ];
+		foreach ( [ [], [ 'dry_run' => true ] ] as $mode ) {
+			$r = $this->call( [ 'key' => $key, 'value' => 'x' ] + $extra + $mode );
+			$this->assertSame( 'meta_key_mismatch', $r['error'] ?? null, $key );
+			$this->assertSame( $row, $r['data']['stored_key'] );
+		}
+		$this->assertSame( [], IATO_Test_WP::$writes );
+		$this->assertSame( 'stored', IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] );
+	}
+
+	public static function keys_the_database_matches(): array {
+		return [
+			'look-alike first character'    => [ "\xEF\xBC\xBFelementor_data", '_elementor_data', [ 'force' => true ] ],
+			'look-alike, a flag'            => [ "\xEF\xBC\xBFelementor_edit_mode", '_elementor_edit_mode', [ 'force' => true ] ],
+			'trailing space'                => [ 'site-post-title ', 'site-post-title', [ 'force' => true ] ],
+			'another case of an open key'   => [ 'Site-Post-Title', 'site-post-title', [] ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'keys_with_backslashes' )]
+	public function test_a_backslash_in_a_key_is_refused_even_with_force( string $key ): void {
+		foreach ( [ [], [ 'force' => true ], [ 'dry_run' => true ], [ 'value' => null ] ] as $mode ) {
+			$r = $this->call( $mode + [ 'key' => $key, 'value' => 'x' ] );
+			$this->assertSame( 'invalid_meta_key', $r['error'] ?? null, $key );
+		}
+		$this->assertSame( [], IATO_Test_WP::$writes );
+		$this->assertSame( 'invalid_meta_key', IATO_MCP_Meta_Policy::check_stored_key( self::POST, $key )->get_error_code(), 'a rollback of an old receipt too' );
+	}
+
+	public static function keys_with_backslashes(): array {
+		return [
+			'before the underscore' => [ '\\_elementor_data' ],
+			'inside'                => [ '_elementor\\_edit_mode' ],
+			'a denied key'          => [ '\\_elementor\\_element_cache' ],
+			'an open key'           => [ 'plain\\key' ],
+			'doubled'               => [ '\\\\_thumbnail_id' ],
+		];
+	}
+
+	public function test_another_case_of_an_allowed_key_is_not_that_key(): void {
+		$this->assertSame( 'elementor_content_key', $this->call( [ 'key' => '_ELEMENTOR_EDIT_MODE', 'value' => 'builder' ] )['error'] ?? null );
+		$this->assertSame( 'elementor_content_key', $this->call( [ 'key' => '_ELEMENTOR_EDIT_MODE', 'value' => 'builder', 'force' => true ] )['error'] ?? null );
+		$this->assertSame( 'meta_requires_force', $this->call( [ 'key' => '_WP_PAGE_TEMPLATE', 'value' => 'x' ] )['error'] ?? null );
+		$this->assertSame( 'meta_requires_force', $this->call( [ 'key' => '_YOAST_WPSEO_TITLE', 'value' => 'x' ] )['error'] ?? null );
+		$this->assertArrayNotHasKey( 'error', $this->call( [ 'key' => '_elementor_edit_mode', 'value' => 'builder' ] ) );
+		$this->assertArrayNotHasKey( 'error', $this->call( [ 'key' => '_wp_page_template', 'value' => 'x' ] ) );
+	}
+
+	public function test_a_new_key_is_refused_when_another_spelling_is_stored_elsewhere(): void {
+		$GLOBALS['wpdb']->other_spelling = 'rank_math_title';
+		foreach ( [ [], [ 'dry_run' => true ], [ 'force' => true ] ] as $mode ) {
+			$r = $this->call( [ 'key' => 'RANK_MATH_TITLE', 'value' => 'x' ] + $mode );
+			$this->assertSame( 'meta_key_mismatch', $r['error'] ?? null );
+			$this->assertSame( 'rank_math_title', $r['data']['stored_key'] );
+		}
+		$this->assertSame( [], IATO_Test_WP::$writes );
+	}
+
+	public function test_a_row_this_post_already_has_writes_whatever_other_posts_hold(): void {
+		$GLOBALS['wpdb']->stored_keys    = [ 'myKey' ];
+		$GLOBALS['wpdb']->other_spelling = 'MYKEY';
+		$this->assertArrayNotHasKey( 'error', $this->call( [ 'key' => 'myKey', 'value' => 'x' ] ) );
+	}
+
+	public function test_a_key_of_zero_is_refused_as_wordpress_stores_nothing(): void {
+		$r = $this->call( [ 'key' => '0', 'value' => 'x' ] );
+		$this->assertSame( 'invalid_meta_key', $r['error'] ?? null );
+		$this->assertSame( [], IATO_Test_WP::$writes );
+	}
+
+	public function test_the_exact_stored_key_still_writes(): void {
+		$GLOBALS['wpdb']->stored_keys = [ 'site-post-title' ];
+		$this->assertArrayNotHasKey( 'error', $this->call( [ 'key' => 'site-post-title', 'value' => 'disabled' ] ) );
+	}
+
+	public function test_a_key_longer_than_the_column_is_refused_as_nothing_would_be_stored(): void {
+		$r = $this->call( [ 'key' => str_repeat( 'k', 256 ), 'value' => 'x' ] );
+		$this->assertSame( 'meta_key_too_long', $r['error'] ?? null );
+		$this->assertSame( [], IATO_Test_WP::$writes );
+		$this->assertArrayNotHasKey( 'error', $this->call( [ 'key' => str_repeat( 'k', 255 ), 'value' => 'x' ] ) );
+	}
+
+	public function test_a_new_key_outside_ascii_needs_force(): void {
+		foreach ( [ "\xEF\xBC\xBFelementor_data", 'with space', "gr\xC3\xB6sse" ] as $key ) {
+			$this->assertSame( 'meta_requires_force', $this->call( [ 'key' => $key, 'value' => 'x' ] )['error'] ?? null, $key );
+			$this->assertArrayNotHasKey( 'error', $this->call( [ 'key' => $key, 'value' => 'x', 'force' => true ] ), $key );
+		}
 	}
 
 	public function test_allowlisted_keys_are_accepted(): void {
@@ -158,10 +258,27 @@ final class MetaContentKeysTest extends TestCase {
 
 	public function test_policy_helper_directly(): void {
 		$this->assertTrue( IATO_MCP_Meta_Policy::check_elementor_meta_write( 'my_key' ) );
-		$this->assertTrue( IATO_MCP_Meta_Policy::check_elementor_meta_write( '_Elementor_Page_Settings' ) );
+		$this->assertTrue( IATO_MCP_Meta_Policy::check_elementor_meta_write( '_elementor_page_settings' ) );
+		$this->assertInstanceOf( WP_Error::class, IATO_MCP_Meta_Policy::check_elementor_meta_write( '_Elementor_Page_Settings' ), 'another case would be a new row' );
 		$err = IATO_MCP_Meta_Policy::check_elementor_meta_write( '_elementor_data' );
 		$this->assertInstanceOf( WP_Error::class, $err );
 		$this->assertSame( 'elementor_content_key', $err->get_error_code() );
 		$this->assertSame( IATO_MCP_Meta_Policy::ELEMENTOR_WRITABLE, $err->get_error_data()['writable_elementor_keys'] );
+	}
+
+	public function test_turning_elementor_on_for_a_page_with_elementor_data_is_refused(): void {
+		IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] = '[{"id":"a"}]';
+		foreach ( [ 'builder', '1', true, 1 ] as $value ) {
+			$this->assertStringContainsString( 'elementor_not_active', json_encode( $this->raw( [ 'key' => '_elementor_edit_mode', 'value' => $value ] ) ), var_export( $value, true ) );
+		}
+		$this->assertArrayNotHasKey( '_elementor_edit_mode', IATO_Test_WP::$meta[ self::POST ] );
+	}
+
+	public function test_elementor_can_still_be_turned_off_and_a_plain_post_on(): void {
+		IATO_Test_WP::$meta[ self::POST ]['_elementor_data']      = '[{"id":"a"}]';
+		IATO_Test_WP::$meta[ self::POST ]['_elementor_edit_mode'] = 'builder';
+		$this->assertArrayNotHasKey( 'isError', $this->raw( [ 'key' => '_elementor_edit_mode', 'value' => null ] ) );
+		unset( IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] );
+		$this->assertArrayNotHasKey( 'isError', $this->raw( [ 'key' => '_elementor_edit_mode', 'value' => 'builder' ] ) );
 	}
 }
