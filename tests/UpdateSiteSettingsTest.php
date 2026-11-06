@@ -92,7 +92,7 @@ final class UpdateSiteSettingsTest extends TestCase {
 	public function test_schema_refuses_other_keys(): void {
 		$schema = IATO_MCP_Server::get_catalog_entry( 'update_site_settings' )['definition']['inputSchema'];
 		$this->assertFalse( $schema['additionalProperties'] );
-		$this->assertSame( [ 'title', 'tagline', 'homepage_displays', 'front_page_id', 'posts_page_id', 'dry_run' ], array_keys( $schema['properties'] ) );
+		$this->assertSame( [ 'title', 'tagline', 'homepage_displays', 'front_page_id', 'posts_page_id', 'site_icon', 'custom_logo', 'dry_run' ], array_keys( $schema['properties'] ) );
 	}
 
 	public function test_any_other_key_is_refused_and_nothing_is_written(): void {

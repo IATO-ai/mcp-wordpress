@@ -195,7 +195,7 @@ class IATO_MCP_Settings {
 	private const TOOL_DESCRIPTIONS = [
 		'get_site_info'            => 'Basic site information and health',
 		'get_site_settings'        => 'WordPress settings (admin only)',
-		'update_site_settings'     => 'Set site title, tagline and home page (admin only)',
+		'update_site_settings'     => 'Set site title, tagline, home page, icon and logo (admin only)',
 		'get_posts'                => 'List published posts with filters',
 		'get_post'                 => 'Single post details and meta',
 		'create_post'              => 'Create new posts and pages',
