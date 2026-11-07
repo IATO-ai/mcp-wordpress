@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.17.0
+Stable tag: 1.18.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -182,6 +182,14 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.18.0 =
+* New: `update_site_settings` sets the site icon: `site_icon` takes a Media Library attachment ID, and 0 clears it without deleting the attachment. The image must be PNG, JPEG, GIF or WebP and square; it is not cropped, and under 512x512 it is set with a warning. The response gives before and after with ID and URL, `icon_url_32` and `icon_url_192`, and `warnings`. It has `dry_run` and rollback, including back to no icon, and purges the whole site.
+* New: `update_site_settings` creates the sizes WordPress uses for a site icon, and only those, so `link rel="icon"` points at a file of the right size. Sending the ID that is already set creates any that are missing, which repairs an icon set through Elementor's Site Favicon.
+* New: `update_site_settings` sets the theme's logo: `custom_logo` has the same checks, except that it does not have to be square. WordPress keeps a logo per theme, so its rollback is refused after a theme switch.
+* New: `get_site_settings` returns `site_icon` and `custom_logo`, each `{id, url}` or null. A null `url` means the image no longer exists.
+* New: When Elementor's Site Settings has a saved favicon or logo, a change through `update_site_settings` or its rollback updates it too. Publishing Site Settings otherwise writes the old image back over the new one.
+* Fix: Rolling back `create_media` for the image used as the site icon or logo is now a conflict needing `force`, which deletes the image and clears the setting. It left the site pointing at an image that no longer existed.
 
 = 1.17.0 =
 * New: `create_elementor_template` creates a template the way Add New Template does: header, footer, single post and page, archive, search results, 404, popup, section, container or page. Theme Builder types need Elementor Pro. It builds a draft, fills it, sets its conditions and publishes last, so a failure on the way leaves nothing showing. A header or footer with conditions cannot be published empty, because it would replace the theme's with nothing. Administrators only.
@@ -513,6 +521,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.18.0 =
+Adds site_icon and custom_logo to update_site_settings and get_site_settings, so an AI client can set the favicon and logo from the Media Library, with dry_run and rollback.
 
 = 1.17.0 =
 Adds tools to create Theme Builder templates, set their display conditions, create menus and assign them to locations. resolve_url no longer reports a site-wide header as what renders each page, and says which header and footer a URL gets.

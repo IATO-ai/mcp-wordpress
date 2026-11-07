@@ -79,7 +79,7 @@ function iato_mcp_count_theme_builder_templates(): int {
 IATO_MCP_Server::register_tool(
 	'get_site_settings',
 	[
-		'description' => 'Returns site title, tagline, admin email, timezone, permalink structure, and what the home page shows (show_on_front, page_on_front, page_for_posts). Requires administrator.',
+		'description' => 'Returns site title, tagline, admin email, timezone, permalink structure, what the home page shows (show_on_front, page_on_front, page_for_posts), the site icon (site_icon: id and a 512px url, or null) and the logo (custom_logo: id and url, or null). A null url means the image no longer exists. From 512px up WordPress uses the full image, so an icon larger than that has a larger url. Requires administrator.',
 		'inputSchema' => [ 'type' => 'object', 'properties' => new stdClass(), 'required' => [] ],
 	],
 	function ( array $args ): array|WP_Error {
@@ -101,6 +101,8 @@ IATO_MCP_Server::register_tool(
 			'show_on_front'       => (string) get_option( 'show_on_front', 'posts' ),
 			'page_on_front'       => (int) get_option( 'page_on_front', 0 ),
 			'page_for_posts'      => (int) get_option( 'page_for_posts', 0 ),
+			'site_icon'           => IATO_MCP_Site_Image::report( 'site_icon' ),
+			'custom_logo'         => IATO_MCP_Site_Image::report( 'custom_logo' ),
 		] );
 	}
 );
@@ -110,7 +112,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_site_settings',
 	[
-		'description' => 'Sets the site title, the tagline, and what the home page shows. Send only what should change: title, tagline, homepage_displays ("posts" or "page"), front_page_id (a published page; required when homepage_displays is "page"), posts_page_id (a published page other than the front page, or 0 to clear). Any other key is refused. Accepts dry_run. Returns the before and after value of each option, a change receipt per option changed (roll back with the rollback tool), and a cache object: the whole site is purged. Requires administrator.',
+		'description' => 'Sets the site title, the tagline, what the home page shows, the site icon and the logo. Send only what should change: title, tagline, homepage_displays ("posts" or "page"), front_page_id (a published page; required when homepage_displays is "page"), posts_page_id (a published page other than the front page, or 0 to clear), site_icon, custom_logo. site_icon sets the favicon (the browser tab, bookmark and app icon): a Media Library attachment ID, PNG, JPEG, GIF or WebP. The image must be square and should be 512x512 or larger; it is not cropped. 0 clears it and does not delete the attachment. It also covers Site Favicon in Elementor\'s Site Settings. custom_logo sets the theme\'s logo the same way, with the same image types, and does not have to be square. Any other key is refused. Accepts dry_run. Returns the before and after value of each setting, a change receipt per setting changed (roll back with the rollback tool), warnings, and a cache object: the whole site is purged. For site_icon it also returns icon_url_32 and icon_url_192. Requires administrator.',
 		'inputSchema' => [
 			'type'                 => 'object',
 			'properties'           => [
@@ -119,6 +121,8 @@ IATO_MCP_Server::register_tool(
 				'homepage_displays' => [ 'type' => 'string', 'enum' => [ 'posts', 'page' ], 'description' => 'What the home page shows (show_on_front).' ],
 				'front_page_id'     => [ 'type' => 'integer', 'description' => 'The static front page (page_on_front): a published page. Required when homepage_displays is "page".' ],
 				'posts_page_id'     => [ 'type' => 'integer', 'description' => 'The posts page (page_for_posts): a published page other than the front page, or 0 to clear.' ],
+				'site_icon'         => [ 'type' => 'integer', 'minimum' => 0, 'description' => 'The favicon (browser tab, bookmark and app icon): an attachment ID. PNG, JPEG, GIF or WebP; must be square; should be 512x512 or larger. 0 clears it.' ],
+				'custom_logo'       => [ 'type' => 'integer', 'minimum' => 0, 'description' => 'The theme\'s logo: an attachment ID. PNG, JPEG, GIF or WebP. 0 clears it.' ],
 				'dry_run'           => [ 'type' => 'boolean', 'description' => 'Report what would change without writing.' ],
 			],
 			'required'             => [],
@@ -131,22 +135,32 @@ IATO_MCP_Server::register_tool(
 			return $cap_check;
 		}
 
-		$planned = iato_mcp_plan_site_settings( $args );
+		$images  = [];
+		$planned = iato_mcp_plan_site_settings( $args, $images );
 		if ( is_wp_error( $planned ) ) {
-			return $planned;
+			return in_array( $planned->get_error_code(), IATO_MCP_Site_Image::REFUSALS, true ) ? IATO_MCP_Site_Image::refusal( $planned ) : $planned;
 		}
 
 		if ( ! empty( $args['dry_run'] ) ) {
 			$changes = [];
 			foreach ( $planned as $input => $plan ) {
-				$changes[ $input ] = [ 'option' => $plan['option'], 'before' => $plan['before'], 'after' => $plan['stored'] ];
+				$changes[ $input ] = isset( $images[ $input ] )
+					? iato_mcp_site_image_change( $input, (int) $plan['value'], $images[ $input ]['before_id'] )
+					: [ 'option' => $plan['option'], 'before' => $plan['before'], 'after' => $plan['stored'] ];
 			}
-			return IATO_MCP_Server::ok( [ 'dry_run' => true, 'changes' => (object) $changes ] );
+			return IATO_MCP_Server::ok( [ 'dry_run' => true, 'changes' => (object) $changes ] + iato_mcp_site_image_preview( $images ) );
 		}
 
 		$changes  = [];
 		$receipts = [];
+		// Before any option: a failure in here leaves every setting as it was.
+		$image_report = iato_mcp_prepare_site_images( $images );
 		foreach ( $planned as $input => $plan ) {
+			if ( isset( $images[ $input ] ) ) {
+				$receipts[]        = iato_mcp_write_site_image( $input, (int) $plan['value'], $plan['before'] );
+				$changes[ $input ] = iato_mcp_site_image_change( $input, IATO_MCP_Site_Image::current( $input ), $images[ $input ]['before_id'] );
+				continue;
+			}
 			update_option( $plan['option'], $plan['value'] ); // update_option() does not unslash
 			// What WordPress stored (it runs esc_html on the title and tagline): the
 			// rollback conflict check compares the stored value with the receipt's.
@@ -158,7 +172,7 @@ IATO_MCP_Server::register_tool(
 			flush_rewrite_rules( false ); // wp-admin does this from a hook that is not loaded on REST requests
 		}
 
-		$data = [ 'changes' => (object) $changes ];
+		$data = [ 'changes' => (object) $changes ] + iato_mcp_finish_site_images( $images, $image_report );
 		if ( 1 === count( $receipts ) ) {
 			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
 		} elseif ( count( $receipts ) > 1 ) {
@@ -172,27 +186,30 @@ IATO_MCP_Server::register_tool(
  * Validate every requested setting before anything is written, and drop those
  * that would not change.
  *
- * @return array<string,array{option:string,value:mixed,before:string,stored:string}>|WP_Error
+ * @param array $images Filled in: site_icon and custom_logo as sent, whether or not they change.
+ * @return array<string,array{option:string,value:mixed,before:mixed,stored:string}>|WP_Error
  */
-function iato_mcp_plan_site_settings( array $args ): array|WP_Error {
+function iato_mcp_plan_site_settings( array $args, array &$images = [] ): array|WP_Error {
 	$options = [
 		'title'             => 'blogname',
 		'tagline'           => 'blogdescription',
 		'front_page_id'     => 'page_on_front',
 		'posts_page_id'     => 'page_for_posts',
 		'homepage_displays' => 'show_on_front',
+		'site_icon'         => 'site_icon',
+		'custom_logo'       => 'custom_logo',
 	];
 
 	$unknown = array_values( array_diff( array_map( 'strval', array_keys( $args ) ), array_keys( $options ), [ 'dry_run' ] ) );
 	if ( [] !== $unknown ) {
 		return new WP_Error(
 			'unknown_setting',
-			sprintf( 'update_site_settings does not accept: %s. It accepts title, tagline, homepage_displays, front_page_id and posts_page_id.', implode( ', ', $unknown ) ),
+			sprintf( 'update_site_settings does not accept: %s. It accepts title, tagline, homepage_displays, front_page_id, posts_page_id, site_icon and custom_logo.', implode( ', ', $unknown ) ),
 			[ 'status' => 400 ]
 		);
 	}
 	if ( [] === array_intersect_key( $options, $args ) ) {
-		return new WP_Error( 'no_settings', 'Send at least one of title, tagline, homepage_displays, front_page_id or posts_page_id.', [ 'status' => 400 ] );
+		return new WP_Error( 'no_settings', 'Send at least one of title, tagline, homepage_displays, front_page_id, posts_page_id, site_icon or custom_logo.', [ 'status' => 400 ] );
 	}
 
 	$values = [];
@@ -242,6 +259,16 @@ function iato_mcp_plan_site_settings( array $args ): array|WP_Error {
 		);
 	}
 
+	foreach ( array_keys( IATO_MCP_Site_Image::KIT_SETTINGS ) as $key ) {
+		if ( array_key_exists( $key, $args ) ) {
+			$checked = IATO_MCP_Site_Image::check( $key, $args[ $key ] );
+			if ( is_wp_error( $checked ) ) {
+				return $checked;
+			}
+			$images[ $key ] = $checked + [ 'before_id' => IATO_MCP_Site_Image::current( $key ) ];
+		}
+	}
+
 	$planned = [];
 	foreach ( $options as $key => $option ) {
 		if ( ! array_key_exists( $key, $values ) ) {
@@ -251,6 +278,21 @@ function iato_mcp_plan_site_settings( array $args ): array|WP_Error {
 		$stored = (string) sanitize_option( $option, $values[ $key ] );
 		if ( $stored !== $before ) {
 			$planned[ $key ] = [ 'option' => $option, 'value' => $values[ $key ], 'before' => $before, 'stored' => $stored ];
+		}
+	}
+	// Last: Elementor's hook on the title can throw for a request with no user, after
+	// that value is stored. An image written before it would have a receipt no one sees.
+	foreach ( $images as $key => $image ) {
+		if ( $image['id'] !== $image['before_id'] ) {
+			$planned[ $key ] = [
+				'option' => $key,
+				'value'  => $image['id'],
+				// A logo belongs to the theme it was set on (see the rollback).
+				'before' => 'custom_logo' === $key
+					? [ 'id' => $image['before_id'], 'theme' => IATO_MCP_Site_Image::get()->theme() ]
+					: (string) $image['before_id'],
+				'stored' => (string) $image['id'],
+			];
 		}
 	}
 	return $planned;
@@ -263,4 +305,109 @@ function iato_mcp_is_published_page( int $page_id ): bool {
 	}
 	$page = get_post( $page_id );
 	return $page && 'page' === $page->post_type && 'publish' === $page->post_status;
+}
+
+/** A setting's entry in `changes`: the attachment ID and its URL on both sides. */
+function iato_mcp_site_image_change( string $setting, int $after, int $before ): array {
+	return [
+		'option' => $setting,
+		'before' => IATO_MCP_Site_Image::describe( $before ),
+		'after'  => IATO_MCP_Site_Image::describe( $after ),
+	];
+}
+
+/** What a dry run can say about the images. Also what the real write would do with the same IDs. */
+function iato_mcp_site_image_preview( array $images ): array {
+	if ( [] === $images ) {
+		return [];
+	}
+	$report = [ 'warnings' => [] ];
+	$synced = [];
+	foreach ( $images as $setting => $image ) {
+		$report['warnings'] = array_merge( $report['warnings'], $image['warnings'] );
+		if ( [] !== $image['missing_sizes'] ) {
+			$report['would_create_sizes'] = $image['missing_sizes'];
+		}
+		if ( IATO_MCP_Site_Image::kit_differs( $setting, $image['id'] ) ) {
+			$synced[] = IATO_MCP_Site_Image::KIT_SETTINGS[ $setting ];
+		}
+	}
+	if ( [] !== $synced ) {
+		$report['would_sync_elementor_settings'] = $synced;
+	}
+	if ( isset( $report['would_create_sizes'] ) ) {
+		$report['not_checked'] = [ 'whether this server can create the image sizes' ];
+	}
+	return $report;
+}
+
+/**
+ * Create the icon's missing sizes, even when the setting itself does not change:
+ * Elementor's Site Favicon sets the option and creates none.
+ *
+ * @return array{sizes_created?:string[],warnings?:string[]}
+ */
+function iato_mcp_prepare_site_images( array $images ): array {
+	if ( [] === $images ) {
+		return [];
+	}
+	$report = [ 'warnings' => [] ];
+	foreach ( $images as $image ) {
+		$report['warnings'] = array_merge( $report['warnings'], $image['warnings'] );
+		if ( [] === $image['missing_sizes'] ) {
+			continue;
+		}
+		$created                 = IATO_MCP_Site_Image::get()->make_sizes( $image['id'], $image['missing_sizes'] );
+		$report['sizes_created'] = $created;
+		if ( [] !== $created && $image['id'] === $image['before_id'] ) {
+			// No receipt will say so, and cached pages still link to the larger images.
+			IATO_MCP_Cache::note_write( 'site_setting', null, 'site_icon', null, $created );
+		}
+		$failed = array_values( array_diff( $image['missing_sizes'], $created ) );
+		if ( [] !== $failed ) {
+			$report['warnings'][] = sprintf( 'WordPress could not create these sizes of attachment %1$d: %2$s. The image is still set, and browsers will get a larger size.', $image['id'], implode( ', ', $failed ) );
+		}
+	}
+	return $report;
+}
+
+/** Write one setting and return its receipt, which holds what was stored. */
+function iato_mcp_write_site_image( string $setting, int $id, mixed $before ): array {
+	if ( 'custom_logo' === $setting ) {
+		IATO_MCP_Site_Image::get()->set_logo( $id );
+		return IATO_MCP_Change_Receipt::record(
+			null,
+			'site_setting',
+			'custom_logo',
+			$before,
+			[ 'id' => IATO_MCP_Site_Image::current( 'custom_logo' ), 'theme' => IATO_MCP_Site_Image::get()->theme() ]
+		);
+	}
+	update_option( 'site_icon', $id );
+	return IATO_MCP_Change_Receipt::record( null, 'site_setting', 'site_icon', $before, (string) IATO_MCP_Site_Image::current( 'site_icon' ) );
+}
+
+/** After the writes: Elementor's Site Settings brought in line, and the icon's URLs as WordPress now gives them. */
+function iato_mcp_finish_site_images( array $images, array $report ): array {
+	if ( [] === $images ) {
+		return $report;
+	}
+	$synced = [];
+	foreach ( $images as $setting => $image ) {
+		$sync = IATO_MCP_Site_Image::sync_kit( $setting, $image['id'] );
+		if ( $sync['synced'] ) {
+			$synced[] = IATO_MCP_Site_Image::KIT_SETTINGS[ $setting ];
+		}
+		if ( null !== $sync['warning'] ) {
+			$report['warnings'][] = $sync['warning'];
+		}
+	}
+	if ( isset( $images['site_icon'] ) ) {
+		$report['icon_url_32']  = IATO_MCP_Site_Image::get()->icon_url( 32 );
+		$report['icon_url_192'] = IATO_MCP_Site_Image::get()->icon_url( 192 );
+	}
+	if ( [] !== $synced ) {
+		$report['elementor_settings_synced'] = $synced;
+	}
+	return $report;
 }

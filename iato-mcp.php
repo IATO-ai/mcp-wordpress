@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.17.0
+ * Version:     1.18.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.17.0' );
+define( 'IATO_MCP_VERSION', '1.18.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -79,6 +79,7 @@ require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-engine.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-writer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
 require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
+require_once IATO_MCP_DIR . 'includes/class-site-image.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 

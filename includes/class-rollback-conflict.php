@@ -71,9 +71,18 @@ class IATO_MCP_Rollback_Conflict {
 				return self::compare( $post->{$key} ?? null, $after, "post {$field}" );
 
 			case 'attachment':
-				return 'create' === $field
-					? self::created_object( $receipt, $post_id, 'attachment' )
-					: self::unverifiable( "unknown attachment field {$field}" );
+				if ( 'create' !== $field ) {
+					return self::unverifiable( "unknown attachment field {$field}" );
+				}
+				$used_as = IATO_MCP_Site_Image::used_as( $post_id );
+				return [] !== $used_as
+					? [
+						'status'   => 'conflict',
+						'reason'   => sprintf( 'this image is the site\'s %s, and rolling back deletes it for good, so force also clears that setting', implode( ' and ', str_replace( [ 'site_icon', 'custom_logo' ], [ 'icon', 'logo' ], $used_as ) ) ),
+						'current'  => [ 'used_as' => $used_as ],
+						'expected' => [ 'used_as' => [] ],
+					]
+					: self::created_object( $receipt, $post_id, 'attachment' );
 
 			case 'page':
 				if ( ! get_post( $post_id ) ) {
@@ -154,6 +163,13 @@ class IATO_MCP_Rollback_Conflict {
 				return self::redirect( $after );
 
 			case 'site_setting':
+				// "None" can be stored as 0, '' or nothing: these compare as IDs.
+				if ( 'site_icon' === $field ) {
+					return self::compare( (string) IATO_MCP_Site_Image::current( 'site_icon' ), $after, 'site icon' );
+				}
+				if ( 'custom_logo' === $field ) {
+					return self::compare( [ 'id' => IATO_MCP_Site_Image::current( 'custom_logo' ), 'theme' => IATO_MCP_Site_Image::get()->theme() ], $after, 'site logo' );
+				}
 				return in_array( $field, self::SITE_OPTIONS, true )
 					? self::compare( get_option( $field ), $after, "site setting {$field}" )
 					: self::unverifiable( "unknown site setting {$field}" );
@@ -164,7 +180,10 @@ class IATO_MCP_Rollback_Conflict {
 	}
 
 	/** The options update_site_settings writes; a `site_setting` receipt's field names one of them. */
-	public const SITE_OPTIONS = [ 'blogname', 'blogdescription', 'show_on_front', 'page_on_front', 'page_for_posts' ];
+	public const SITE_OPTIONS = [ 'blogname', 'blogdescription', 'show_on_front', 'page_on_front', 'page_for_posts', 'site_icon' ];
+
+	/** The theme mods it writes (1.18.0): a receipt's before and after values hold the theme too. */
+	public const SITE_THEME_MODS = [ 'custom_logo' ];
 
 	/** Receipt field → WP_Post property for target_type post. */
 	private const POST_FIELDS = [

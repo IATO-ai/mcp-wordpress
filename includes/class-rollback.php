@@ -451,8 +451,14 @@ class IATO_MCP_Rollback {
 	 * site no longer has published cannot go back to being the front page.
 	 */
 	private static function site_setting_unavailable( string $field, mixed $before ): ?WP_Error {
-		if ( ! in_array( $field, IATO_MCP_Rollback_Conflict::SITE_OPTIONS, true ) ) {
+		if ( ! in_array( $field, IATO_MCP_Rollback_Conflict::SITE_OPTIONS, true ) && ! in_array( $field, IATO_MCP_Rollback_Conflict::SITE_THEME_MODS, true ) ) {
 			return new WP_Error( 'rollback_unavailable', "This receipt names an option update_site_settings does not write: {$field}.", [ 'status' => 409 ] );
+		}
+		if ( 'site_icon' === $field || 'custom_logo' === $field ) {
+			$why = self::site_image_unavailable( $field, $before );
+			if ( null !== $why ) {
+				return $why;
+			}
 		}
 		if ( in_array( $field, [ 'page_on_front', 'page_for_posts' ], true ) && (int) $before > 0 ) {
 			if ( ! iato_mcp_is_published_page( (int) $before ) ) {
@@ -467,6 +473,37 @@ class IATO_MCP_Rollback {
 				return new WP_Error(
 					'rollback_unavailable',
 					sprintf( 'Page %1$d is now %2$s, and one page cannot be both the front page and the posts page. Change %2$s first, with update_site_settings or by rolling that change back.', (int) $before, $other ),
+					[ 'status' => 409 ]
+				);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Why a site icon or logo cannot go back, or null (1.18.0). Neither case can be
+	 * forced. A logo belongs to one theme: WordPress keeps theme mods per theme.
+	 */
+	private static function site_image_unavailable( string $field, mixed $before ): ?WP_Error {
+		$previous = (int) $before;
+		if ( 'custom_logo' === $field ) {
+			$recorded = IATO_MCP_Rollback_Conflict::json_array( $before );
+			$theme    = IATO_MCP_Site_Image::get()->theme();
+			if ( ( $recorded['theme'] ?? null ) !== $theme ) {
+				return new WP_Error(
+					'rollback_unavailable',
+					sprintf( 'This logo change was made on the theme %s and %s is active now. WordPress keeps a logo per theme, so it cannot be rolled back. Set the logo with update_site_settings.', (string) ( $recorded['theme'] ?? 'unknown' ), $theme ),
+					[ 'status' => 409 ]
+				);
+			}
+			$previous = (int) ( $recorded['id'] ?? 0 );
+		}
+		if ( $previous > 0 ) {
+			$refusal = IATO_MCP_Site_Image::attachment_refusal( $field, $previous );
+			if ( null !== $refusal ) {
+				return new WP_Error(
+					'rollback_unavailable',
+					sprintf( 'Attachment %1$d can no longer be restored as %2$s: %3$s Choose another image with update_site_settings.', $previous, $field, $refusal->get_error_message() ),
 					[ 'status' => 409 ]
 				);
 			}
@@ -619,7 +656,16 @@ class IATO_MCP_Rollback {
 	 * '0' is a real value of the page options.
 	 */
 	private static function rollback_site_setting( string $field, mixed $before_value ): bool|WP_Error {
+		if ( 'custom_logo' === $field ) {
+			$id = (int) ( IATO_MCP_Rollback_Conflict::json_array( $before_value )['id'] ?? 0 );
+			IATO_MCP_Site_Image::get()->set_logo( $id );
+			IATO_MCP_Site_Image::sync_kit( 'custom_logo', $id );
+			return true;
+		}
 		update_option( $field, null === $before_value ? '' : (string) $before_value ); // update_option() does not unslash
+		if ( 'site_icon' === $field ) {
+			IATO_MCP_Site_Image::sync_kit( 'site_icon', (int) $before_value );
+		}
 		if ( 'page_on_front' === $field ) {
 			flush_rewrite_rules( false ); // as update_site_settings does
 		}
@@ -835,10 +881,12 @@ class IATO_MCP_Rollback {
 			// Already removed — treat as success so the receipt can be marked rolled-back.
 			return true;
 		}
+		$used_as = IATO_MCP_Site_Image::used_as( $post_id );
 		$deleted = wp_delete_attachment( $post_id, true );
 		if ( ! $deleted ) {
 			return new WP_Error( 'delete_failed', 'Failed to delete attachment.' );
 		}
+		IATO_MCP_Site_Image::forget( $post_id, $used_as );
 		return true;
 	}
 

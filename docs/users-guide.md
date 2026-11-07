@@ -229,13 +229,13 @@ Returns site name, URL, WordPress version, active theme, plugin count, and `cach
 
 #### `get_site_settings`
 
-Returns site title, tagline, admin email, timezone, permalink structure, and what the home page shows: `show_on_front`, `page_on_front`, `page_for_posts`.
+Returns site title, tagline, admin email, timezone, permalink structure, what the home page shows (`show_on_front`, `page_on_front`, `page_for_posts`), the site icon (`site_icon`) and the logo (`custom_logo`). Each of the last two is `{id, url}`, or null when none is set. A null `url` means the image no longer exists. From 512 pixels up WordPress uses the full image, so the icon's `url` can be larger than that.
 
 **Capability:** `manage_options` (admin only)
 
 #### `update_site_settings`
 
-Sets the site title, the tagline and what the home page shows. Send only what should change; any other key is refused.
+Sets the site title, the tagline, what the home page shows, the site icon and the logo. Send only what should change; any other key is refused.
 
 | Parameter | Option | Notes |
 |---|---|---|
@@ -244,10 +244,31 @@ Sets the site title, the tagline and what the home page shows. Send only what sh
 | `homepage_displays` | `show_on_front` | `posts` or `page` |
 | `front_page_id` | `page_on_front` | A published page. Required when `homepage_displays` is `page` |
 | `posts_page_id` | `page_for_posts` | A published page other than the front page, or `0` to clear |
+| `site_icon` | `site_icon` | The favicon (browser tab, bookmark and app icon): an attachment ID, or `0` to clear it. See below |
+| `custom_logo` | The theme's `custom_logo` | The logo: an attachment ID, or `0` to clear it. See below |
 
 Accepts `dry_run`. Returns the before and after value of each option in `changes`, a change receipt per option changed (one `change_receipt`, or `change_receipts` for several), and a `cache` object: the whole site is purged.
 
-**Capability:** `manage_options` (admin only)
+**Site icon and logo.** Upload the image with `create_media` first, then send its ID. Clearing never deletes the attachment.
+
+| Refused with | When |
+|---|---|
+| `attachment_not_found` | No attachment has that ID |
+| `not_an_attachment` | The ID is a page or post |
+| `attachment_in_trash` | The image is in the trash |
+| `unsupported_image_type` | It is not PNG, JPEG, GIF or WebP, by its stored type or its real contents. SVG is refused |
+| `attachment_not_ready` | Its sizes are still being generated (`create_media` with `defer_subsizes`). Try again shortly |
+| `attachment_unreadable` | It has no metadata and its file is not on this server |
+| `image_not_square` | Site icon only. The refusal gives the `width` and `height`. The image is not cropped |
+
+- **Size.** A site icon should be 512x512 or larger. A smaller one is set, with an entry in `warnings`, because devices that ask for a larger icon will scale it up.
+- **What it creates.** The sizes WordPress uses for a site icon (`sizes_created`; a dry run lists `would_create_sizes`), and nothing else. Its 512px icon is the full image, as WordPress does it, so an image larger than that stays larger. The icon is still set if the server cannot make a size, with a warning.
+- **The same ID again.** Changes no setting and records no receipt, but creates any missing sizes. Use this to repair an icon set through Elementor's Site Favicon, which creates none.
+- **The response** also has `icon_url_32` and `icon_url_192`, from WordPress's `get_site_icon_url()`.
+- **Elementor.** Site Favicon and Site Logo in Elementor's Site Settings write these same two settings. When Site Settings has a saved image, a change here updates it too (`elementor_settings_synced`), because publishing Site Settings would otherwise put the old image back.
+- **Browsers** keep favicons for a long time, so a correct page can still show the old icon in a tab for a while.
+
+**Capability:** `manage_options` (admin only), and `edit_post` on the attachment, because the write changes its metadata.
 
 ### SEO Tools
 
@@ -626,6 +647,7 @@ Every write tool returns a `change_receipt` with a `change_id`. Pass it to the `
 - **If a change cannot be undone.** A response with `"stored": false` and no `change_id` means the change was applied but its undo record could not be saved. Settings > IATO MCP > Diagnostics shows what went wrong and can check the plugin's database tables again.
 - **Checking first.** `dry_run: true` reports what would be restored and whether the value has changed since, without writing anything.
 - **Site settings.** Each option `update_site_settings` changed has its own receipt. A page that is no longer published cannot be restored as the front page or posts page.
+- **Site icon and logo.** Rollback restores the previous attachment, or no icon or logo at all. An image that no longer exists cannot be restored, and a logo cannot be rolled back after a theme switch, because WordPress keeps one per theme. Rolling back `create_media` for the image in use needs `force`, which deletes the image and clears the setting.
 - **Elementor pages.** Elementor edits made with 1.13.0 or later can be undone exactly for 90 days, including content a person added elsewhere on the page. Each receipt keeps a copy of the page as it was, and a daily cleanup removes copies older than 90 days to keep the database small; the receipt itself stays. Older edits, and edits made with versions before 1.13.0, are restored in Elementor under History, then Revisions. Settings > IATO MCP Diagnostics shows when the cleanup last ran. A developer can change the period with the `iato_mcp_receipt_retention_days` filter (0 keeps every copy).
 
 ---

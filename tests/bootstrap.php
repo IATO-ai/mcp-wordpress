@@ -122,6 +122,11 @@ if ( ! function_exists( 'get_post_meta' ) ) {
 		return $single ? '' : [];
 	}
 }
+if ( ! function_exists( 'get_theme_mod' ) ) {
+	function get_theme_mod( string $name, mixed $default = false ): mixed {
+		return class_exists( 'IATO_Test_Menus', false ) ? ( IATO_Test_Menus::$mods[ IATO_Test_Menus::$stylesheet ][ $name ] ?? $default ) : $default;
+	}
+}
 if ( ! function_exists( 'wp_get_attachment_image_url' ) ) {
 	function wp_get_attachment_image_url( int $id, string $size = 'thumbnail' ): string|false {
 		return IATO_Test_WP::$attachments[ $id ]['url'] ?? false;
@@ -136,6 +141,7 @@ if ( ! function_exists( 'get_permalink' ) ) {
 require_once __DIR__ . '/stubs-abilities.php';
 require_once __DIR__ . '/stubs-auth.php';
 require_once IATO_MCP_DIR . 'includes/class-cache.php';
+require_once IATO_MCP_DIR . 'includes/class-site-image.php';
 require_once IATO_MCP_DIR . 'includes/class-element-cache-guard.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-sanitize-report.php';
