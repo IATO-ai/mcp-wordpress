@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.18.1
+Stable tag: 1.19.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-**Without an IATO account (51 WordPress tools):**
+**Without an IATO account (57 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -114,7 +114,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin works standalone for reading and editing WordPress content with 51 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
+No. The plugin works standalone for reading and editing WordPress content with 57 built-in tools. An [IATO account](https://iato.ai) ([free trial](https://iato.ai) up to 500 pages) unlocks 12 additional bridge tools: start/list/status crawl management, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, and performance reports. They are available to administrators. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
 
 = Which WordPress version is required? =
 
@@ -183,7 +183,16 @@ Only images, and only when the calling user has the `upload_files` capability. T
 
 == Changelog ==
 
-= 1.18.1 =
+= 1.19.0 =
+* New: `update_post` and `create_post` take `date` (the site's local time), `date_gmt` (UTC), `allow_future` and `author`. A published post given a future date is refused with `future_date_on_published` unless `allow_future` is true, when it is scheduled and the response says so. A draft keeps its status and uses the date when published. Rollback restores the date, the UTC date and the status together. Changing an author needs `edit_others_posts`, and the new author must be able to edit that type of post.
+* New: `get_posts` returns `date` and `date_gmt`, and `get_post` returns `date_gmt`.
+* Changed: `get_post`'s `date` is now the site's local time, so that it can be sent back to `update_post`. It was UTC: read `date_gmt` for that. `modified` is still UTC.
+* Changed: Publishing a draft that has a future date is refused with `future_date_on_published` unless `allow_future` is true. WordPress scheduled it without saying so.
+* New: `create_media` takes `sha256`, and refuses a file that arrives altered with `checksum_mismatch`. It always returns `sha256` and `decoded_bytes`, so a caller can compare without sending a digest.
+* New: `create_media` refuses bytes that are not a whole image of the declared type with `invalid_image`: PNG chunk checksums and end markers are checked, not only the header. Sizes WordPress expected but could not make are a warning rather than an empty list. Its errors are now JSON text with a code and details.
+* New: `media_upload_start`, `media_upload_chunk` and `media_upload_finish` upload an image over about 3 KB in pieces, with a digest on the whole file and optionally on each piece. The result is what `create_media` returns. Retrying a chunk or a finish is safe. Unfinished uploads are removed after an hour with no activity.
+* New: `get_custom_css` and `update_custom_css` read and set the theme's Additional CSS, stored exactly as sent. CSS that loads anything from another site is refused, and a person can still add that in the Customizer. Administrators only, with a WordPress user behind the credential. Rollback restores the previous CSS for the theme it was written for.
+* New: `update_user_profile` changes a user's display name, nickname, first and last name, description and website. Email, password and roles cannot be changed. The display name must be one WordPress offers for that user, or the call must set the nickname to the same value.
 * Fix: Changing the site title or tagline through `update_site_settings` saved the value but returned an error and no receipt on a site with Elementor, when the site key had no owner or Elementor's kit was missing or in the trash. It now returns the receipt as usual, and rollback works the same way.
 * Fix: With a site key that had no owner, Elementor's Site Settings kept the old title or tagline after such a change, and publishing Site Settings wrote it back. It now follows the change.
 
@@ -526,8 +535,8 @@ Only images, and only when the calling user has the `upload_files` capability. T
 
 == Upgrade Notice ==
 
-= 1.18.1 =
-Fixes site title and tagline changes through update_site_settings on Elementor sites, which could save the value but return an error and no receipt.
+= 1.19.0 =
+Adds post dates and authors, safe chunked image uploads, site-wide CSS and user display names. get_post's date field is now local time: read date_gmt for UTC.
 
 = 1.18.0 =
 Adds site_icon and custom_logo to update_site_settings and get_site_settings, so an AI client can set the favicon and logo from the Media Library, with dry_run and rollback.

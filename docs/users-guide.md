@@ -147,12 +147,13 @@ Every tool can be individually enabled or disabled. Tools are organized by categ
 | Category | Tools |
 |----------|-------|
 | Content | `get_posts`, `get_post`, `create_post`, `update_post`, `search_posts` |
-| Site | `get_site_info`, `get_site_settings`, `update_site_settings` |
+| Site | `get_site_info`, `get_site_settings`, `update_site_settings`, `get_custom_css`, `update_custom_css` |
 | SEO | `get_seo_data`, `update_seo_data` |
-| Media | `get_media`, `update_alt_text` |
+| Media | `get_media`, `update_alt_text`, `create_media`, `media_upload_start`, `media_upload_chunk`, `media_upload_finish` |
 | Navigation | `get_menus`, `get_menu_items`, `update_menu_item` |
 | Taxonomy | `get_terms`, `assign_term` |
 | Comments | `get_comments` |
+| Users | `update_user_profile` |
 
 Disabled tools will not appear in the AI client's tool list.
 
@@ -175,6 +176,8 @@ List posts or pages with optional filters.
 | `per_page` | integer | 20 | Results per page (max 100) |
 | `page` | integer | 1 | Page number |
 
+Returns each post's ID, title, slug, status and URL, with `date` (the site's local time), `date_gmt` (UTC, or null for a draft with no date of its own) and `modified` (UTC).
+
 #### `get_post`
 
 Get full details for a single post or page.
@@ -184,7 +187,7 @@ Get full details for a single post or page.
 | `id` | integer | Post ID |
 | `slug` | string | Post slug (alternative to ID) |
 
-Returns title, content, excerpt, status, URL, author, dates, categories, and tags.
+Returns title, content, excerpt, status, URL, author, categories, tags, `date` (the site's local time), `date_gmt` (UTC, or null for a draft with no date of its own) and `modified` (UTC).
 
 #### `create_post`
 
@@ -196,12 +199,16 @@ Create a new post or page.
 | `content` | string | No | | HTML or plain text content |
 | `status` | string | No | `draft` | `draft` or `publish` |
 | `post_type` | string | No | `post` | `post` or `page` |
+| `date` | string | No | now | Publish date in the site's local time, such as `2026-10-27T09:00:00` |
+| `date_gmt` | string | No | | The same date in UTC. Send this or `date` |
+| `allow_future` | boolean | No | `false` | Lets `status: publish` with a future date schedule the post |
+| `author` | integer | No | you | A user who can edit this type of post. Someone else needs `edit_others_posts` |
 
 **Capability:** `edit_posts`
 
 #### `update_post`
 
-Update an existing post's title, content, or status.
+Update an existing post's title, content, slug, excerpt, status, publish date or author.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -209,8 +216,25 @@ Update an existing post's title, content, or status.
 | `title` | string | No | New title |
 | `content` | string | No | New content |
 | `status` | string | No | `draft` or `publish` |
+| `date` | string | No | Publish date in the site's local time, such as `2026-10-27T09:00:00`, with no offset |
+| `date_gmt` | string | No | The same date in UTC. Send this or `date`: both are refused with `date_mismatch` if they are different moments |
+| `allow_future` | boolean | No | See below. Default `false` |
+| `author` | integer | No | A user who can edit this type of post. Someone else needs `edit_others_posts` |
 
 **Capability:** `edit_posts`
+
+**Dates and status.**
+
+| The post | Given | Result |
+|---|---|---|
+| Published | A past date | Stays published, with the new date |
+| Published | A future date | Refused with `future_date_on_published`, unless `allow_future` is true. Then it is scheduled, leaves the site until that date, and the response says so |
+| Draft | Any date | Stays a draft, and uses the date when published |
+| Draft with a future date | `status: publish` | Refused the same way, unless `allow_future` is true |
+| Scheduled | A later date | Stays scheduled |
+| Scheduled | A past date | Goes live, and the response says so |
+
+Scheduling or publishing because of a date needs the capability to publish. If the permalink has the date in it, the response gives `previous_url`, and WordPress redirects the old address. Rolling back a date restores the date, the UTC date and the status together. The post's modified time is not restored.
 
 #### `search_posts`
 
@@ -270,6 +294,25 @@ Accepts `dry_run`. Returns the before and after value of each option in `changes
 
 **Capability:** `manage_options` (admin only), and `edit_post` on the attachment, because the write changes its metadata.
 
+#### `get_custom_css`
+
+Returns the active theme's Additional CSS and the ID of the post it is stored in, or null when it has none.
+
+**Capability:** `edit_theme_options`
+
+#### `update_custom_css`
+
+Sets the active theme's Additional CSS, which prints on every page. Send `css` to replace it all, or `append_css` to add to the end, with `dry_run` to preview.
+
+- **Stored as sent.** Nothing is rewritten: it stores exactly what you send, or refuses. The limit is 200 KB, counted after appending (`css_too_large`).
+- **Off-site loads are refused.** `@import`, or `url()` pointing at another host, is refused with `css_not_allowed`, and `found` says what it saw. CSS on every page can send data off-site if a client is tricked by injected instructions, so a person has to add that in the Customizer. With `append_css`, only what you add is checked.
+- **Closing the style element.** Anything that would close it, such as `</style>`, is removed and listed in `sanitized_report`.
+- **Response.** The sizes and hashes, and a short receipt, not the CSS. Rollback restores the previous CSS for the theme it was written for, even after a theme switch. The stored copy goes after 90 days, and WordPress's own revisions remain.
+
+**Capability:** `manage_options`, and `edit_css` held by a real user, so a site key with no owner cannot use it.
+
+---
+
 ### SEO Tools
 
 #### `get_seo_data`
@@ -315,6 +358,28 @@ Update the alt text for a media attachment.
 | `alt` | string | Yes | New alt text |
 
 **Capability:** `edit_posts`
+
+#### `create_media`
+
+Upload an image. Base64 is reliable only up to about 3 KB, because the transport can drop or alter more. Use the chunked tools below or URL ingestion for anything larger.
+
+- **`sha256`.** Send the digest of the original file. If the bytes that arrive differ, the call fails with `checksum_mismatch` and nothing is created. The response always gives `sha256` and `decoded_bytes`, so you can compare without sending one.
+- **Damaged images.** Bytes that are not a whole image of the declared type fail with `invalid_image`, and `reason` says why. A PNG's checksums and end marker are checked, not only its header. Damaged pixels inside a JPEG can only be caught with a digest.
+- **Sizes.** If WordPress could not make the sizes it expected, the response has `warnings` and `missing_sizes`. A small image legitimately has no sizes and gets no warning.
+
+**Capability:** `upload_files`
+
+#### Chunked uploads
+
+For an image over about 3 KB:
+
+1. **`media_upload_start`**: `filename`, `mime_type`, `total_bytes`, `sha256`, and optionally `alt_text`, `title`, `caption` and `attach_to_post`. Returns an `upload_id`. The limit is 15 MB, or less if the site's upload limit or Settings > IATO MCP > Media Uploads says so. That setting is 10 MB by default.
+2. **`media_upload_chunk`**: `upload_id`, `index` (from 0) and `data`, the chunk's bytes in base64, up to about 3 KB decoded and 4 KB at most. Every chunk must be the size of the first, except the last. Optionally `chunk_sha256`. Sending a chunk again with the same contents is safe.
+3. **`media_upload_finish`**: `upload_id`, and optionally `defer_subsizes`. Checks the total size, the `sha256` and the image, creates the attachment and returns what `create_media` returns, with a receipt. If it times out, call it again: it returns the same result and does not upload twice.
+
+An upload belongs to the user who started it, and each user can have five open. One with no activity for an hour is removed. A `checksum_mismatch` or `invalid_image` at the finish removes the upload, so start again.
+
+**Capability:** `upload_files`
 
 ### Navigation Tools
 
@@ -446,6 +511,20 @@ List comments with optional filters.
 | `status` | string | `approve` | `approve`, `hold`, `spam`, or `trash` |
 | `post_id` | integer | | Filter by post ID |
 | `per_page` | integer | 20 | Max results |
+
+---
+
+### User Tools
+
+#### `update_user_profile`
+
+Changes the public fields of a profile: `display_name`, `nickname`, `first_name`, `last_name`, `description` and `url`, with `dry_run` to preview. It changes the authenticated user unless `user_id` is given. Any other key, including email, password and role, is refused with `field_not_allowed`.
+
+`display_name` must be one of the names WordPress offers for that user under "Display name publicly as", or the call must set `nickname` to the same value. A refusal lists them in `offered`.
+
+A site key with no owner has no user of its own, so it must send `user_id`.
+
+**Capability:** `edit_user` on that user: yourself, or anyone if you hold `edit_users`.
 
 ---
 
@@ -618,7 +697,8 @@ After a change, IATO purges the cache plugins it finds and adds a `cache` object
 |---|---|
 | One post or page, its SEO data, meta, Elementor content or featured image | That page, plus the home URL for the front page or posts page |
 | The Elementor kit, Theme Builder templates, global widgets, saved templates | The whole site, and all Elementor CSS |
-| Menus, terms, redirects, `update_site_settings` | The whole site |
+| Menus, terms, redirects, `update_site_settings`, `update_custom_css`, `update_user_profile` | The whole site |
+| The date or author of a post that is or was published | The whole site: archives and listings change |
 | A slug change, or unpublishing a post | The whole site: the old URL can't be derived from the post any more |
 | An image's alt text | The page the image is attached to. Other pages using the image stay cached, and the note says so |
 
@@ -648,6 +728,9 @@ Every write tool returns a `change_receipt` with a `change_id`. Pass it to the `
 - **Checking first.** `dry_run: true` reports what would be restored and whether the value has changed since, without writing anything.
 - **Site settings.** Each option `update_site_settings` changed has its own receipt. A page that is no longer published cannot be restored as the front page or posts page.
 - **Site icon and logo.** Rollback restores the previous attachment, or no icon or logo at all. An image that no longer exists cannot be restored, and a logo cannot be rolled back after a theme switch, because WordPress keeps one per theme. Rolling back `create_media` for the image in use needs `force`, which deletes the image and clears the setting.
+- **Post dates and authors.** Rolling back a date restores the date, the UTC date and the status together. A scheduled post that has gone live since is a conflict. A previous author who no longer exists cannot be restored.
+- **Custom CSS.** Rollback restores the previous CSS exactly, for the theme it was written for, and removes the CSS post if the change created it. The stored copy goes after 90 days.
+- **User profiles.** One receipt covers all the fields in a call. Rollback restores them exactly, even where WordPress's filters would change them, and a user who no longer exists cannot be restored.
 - **Elementor pages.** Elementor edits made with 1.13.0 or later can be undone exactly for 90 days, including content a person added elsewhere on the page. Each receipt keeps a copy of the page as it was, and a daily cleanup removes copies older than 90 days to keep the database small; the receipt itself stays. Older edits, and edits made with versions before 1.13.0, are restored in Elementor under History, then Revisions. Settings > IATO MCP Diagnostics shows when the cleanup last ran. A developer can change the period with the `iato_mcp_receipt_retention_days` filter (0 keeps every copy).
 
 ---
