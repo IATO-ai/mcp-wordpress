@@ -104,7 +104,16 @@ if ( ! function_exists( 'is_user_logged_in' ) ) {
 }
 if ( ! function_exists( 'update_option' ) ) {
 	function update_option( string $name, mixed $value, mixed $autoload = null ): bool {
+		$old = IATO_Test_Abilities_State::$options[ $name ] ?? false;
+		if ( $old === $value ) {
+			return false; // as core: no write, no hooks
+		}
 		IATO_Test_Abilities_State::$options[ $name ] = $value;
+		foreach ( $GLOBALS['wp_filter'][ 'update_option_' . $name ]->callbacks ?? [] as $callbacks ) {
+			foreach ( $callbacks as $callback ) {
+				( $callback['function'] )( $old, $value, $name ); // as core: after the value is stored
+			}
+		}
 		return true;
 	}
 }

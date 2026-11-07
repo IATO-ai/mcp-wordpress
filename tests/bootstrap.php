@@ -70,6 +70,9 @@ final class IATO_Test_WP {
 	/** @var array<int,array{0:string,1:int}> (meta key, number of live elementor meta hooks) at each update_post_meta() call */
 	public static array $hooks_at_write = [];
 
+	/** update_post_meta() stores nothing and returns false, as a write the database refused. */
+	public static bool $meta_write_fails = false;
+
 	// ── $wp_filter model for IATO_MCP_Elementor_Adapter::without_elementor_meta_sanitizing() ──
 	public static function reset_hooks(): void {
 		$GLOBALS['wp_filter'] = [];

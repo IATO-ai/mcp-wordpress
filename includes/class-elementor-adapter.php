@@ -813,6 +813,11 @@ class IATO_MCP_Elementor_Adapter {
 	/** Hooks WordPress runs from sanitize_meta() for the keys the plugin writes verbatim. */
 	private const META_SANITIZE_HOOK_PATTERN = '/^sanitize_post_meta__elementor_(data|page_settings)(_for_.+)?$/';
 
+	/** The options Elementor copies into its active kit, and the kit setting each goes to. */
+	private const KIT_COPIED_OPTIONS = [ 'blogname' => 'site_name', 'blogdescription' => 'site_description' ];
+
+	private const KIT_SETTINGS_META = '_elementor_page_settings';
+
 	/** Nesting depth of without_elementor_meta_sanitizing(); callbacks are removed at 0→1 and restored at 1→0. */
 	private static int $meta_guard_depth = 0;
 
@@ -886,6 +891,95 @@ class IATO_MCP_Elementor_Adapter {
 				self::$meta_guard_removed = [];
 			}
 		}
+	}
+
+	/**
+	 * update_option() for a site setting. Elementor copies the title and tagline into
+	 * its active kit from update_option_{option}, through Document::update_settings(),
+	 * which throws when the user cannot edit the kit (the unbound key's user 0) or no
+	 * kit is usable (missing or trashed). The throw comes after the value is stored,
+	 * so the client got an error and no receipt, and the kit kept the old text, which
+	 * publishing Site Settings then wrote back. Such a write takes Elementor's callback
+	 * off the hook and makes the copy itself; other plugins' callbacks still run.
+	 *
+	 * @return string|null A warning for the client, when the copy failed.
+	 */
+	public static function update_site_option( string $option, mixed $value ): ?string {
+		$setting = self::KIT_COPIED_OPTIONS[ $option ] ?? null;
+		$kit_id  = null === $setting ? null : self::active_kit_id();
+		if ( null === $kit_id || ( $kit_id > 0 && current_user_can( 'edit_post', $kit_id ) ) ) {
+			update_option( $option, $value ); // update_option() does not unslash
+			return null;
+		}
+
+		$updated = self::without_kit_copy( $option, static fn(): bool => update_option( $option, $value ) );
+		if ( ! $updated || 0 === $kit_id ) {
+			return null;
+		}
+		$stored = (string) get_option( $option );
+		if ( self::copy_to_kit( $kit_id, $setting, $stored ) ) {
+			return null;
+		}
+		return sprintf( 'Elementor\'s Site Settings still holds the old value of %s, and publishing Site Settings would put it back. Change it there too.', $option );
+	}
+
+	/**
+	 * The kit Elementor's hook would write to: its ID, 0 when no kit is usable, null
+	 * when that cannot be told (Elementor not running), which leaves the write alone.
+	 */
+	private static function active_kit_id(): ?int {
+		if ( ! class_exists( '\Elementor\Plugin' ) || empty( \Elementor\Plugin::$instance->kits_manager ) ) {
+			return null;
+		}
+		try {
+			return (int) \Elementor\Plugin::$instance->kits_manager->get_active_kit()->get_main_id();
+		} catch ( \Throwable $e ) {
+			return null;
+		}
+	}
+
+	/** Run $fn with Elementor's copy off update_option_{option}, restored afterwards, also on a throw. */
+	private static function without_kit_copy( string $option, callable $fn ): mixed {
+		$hook    = 'update_option_' . $option;
+		$removed = [];
+		foreach ( $GLOBALS['wp_filter'][ $hook ]->callbacks ?? [] as $priority => $callbacks ) {
+			foreach ( $callbacks as $callback ) {
+				if ( self::is_kit_copy_callback( $callback['function'] ?? null ) ) {
+					remove_filter( $hook, $callback['function'], (int) $priority );
+					$removed[] = [ $callback['function'], (int) $priority, (int) ( $callback['accepted_args'] ?? 1 ) ];
+				}
+			}
+		}
+		try {
+			return $fn();
+		} finally {
+			foreach ( $removed as [ $function, $priority, $accepted_args ] ) {
+				add_filter( $hook, $function, $priority, $accepted_args );
+			}
+		}
+	}
+
+	/** Elementor's kits manager registers these as closures. Anything else on the hook is left alone. */
+	private static function is_kit_copy_callback( mixed $fn ): bool {
+		if ( is_array( $fn ) ) {
+			return ( $fn[0] ?? null ) instanceof \Elementor\Core\Kits\Manager;
+		}
+		return $fn instanceof \Closure && ( new \ReflectionFunction( $fn ) )->getClosureThis() instanceof \Elementor\Core\Kits\Manager;
+	}
+
+	/** What Elementor's copy stores, through the meta because Document::update_settings() is what refused. */
+	private static function copy_to_kit( int $kit_id, string $setting, string $value ): bool {
+		$settings = get_post_meta( $kit_id, self::KIT_SETTINGS_META, true );
+		$settings = is_array( $settings ) ? $settings : [];
+
+		$settings[ $setting ] = $value;
+		try {
+			self::write_elementor_meta( static fn() => update_post_meta( $kit_id, self::KIT_SETTINGS_META, wp_slash( $settings ) ) );
+		} catch ( \Throwable $e ) {
+			return false;
+		}
+		$saved = get_post_meta( $kit_id, self::KIT_SETTINGS_META, true );
+		return is_array( $saved ) && ( $saved[ $setting ] ?? null ) === $value;
 	}
 
 	/** Human-readable name of a hook callback, for the WP_DEBUG log line. */

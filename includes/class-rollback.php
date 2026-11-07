@@ -662,7 +662,7 @@ class IATO_MCP_Rollback {
 			IATO_MCP_Site_Image::sync_kit( 'custom_logo', $id );
 			return true;
 		}
-		update_option( $field, null === $before_value ? '' : (string) $before_value ); // update_option() does not unslash
+		IATO_MCP_Elementor_Adapter::update_site_option( $field, null === $before_value ? '' : (string) $before_value );
 		if ( 'site_icon' === $field ) {
 			IATO_MCP_Site_Image::sync_kit( 'site_icon', (int) $before_value );
 		}

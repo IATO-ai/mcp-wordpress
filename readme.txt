@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.18.0
+Stable tag: 1.18.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -182,6 +182,10 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.18.1 =
+* Fix: Changing the site title or tagline through `update_site_settings` saved the value but returned an error and no receipt on a site with Elementor, when the site key had no owner or Elementor's kit was missing or in the trash. It now returns the receipt as usual, and rollback works the same way.
+* Fix: With a site key that had no owner, Elementor's Site Settings kept the old title or tagline after such a change, and publishing Site Settings wrote it back. It now follows the change.
 
 = 1.18.0 =
 * New: `update_site_settings` sets the site icon: `site_icon` takes a Media Library attachment ID, and 0 clears it without deleting the attachment. The image must be PNG, JPEG, GIF or WebP and square; it is not cropped, and under 512x512 it is set with a warning. The response gives before and after with ID and URL, `icon_url_32` and `icon_url_192`, and `warnings`. It has `dry_run` and rollback, including back to no icon, and purges the whole site.
@@ -521,6 +525,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.18.1 =
+Fixes site title and tagline changes through update_site_settings on Elementor sites, which could save the value but return an error and no receipt.
 
 = 1.18.0 =
 Adds site_icon and custom_logo to update_site_settings and get_site_settings, so an AI client can set the favicon and logo from the Media Library, with dry_run and rollback.
