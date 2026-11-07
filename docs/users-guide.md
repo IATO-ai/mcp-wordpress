@@ -363,7 +363,7 @@ Update the alt text for a media attachment.
 
 #### `create_media`
 
-Upload an image. Base64 is reliable only up to about 3 KB, because the transport can drop or alter more. Use the chunked tools below or URL ingestion for anything larger.
+Upload an image. Base64 is reliable only up to about 3 KB, because the transport can drop or alter more. Use the chunked tools below for anything larger. URL ingestion is for an image that is already online.
 
 - **`sha256`.** Send the digest of the original file. If the bytes that arrive differ, the call fails with `checksum_mismatch` and nothing is created. The response always gives `sha256` and `decoded_bytes`, so you can compare without sending one.
 - **Damaged images.** Bytes that are not a whole image of the declared type fail with `invalid_image`, and `reason` says why. A PNG's checksums and end marker are checked, not only its header. Damaged pixels inside a JPEG can only be caught with a digest.
@@ -541,6 +541,7 @@ Returns the full site hierarchy from IATO with WordPress post IDs and slugs atta
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `sitemap_id` | integer | IATO sitemap ID (optional — uses most recent if omitted) |
+| `crawl_id` | string | IATO crawl job ID used to pick the sitemap when `sitemap_id` is omitted (optional — falls back to the default crawl ID in Settings) |
 
 Use this to understand your site structure before making navigation or link changes.
 

@@ -125,17 +125,6 @@ class IATO_MCP_Abilities {
 		],
 	];
 
-	/**
-	 * Schema properties the handler reads but the MCP tool definition omits.
-	 * Added so the ability's input_schema documents (and lets through) every
-	 * argument the shared handler actually honours.
-	 */
-	private const EXTRA_PROPERTIES = [
-		'get_iato_sitemap' => [
-			'crawl_id' => [ 'type' => 'string', 'description' => 'IATO crawl job ID used to pick the matching sitemap. Falls back to the default crawl ID in Settings > IATO MCP.' ],
-		],
-	];
-
 	// ── Bootstrap ─────────────────────────────────────────────────────────
 
 	/**
@@ -274,11 +263,6 @@ class IATO_MCP_Abilities {
 	public static function input_schema( string $tool, array $schema ): array {
 		$schema['type']       = 'object';
 		$schema['properties'] = is_array( $schema['properties'] ?? null ) ? $schema['properties'] : [];
-		foreach ( self::EXTRA_PROPERTIES[ $tool ] ?? [] as $key => $prop ) {
-			if ( ! isset( $schema['properties'][ $key ] ) ) {
-				$schema['properties'][ $key ] = $prop;
-			}
-		}
 		if ( empty( $schema['properties'] ) ) {
 			unset( $schema['properties'] );
 		}
