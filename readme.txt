@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.19.0
+Stable tag: 1.19.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -182,6 +182,13 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.19.1 =
+* Changed: The tool descriptions clients read are clearer about publish dates and authors. `create_post`'s description mentions them, `date` and `date_gmt` say they are ISO 8601 and that `date_gmt` is worked out from `date` when omitted, and `allow_future` says what is refused and when a post is scheduled.
+* Changed: `create_media`'s description sends files over about 3 KB to `media_upload_start`, `media_upload_chunk` and `media_upload_finish` instead of URL ingestion, and says the response carries `sha256` and `decoded_bytes`.
+* Fix: `get_iato_sitemap` reads `crawl_id` but did not list it, so clients could not see it. It is listed now. The WordPress ability already listed it.
+* Fix: `create_post` stores no excerpt, but an `excerpt` sent with it could appear in `sanitized_report` as text that was removed. It is now ignored, as the schema says.
+* Tests: a unit test checks that every tool's input schema lists exactly the arguments its handler reads, so the two cannot drift apart.
 
 = 1.19.0 =
 * New: `update_post` and `create_post` take `date` (the site's local time), `date_gmt` (UTC), `allow_future` and `author`. A published post given a future date is refused with `future_date_on_published` unless `allow_future` is true, when it is scheduled and the response says so. A draft keeps its status and uses the date when published. Rollback restores the date, the UTC date and the status together. Changing an author needs `edit_others_posts`, and the new author must be able to edit that type of post.
@@ -535,6 +542,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.19.1 =
+Tool descriptions for post dates, authors and image uploads now match what the tools accept, and get_iato_sitemap lists its crawl_id parameter.
 
 = 1.19.0 =
 Adds post dates and authors, safe chunked image uploads, site-wide CSS and user display names. get_post's date field is now local time: read date_gmt for UTC.

@@ -10,9 +10,11 @@
 
 defined( 'ABSPATH' ) || exit;
 
-const IATO_MCP_POST_DATE_HELP     = 'Publish date in the site\'s local time, such as 2026-10-27T09:00:00, with no offset. date_gmt is worked out from it when omitted.';
-const IATO_MCP_POST_DATE_GMT_HELP = 'The same date in UTC, such as 2026-10-27T14:00:00. Send this or date; both are refused if they are different moments.';
-const IATO_MCP_POST_AUTHOR_HELP   = 'A user ID, who must be able to edit posts of this type. Giving a post to someone else needs edit_others_posts.';
+const IATO_MCP_POST_DATE_HELP     = 'Publish date in the site\'s local time, ISO 8601 with no offset, such as 2026-10-27T09:00:00. date_gmt is worked out from it when omitted.';
+const IATO_MCP_POST_DATE_GMT_HELP = 'The publish date in UTC, ISO 8601, such as 2026-10-27T14:00:00Z. Worked out from date when omitted. Send this or date; both together are refused if they are different moments.';
+const IATO_MCP_POST_AUTHOR_HELP   = 'The author\'s user ID. The user must be able to edit posts of this type, and giving a post to someone else needs edit_others_posts.';
+// The text fields create_post stores: it takes no excerpt, so one sent is not reported as sanitised.
+const IATO_MCP_CREATE_POST_TEXT   = [ 'title' => true, 'content' => true ];
 
 // ── get_posts ─────────────────────────────────────────────────────────────────
 
@@ -161,7 +163,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'create_post',
 	[
-		'description' => 'Create a new post or page. Returns the new post ID and URL. On page-builder sites (Elementor, Divi, etc.), follow the new-post workflow in server instructions BEFORE calling — plain HTML in post_content will not match the site\'s existing post format.',
+		'description' => 'Create a new post or page, optionally with its publish date (date or date_gmt) and author. Returns the new post ID and URL. On page-builder sites (Elementor, Divi, etc.), follow the new-post workflow in server instructions BEFORE calling — plain HTML in post_content will not match the site\'s existing post format.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -171,7 +173,7 @@ IATO_MCP_Server::register_tool(
 				'post_type' => [ 'type' => 'string', 'description' => 'post|page (default: post)' ],
 				'date'      => [ 'type' => 'string', 'description' => IATO_MCP_POST_DATE_HELP ],
 				'date_gmt'  => [ 'type' => 'string', 'description' => IATO_MCP_POST_DATE_GMT_HELP ],
-				'allow_future' => [ 'type' => 'boolean', 'description' => 'status publish with a future date schedules the post. Refused (future_date_on_published) unless this is true. Default: false.' ],
+				'allow_future' => [ 'type' => 'boolean', 'description' => 'status publish with a future date is refused with future_date_on_published unless this is true; the post is then scheduled. Default: false.' ],
 				'author'    => [ 'type' => 'integer', 'description' => IATO_MCP_POST_AUTHOR_HELP ],
 				'dry_run'   => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
@@ -249,7 +251,7 @@ IATO_MCP_Server::register_tool(
 			if ( null !== $author ) {
 				$data['author'] = $author;
 			}
-			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, (object) $postarr ) );
+			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( array_intersect_key( $args, IATO_MCP_CREATE_POST_TEXT ), (object) $postarr ) );
 			$notice = iato_mcp_page_builder_notice( 'create' );
 			if ( null !== $notice ) {
 				$data['notice'] = $notice;
@@ -289,7 +291,7 @@ IATO_MCP_Server::register_tool(
 			}
 		}
 		IATO_MCP_Change_Receipt::append( $data, $receipt );
-		IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, $created ) );
+		IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( array_intersect_key( $args, IATO_MCP_CREATE_POST_TEXT ), $created ) );
 
 		$notice = iato_mcp_page_builder_notice( 'create' );
 		if ( null !== $notice ) {
@@ -385,7 +387,7 @@ IATO_MCP_Server::register_tool(
 				'confirm_url_break'  => [ 'type' => 'boolean', 'description' => 'Required true when changing the slug of a non-draft post; acknowledges the URL break.' ],
 				'date'               => [ 'type' => 'string',  'description' => IATO_MCP_POST_DATE_HELP ],
 				'date_gmt'           => [ 'type' => 'string',  'description' => IATO_MCP_POST_DATE_GMT_HELP ],
-				'allow_future'       => [ 'type' => 'boolean', 'description' => 'A published post given a future date is scheduled: its status becomes future and it leaves the site until then. Refused (future_date_on_published) unless this is true. A draft keeps its status and uses the date when published. Default: false.' ],
+				'allow_future'       => [ 'type' => 'boolean', 'description' => 'A published post given a future date is refused with future_date_on_published unless this is true; it then becomes scheduled and leaves the site until that date. A draft keeps its status and uses the date when published. Default: false.' ],
 				'author'             => [ 'type' => 'integer', 'description' => IATO_MCP_POST_AUTHOR_HELP ],
 				'dry_run'            => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],

@@ -21,6 +21,7 @@ IATO_MCP_Server::register_tool(
 			'type'       => 'object',
 			'properties' => [
 				'sitemap_id' => [ 'type' => 'integer', 'description' => 'IATO sitemap ID. If omitted, uses the most recent sitemap.' ],
+				'crawl_id'   => [ 'type' => 'string',  'description' => 'IATO crawl job ID used to pick the matching sitemap when sitemap_id is omitted. Falls back to the default crawl ID in Settings > IATO MCP.' ],
 			],
 			'required' => [],
 		],

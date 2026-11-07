@@ -162,8 +162,7 @@ final class AbilitiesRegistrationTest extends TestCase {
 
 			$expected_props = $source['properties'] ?? [];
 			if ( 'get_iato_sitemap' === $tool ) {
-				$this->assertArrayHasKey( 'crawl_id', $ability['properties'], 'sitemap handler reads crawl_id, so the ability documents it' );
-				unset( $ability['properties']['crawl_id'] );
+				$this->assertArrayHasKey( 'crawl_id', $ability['properties'], 'sitemap handler reads crawl_id, so the tool and the ability document it' );
 			}
 			$this->assertSame( $expected_props, $ability['properties'] ?? [], "$name properties mirror the MCP tool" );
 			$this->assertArrayNotHasKey( 'required', $ability, "$name has no required args (all optional in the MCP tool)" );
