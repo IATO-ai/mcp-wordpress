@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.19.2
+Stable tag: 1.19.3
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -182,6 +182,10 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.19.3 =
+* Fix: On sites with Elementor, the instructions the plugin gives AI clients said `update_post` could change only `status`, `title` and `excerpt`, so clients were told not to change a post's date or author with it. The list now includes `date`, `date_gmt`, `allow_future` and `author`, and says content edits go through the Elementor tools.
+* Tests: a unit test checks that every `update_post` field the instructions name is in its input schema.
 
 = 1.19.2 =
 * New: `get_site_info` returns `plugin_version`, the IATO MCP version running on the site, so one call confirms an update is live. Every caller sees it.
@@ -545,6 +549,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.19.3 =
+On Elementor sites, AI clients are now told they can change a post's date and author with update_post.
 
 = 1.19.2 =
 get_site_info now returns plugin_version, so an AI client can confirm which IATO MCP version a site is running in one call.

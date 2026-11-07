@@ -333,6 +333,10 @@ print('# what clients are told')
 text = rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'menu-tools-live', 'version': '1'}}).get('instructions', '')
 record('the menu workflow is in the instructions', 'create_menu' in text and 'assign_menu_location' in text, text[:200])
 record('so is theme_locations', 'theme_locations' in text, text[:200])
+if 'ELEMENTOR IS ACTIVE' in text:
+    record('the Elementor section lets update_post change the date and author',
+           'update_post is only permitted for: status, title, excerpt, date, date_gmt, allow_future and author;' in text,
+           [line for line in text.splitlines() if 'only permitted' in line])
 
 failed = [n for n, ok in results if not ok]
 print(f'# {len(results) - len(failed)} passed, {len(failed)} failed')

@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.19.2
+ * Version:     1.19.3
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.19.2' );
+define( 'IATO_MCP_VERSION', '1.19.3' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -355,7 +355,7 @@ When get_page_builder returns 'elementor':
   3. Use update_elementor_data for full-document replacements
   4. Always pass if_revision to prevent write conflicts
   5. Always use dry_run=true before committing
-  6. update_post is only permitted for: status, title, excerpt
+  6. update_post is only permitted for: status, title, excerpt, date, date_gmt, allow_future and author; content edits go through the Elementor tools.
 
 When get_page_builder returns elementor_tree_present: true, the page holds
 Elementor data but Elementor is turned off for it, so visitors see its
