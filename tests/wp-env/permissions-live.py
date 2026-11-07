@@ -347,11 +347,15 @@ r = call(e, 'get_menu_items', {'menu_id': P4['SP_MENU']})
 got = {x['id'] for x in r.get('items', [])} if isinstance(r, dict) else set()
 record('editor get_menu_items: every item, nothing omitted', {P4['MI_CUSTOM'], P4['MI_PAGE'], P4['MI_DRAFT'], P4['MI_PRIVATE']} <= got and 'omitted_items' not in r, r)
 
+# The site runs this checkout, so the version it reports is the main file's.
+VERSION = re.search(r"define\( 'IATO_MCP_VERSION', '([^']+)' \);", open(os.path.join(os.path.dirname(__file__), '..', '..', 'iato-mcp.php')).read()).group(1)
 r = call(e, 'get_site_info', {})
 record('editor get_site_info: plugin and template counts restricted', 'plugin_count' not in r and r.get('restricted_fields') == ['plugin_count', 'theme_builder_template_count'] and r.get('active_theme'), r)
+record('editor get_site_info: plugin_version is the running version', r.get('plugin_version') == VERSION, (VERSION, r.get('plugin_version')))
 for who in ('admin', 'key'):
     r = call(who, 'get_site_info', {})
     record(f'{who} get_site_info: plugin and template counts present', 'plugin_count' in r and 'theme_builder_template_count' in r and 'restricted_fields' not in r, r)
+    record(f'{who} get_site_info: plugin_version is the running version', r.get('plugin_version') == VERSION, (VERSION, r.get('plugin_version')))
 
 def route(who, url):
     r = call(who, 'resolve_url', {'url': url})

@@ -11,6 +11,10 @@ declare( strict_types=1 );
 
 define( 'ABSPATH', __DIR__ . '/stub-abspath/' );
 define( 'IATO_MCP_DIR', dirname( __DIR__ ) . '/' );
+// The plugin defines this before it loads anything; read the real value from the main file.
+preg_match( "/define\\( 'IATO_MCP_VERSION', '([^']+)' \\);/", (string) file_get_contents( IATO_MCP_DIR . 'iato-mcp.php' ), $iato_mcp_version );
+define( 'IATO_MCP_VERSION', $iato_mcp_version[1] );
+unset( $iato_mcp_version );
 
 if ( ! class_exists( 'WP_Error' ) ) {
 	class WP_Error {

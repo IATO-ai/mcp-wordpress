@@ -249,7 +249,7 @@ Full-text search across posts and pages.
 
 #### `get_site_info`
 
-Returns site name, URL, WordPress version, active theme, plugin count, and `cache`: the page cache plugins found (`detected`) and notes about caches IATO cannot purge. No parameters required.
+Returns site name, URL, WordPress version, `plugin_version` (the IATO MCP version running on the site, since 1.19.2), active theme, plugin count, and `cache`: the page cache plugins found (`detected`) and notes about caches IATO cannot purge. No parameters required.
 
 #### `get_site_settings`
 

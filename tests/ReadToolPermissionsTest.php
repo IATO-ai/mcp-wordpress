@@ -126,12 +126,15 @@ final class ReadToolPermissionsTest extends TestCase {
 		$this->as_user( self::EDITOR );
 		$r = $this->call( 'get_site_info' );
 		$this->assertSame( [ 'Test Site', '7.1.3', 'Hello Elementor' ], [ $r['name'], $r['wp_version'], $r['active_theme'] ] );
+		$this->assertSame( IATO_MCP_VERSION, $r['plugin_version'], 'every caller sees the plugin version' );
+		$this->assertNotContains( 'plugin_version', $r['restricted_fields'] );
 		$this->assertArrayNotHasKey( 'plugin_count', $r );
 		$this->assertSame( [ 'plugin_count', 'theme_builder_template_count' ], $r['restricted_fields'] );
 		$this->as_user( self::ADMIN );
 		$r = $this->call( 'get_site_info' );
 		$this->assertArrayHasKey( 'plugin_count', $r );
 		$this->assertSame( 0, $r['theme_builder_template_count'] );
+		$this->assertSame( IATO_MCP_VERSION, $r['plugin_version'] );
 		$this->assertArrayNotHasKey( 'restricted_fields', $r );
 	}
 

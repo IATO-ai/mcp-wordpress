@@ -15,15 +15,18 @@ defined( 'ABSPATH' ) || exit;
 IATO_MCP_Server::register_tool(
 	'get_site_info',
 	[
-		'description' => 'Returns site name, URL, WordPress version, active theme, and for administrators (manage_options) the active plugin count and the Theme Builder template count (otherwise listed in restricted_fields). The theme_builder_template_count field (added v1.11.0) counts elementor_library posts that are actually Theme Builder templates (have a non-empty _elementor_template_type meta) — excluding saved sections, reusable blocks, and condition-less popups, since those don\'t shadow URLs. Use list_elementor_templates (manage_options) for the full enumeration once you know templates exist. The cache object (added v1.15.0) lists the page cache plugins found (detected) and notes about caches IATO cannot purge, such as a CDN; write tools purge the detected ones and report the result in their own cache object.',
+		'description' => 'Returns site name, URL, WordPress version, the IATO MCP plugin version running on the site (plugin_version, added v1.19.2: one call confirms a deploy), active theme, and for administrators (manage_options) the active plugin count and the Theme Builder template count (otherwise listed in restricted_fields). The theme_builder_template_count field (added v1.11.0) counts elementor_library posts that are actually Theme Builder templates (have a non-empty _elementor_template_type meta) — excluding saved sections, reusable blocks, and condition-less popups, since those don\'t shadow URLs. Use list_elementor_templates (manage_options) for the full enumeration once you know templates exist. The cache object (added v1.15.0) lists the page cache plugins found (detected) and notes about caches IATO cannot purge, such as a CDN; write tools purge the detected ones and report the result in their own cache object.',
 		'inputSchema' => [ 'type' => 'object', 'properties' => new stdClass(), 'required' => [] ],
 	],
 	function ( array $args ): array|WP_Error {
 		$info = [
-			'name'         => sanitize_text_field( get_bloginfo( 'name' ) ),
-			'url'          => site_url(),
-			'wp_version'   => get_bloginfo( 'version' ),
-			'active_theme' => wp_get_theme()->get( 'Name' ),
+			'name'           => sanitize_text_field( get_bloginfo( 'name' ) ),
+			'url'            => site_url(),
+			'wp_version'     => get_bloginfo( 'version' ),
+			// The code PHP has loaded, so it answers whether an update is live. Not
+			// sensitive: the plugin's readme.txt names it to anyone.
+			'plugin_version' => IATO_MCP_VERSION,
+			'active_theme'   => wp_get_theme()->get( 'Name' ),
 		];
 		// For every caller (1.15.0): write responses report the same list, and every
 		// MCP caller holds edit_posts. Read from what is known; never a blocking call.

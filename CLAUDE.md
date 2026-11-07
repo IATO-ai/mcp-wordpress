@@ -135,7 +135,7 @@ Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` 
 
 | Tool name | File | Capability |
 |---|---|---|
-| `get_site_info` | tools/wp/tool-site.php | read; `plugin_count` and `theme_builder_template_count` only with manage_options, else `restricted_fields` (1.13.0) |
+| `get_site_info` | tools/wp/tool-site.php | read; `plugin_version` for every caller (1.19.2); `plugin_count` and `theme_builder_template_count` only with manage_options, else `restricted_fields` (1.13.0) |
 | `get_site_settings` | tools/wp/tool-site.php | manage_options; `site_icon` and `custom_logo` since 1.18.0 |
 | `update_site_settings` | tools/wp/tool-site.php | manage_options (1.15.0); `site_icon` and `custom_logo` also need edit_post on the attachment (1.18.0) |
 | `get_custom_css` | tools/wp/tool-custom-css.php | edit_theme_options (1.19.0) |
