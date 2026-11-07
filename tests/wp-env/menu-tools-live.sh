@@ -15,7 +15,8 @@ export WPENV_SVC="${WPENV_SVC:-cli}"
 W() { npx @wordpress/env run "$WPENV_SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
 MU=wp-content/mu-plugins/iato-mcp-test-menus.php
 SRC=wp-content/plugins/mcp-wordpress/tests/wp-env
-export THEME_MARKER=/tmp/iato-menu-live-theme
+# Per site, so the sites can run at the same time.
+export THEME_MARKER="/tmp/iato-menu-live-theme-$WPENV_SVC-$(basename "${WPENV_DIR:-$REPO}")"
 
 cleanup() {
 	if [ -f "$THEME_MARKER" ]; then

@@ -15,6 +15,7 @@ cleanup() {
 	W wp eval '$b=get_option("iato_test_post_dates_backup");if(is_array($b)){update_option("timezone_string",$b["tz"]);update_option("gmt_offset",$b["offset"]);update_option("permalink_structure",$b["permalinks"]);update_option("iato_mcp_key_owner",$b["owner"]);flush_rewrite_rules(false);delete_option("iato_test_post_dates_backup");}' >/dev/null
 	for id in $(W wp post list --post_type=post,page --post_status=any,trash --s=post-dates-live --format=ids | tr ' ' '\n'); do W wp post delete "$id" --force >/dev/null; done
 	for id in $(W wp user list --search='post-dates-live*' --field=ID); do W wp user delete "$id" --yes >/dev/null; done
+	W wp role delete iato-dates-no-publish >/dev/null
 	for user in admin editor author contributor; do
 		W wp user application-password list "$user" --fields=uuid,name --format=csv 2>/dev/null | tail -n +2 | while IFS=, read -r uuid name; do case "$name" in live-dates-*) W wp user application-password delete "$user" "$uuid" >/dev/null ;; esac; done
 	done

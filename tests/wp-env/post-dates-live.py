@@ -180,7 +180,9 @@ record('logged out, it is off the site', 404 == status_of(f'{BASE}/?p={P}')[0], 
 record('the whole site is purged', (r.get('cache') or {}).get('scope') == 'all', r.get('cache'))
 r2 = rollback(by_field(r, 'date'))
 got = post(P)
-record('rollback puts it back on the site with its date, and clears the queue', got.get('status') == 'publish' and got.get('date') == ORIGINAL and 0 == cron(P) and 200 == status_of(f'{BASE}/?p={P}')[0], (r2, got, cron(P)))
+record('rollback puts it back with its date', got.get('status') == 'publish' and got.get('date') == ORIGINAL, (r2, got))
+record('...and on the site', 200 == status_of(f'{BASE}/?p={P}')[0], status_of(f'{BASE}/?p={P}'))
+record('...and clears the queue', 0 == cron(P), cron(P))
 record('...purging the whole site', (r2.get('cache') or {}).get('scope') == 'all', r2.get('cache'))
 
 S = fixture('scheduled', status='future', date=FUTURE_LOCAL)
@@ -372,6 +374,24 @@ r = call('update_post', {'id': CD, 'date': FUTURE, 'status': 'publish', 'allow_f
 record('a Contributor cannot schedule it', forbidden(r, 'publish_posts') and post(CD).get('status') == 'draft', r)
 r = call('update_post', {'id': P, 'date': PAST}, 'contributor')
 record('or date a published post', forbidden(r) and post(P).get('date') == ORIGINAL, r)
+
+# Editing a published post without being able to publish: no standard role, but a role plugin can make one.
+run('wp', 'role', 'create', 'iato-dates-no-publish', 'No publish')
+for cap in ('read', 'edit_posts', 'edit_published_posts'):
+    run('wp', 'cap', 'add', 'iato-dates-no-publish', cap)
+NP_LOGIN = f'{T}-nopublish'
+NP = int(run('wp', 'user', 'create', NP_LOGIN, f'{NP_LOGIN}@example.test', '--role=iato-dates-no-publish', '--porcelain')[-1])
+PASSWORDS[NP_LOGIN] = run('wp', 'user', 'application-password', 'create', NP_LOGIN, 'live-dates-np', '--porcelain')[-1]
+LIVE = fixture('no publish', date=ORIGINAL, author=NP)
+r = call('update_post', {'id': LIVE, 'date': PAST}, NP_LOGIN)
+record('without publish_posts, a published post can still take a past date', post(LIVE).get('date') == PAST_LOCAL, r)
+r = call('update_post', {'id': LIVE, 'date': FUTURE, 'allow_future': True}, NP_LOGIN)
+record('...but not be scheduled, which takes it off the site', forbidden(r, 'publish_posts') and post(LIVE).get('status') == 'publish', r)
+HELD = fixture('no publish scheduled', status='future', date=FUTURE_LOCAL, author=NP)
+r = call('update_post', {'id': HELD, 'date': PAST}, NP_LOGIN)
+record('...and a scheduled post cannot be moved to the past, which publishes it', forbidden(r, 'publish_posts') and post(HELD).get('status') == 'future', r)
+r = call('update_post', {'id': HELD, 'date': '2036-01-01T09:00:00'}, NP_LOGIN)
+record('...though it can take another future date', post(HELD).get('date') == '2036-01-01 09:00:00' and post(HELD).get('status') == 'future', r)
 
 EDIT = fixture('editors', date=ORIGINAL)
 r = call('update_post', {'id': EDIT, 'author': AUTHOR_ID}, 'editor')
