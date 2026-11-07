@@ -346,6 +346,15 @@ class IATO_MCP_Server {
 		if ( ! class_exists( 'IATO_MCP_Call_Log' ) ) {
 			return;
 		}
+		// The log holds 200 rows, and 1 MB of upload is 340 of these. What goes wrong is kept, without the file.
+		if ( 'media_upload_chunk' === $tool ) {
+			if ( 'success' === $status ) {
+				return;
+			}
+			if ( is_array( $args ) ) {
+				unset( $args['data'] );
+			}
+		}
 		$duration_ms = (int) round( ( microtime( true ) - $started ) * 1000 );
 
 		IATO_MCP_Call_Log::record( [

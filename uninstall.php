@@ -35,6 +35,19 @@ delete_option( 'iato_mcp_receipt_failures' );
 delete_option( 'iato_mcp_receipt_prune_last' );
 wp_clear_scheduled_hook( 'iato_mcp_prune_receipts' );
 wp_clear_scheduled_hook( 'iato_mcp_element_cache_sweep' );
+wp_clear_scheduled_hook( 'iato_mcp_media_chunks_cleanup' );
+
+// Chunked uploads still in progress.
+$iato_mcp_uploads = wp_upload_dir( null, false );
+$iato_mcp_tmp     = (string) ( $iato_mcp_uploads['basedir'] ?? '' ) . '/iato-mcp-tmp';
+if ( is_dir( $iato_mcp_tmp ) ) {
+	foreach ( (array) scandir( $iato_mcp_tmp ) as $iato_mcp_file ) {
+		if ( is_file( $iato_mcp_tmp . '/' . $iato_mcp_file ) ) {
+			wp_delete_file( $iato_mcp_tmp . '/' . $iato_mcp_file );
+		}
+	}
+	@rmdir( $iato_mcp_tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors, WordPress.WP.AlternativeFunctions
+}
 delete_option( 'iato_mcp_abilities_enabled' );
 delete_option( 'iato_mcp_cache_purge_enabled' );
 delete_option( 'iato_mcp_inline_markup_enabled' );

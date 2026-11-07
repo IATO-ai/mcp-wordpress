@@ -82,6 +82,7 @@ require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
 require_once IATO_MCP_DIR . 'includes/class-site-image.php';
 require_once IATO_MCP_DIR . 'includes/class-post-date.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
+require_once IATO_MCP_DIR . 'includes/class-media-chunks.php';
 require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 
 // Phase 1 — WP native tools
@@ -141,6 +142,7 @@ function iato_mcp_init() {
 	IATO_MCP_Server::init();
 	IATO_MCP_Rollback::init();
 	IATO_MCP_Receipt_Retention::init();
+	IATO_MCP_Media_Chunks::init();
 	IATO_MCP_Element_Cache_Guard::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
@@ -572,6 +574,7 @@ function iato_mcp_deactivate() {
 	delete_transient( 'iato_mcp_dashboard_data' );
 	// The daily receipt cleanup; rescheduled on the first request after reactivation.
 	IATO_MCP_Receipt_Retention::unschedule();
+	IATO_MCP_Media_Chunks::unschedule();
 	IATO_MCP_Element_Cache_Guard::unschedule();
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

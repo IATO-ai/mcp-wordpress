@@ -82,6 +82,9 @@ class IATO_MCP_Settings {
 		'set_page_settings',
 		'set_featured_image',
 		'create_media',
+		'media_upload_start',
+		'media_upload_chunk',
+		'media_upload_finish',
 		// IATO bridge (require API key).
 		'get_iato_sitemap',
 		'get_iato_nav_audit',
@@ -173,6 +176,12 @@ class IATO_MCP_Settings {
 			'create_elementor_template',
 			'set_elementor_template_conditions',
 		],
+		// v1.19.0 — chunked image uploads.
+		'1.19.0' => [
+			'media_upload_start',
+			'media_upload_chunk',
+			'media_upload_finish',
+		],
 	];
 
 	/** Tools that require the IATO API key before they'll be registered. */
@@ -239,7 +248,10 @@ class IATO_MCP_Settings {
 		'update_post_meta'         => 'Write a single post meta key (allowlist/denylist enforced; force=true to override)',
 		'set_page_settings'        => 'Set per-post theme + Elementor page settings (hide title, sidebar layout, etc.)',
 		'set_featured_image'       => 'Set or clear a post\'s featured image',
-		'create_media'             => 'Upload an image to the media library — base64 for tiny assets (~4 KB), URL ingestion for anything larger (own host implicitly trusted)',
+		'create_media'             => 'Upload an image to the media library — base64 for tiny assets (~3 KB), the chunked upload tools or URL ingestion for anything larger',
+		'media_upload_start'       => 'Start a chunked image upload, for anything over about 3 KB',
+		'media_upload_chunk'       => 'Send one chunk of an image upload',
+		'media_upload_finish'      => 'Finish a chunked upload: checks it and creates the attachment',
 		'get_iato_sitemap'         => 'Full site hierarchy with WordPress post IDs attached',
 		'get_iato_nav_audit'       => 'Audit menus and identify orphan pages in one call',
 		'get_iato_orphan_pages'    => 'Pages not linked from any navigation menu',
@@ -262,7 +274,7 @@ class IATO_MCP_Settings {
 		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts', 'get_post_meta', 'update_post_meta', 'set_page_settings', 'set_featured_image' ],
 		'Site'          => [ 'get_site_info', 'get_site_settings', 'update_site_settings' ],
 		'SEO'           => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
-		'Media'         => [ 'get_media', 'update_alt_text', 'create_media' ],
+		'Media'         => [ 'get_media', 'update_alt_text', 'create_media', 'media_upload_start', 'media_upload_chunk', 'media_upload_finish' ],
 		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details', 'create_menu', 'assign_menu_location' ],
 		'Taxonomy'      => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
 		'Redirects'     => [ 'update_redirect' ],
