@@ -374,6 +374,12 @@ class IATO_MCP_Rollback {
 				[ 'status' => 409 ]
 			);
 		}
+		if ( IATO_MCP_User_Profile::RECEIPT === $type ) {
+			$why = IATO_MCP_User_Profile::rollback_unavailable( $before );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
 		if ( IATO_MCP_Custom_CSS::RECEIPT === $type ) {
 			$why = IATO_MCP_Custom_CSS::rollback_unavailable( $before );
 			if ( null !== $why ) {
@@ -452,6 +458,8 @@ class IATO_MCP_Rollback {
 				return self::rollback_site_setting( $field, $before_value );
 			case IATO_MCP_Custom_CSS::RECEIPT:
 				return IATO_MCP_Custom_CSS::restore( $before_value );
+			case IATO_MCP_User_Profile::RECEIPT:
+				return IATO_MCP_User_Profile::restore( $before_value );
 			case 'post_meta':
 				return self::rollback_post_meta( $field, $post_id, $before_value );
 			case 'attachment':

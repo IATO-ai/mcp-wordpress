@@ -147,6 +147,7 @@ require_once IATO_MCP_DIR . 'includes/class-cache.php';
 require_once IATO_MCP_DIR . 'includes/class-site-image.php';
 require_once IATO_MCP_DIR . 'includes/class-post-date.php';
 require_once IATO_MCP_DIR . 'includes/class-custom-css.php';
+require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-element-cache-guard.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-sanitize-report.php';

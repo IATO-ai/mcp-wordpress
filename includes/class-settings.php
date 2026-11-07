@@ -30,6 +30,7 @@ class IATO_MCP_Settings {
 		'update_site_settings',
 		'get_custom_css',
 		'update_custom_css',
+		'update_user_profile',
 		'get_posts',
 		'get_post',
 		'create_post',
@@ -178,13 +179,14 @@ class IATO_MCP_Settings {
 			'create_elementor_template',
 			'set_elementor_template_conditions',
 		],
-		// v1.19.0 — chunked image uploads, the theme's Additional CSS.
+		// v1.19.0 — chunked image uploads, the theme's Additional CSS, user profiles.
 		'1.19.0' => [
 			'media_upload_start',
 			'media_upload_chunk',
 			'media_upload_finish',
 			'get_custom_css',
 			'update_custom_css',
+			'update_user_profile',
 		],
 	];
 
@@ -209,6 +211,7 @@ class IATO_MCP_Settings {
 		'get_site_info'            => 'Basic site information and health',
 		'get_site_settings'        => 'WordPress settings (admin only)',
 		'update_site_settings'     => 'Set site title, tagline, home page, icon and logo (admin only)',
+		'update_user_profile'      => 'Change the public fields of a user\'s profile, such as the display name',
 		'get_custom_css'           => 'Read the theme\'s Additional CSS',
 		'update_custom_css'        => 'Set the theme\'s Additional CSS, without off-site loads (admin only)',
 		'get_posts'                => 'List published posts with filters',
@@ -285,6 +288,7 @@ class IATO_MCP_Settings {
 		'Taxonomy'      => [ 'get_terms', 'assign_term', 'create_term', 'update_term', 'delete_term', 'update_taxonomy' ],
 		'Redirects'     => [ 'update_redirect' ],
 		'Comments'      => [ 'get_comments' ],
+		'Users'         => [ 'update_user_profile' ],
 		'Safety'        => [ 'rollback' ],
 		'Elementor'     => [ 'get_page_builder', 'get_elementor_data', 'update_elementor_data' ],
 		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates', 'create_elementor_template', 'set_elementor_template_conditions' ],

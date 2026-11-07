@@ -166,6 +166,10 @@ class IATO_MCP_Rollback_Conflict {
 			case 'redirect':
 				return self::redirect( $after );
 
+			case IATO_MCP_User_Profile::RECEIPT:
+				$current = IATO_MCP_User_Profile::current( $after );
+				return null === $current ? self::unverifiable( 'the user no longer exists' ) : self::compare( $current, $after, 'profile' );
+
 			case IATO_MCP_Custom_CSS::RECEIPT:
 				$stylesheet = (string) ( self::json_array( $after )['stylesheet'] ?? '' );
 				if ( '' === $stylesheet ) {

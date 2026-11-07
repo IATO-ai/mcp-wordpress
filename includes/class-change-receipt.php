@@ -270,6 +270,7 @@ class IATO_MCP_Change_Receipt {
 			'redirect'         => 'manage_options',
 			'site_setting'     => 'manage_options',
 			'custom_css'       => 'manage_options',
+			'user_profile'     => 'edit_posts',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -304,6 +305,7 @@ class IATO_MCP_Change_Receipt {
 	 *   elementor_template                           manage_options (type-level: Theme Builder is site-wide)
 	 *   redirect                                     manage_options (type-level: site-wide)
 	 *   custom_css                                   manage_options (type-level: site-wide); preflight adds edit_css
+	 *   user_profile                                 edit_user   <the user in the receipt> (yourself, or edit_users)
 	 *   anything else                                manage_options (fail closed)
 	 *
 	 * When the object no longer exists (deleted post, attachment or term) there
@@ -388,6 +390,11 @@ class IATO_MCP_Change_Receipt {
 					default: // assign, terms
 						return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
 				}
+
+			case 'user_profile':
+				// Yourself, or anyone if you hold edit_users.
+				$user_id = (int) ( self::decode_json_field( $receipt['before_value'] ?? null )['user_id'] ?? 0 );
+				return $user_id > 0 && get_userdata( $user_id ) ? $object( 'edit_user', $user_id ) : $typed( 'edit_users' );
 
 			case 'menu_item':
 			case 'menu':

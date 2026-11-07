@@ -82,6 +82,7 @@ require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
 require_once IATO_MCP_DIR . 'includes/class-site-image.php';
 require_once IATO_MCP_DIR . 'includes/class-post-date.php';
 require_once IATO_MCP_DIR . 'includes/class-custom-css.php';
+require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 require_once IATO_MCP_DIR . 'includes/class-media-chunks.php';
 require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
@@ -89,6 +90,7 @@ require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 // Phase 1 — WP native tools
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-site.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-custom-css.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-users.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-posts.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-seo.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media.php';
