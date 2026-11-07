@@ -28,6 +28,8 @@ class IATO_MCP_Settings {
 		'get_site_info',
 		'get_site_settings',
 		'update_site_settings',
+		'get_custom_css',
+		'update_custom_css',
 		'get_posts',
 		'get_post',
 		'create_post',
@@ -176,11 +178,13 @@ class IATO_MCP_Settings {
 			'create_elementor_template',
 			'set_elementor_template_conditions',
 		],
-		// v1.19.0 — chunked image uploads.
+		// v1.19.0 — chunked image uploads, the theme's Additional CSS.
 		'1.19.0' => [
 			'media_upload_start',
 			'media_upload_chunk',
 			'media_upload_finish',
+			'get_custom_css',
+			'update_custom_css',
 		],
 	];
 
@@ -205,6 +209,8 @@ class IATO_MCP_Settings {
 		'get_site_info'            => 'Basic site information and health',
 		'get_site_settings'        => 'WordPress settings (admin only)',
 		'update_site_settings'     => 'Set site title, tagline, home page, icon and logo (admin only)',
+		'get_custom_css'           => 'Read the theme\'s Additional CSS',
+		'update_custom_css'        => 'Set the theme\'s Additional CSS, without off-site loads (admin only)',
 		'get_posts'                => 'List published posts with filters',
 		'get_post'                 => 'Single post details and meta',
 		'create_post'              => 'Create new posts and pages',
@@ -272,7 +278,7 @@ class IATO_MCP_Settings {
 	/** Tool groupings for UI categories. */
 	private const TOOL_CATEGORIES = [
 		'Content'       => [ 'get_posts', 'get_post', 'create_post', 'update_post', 'search_posts', 'get_post_meta', 'update_post_meta', 'set_page_settings', 'set_featured_image' ],
-		'Site'          => [ 'get_site_info', 'get_site_settings', 'update_site_settings' ],
+		'Site'          => [ 'get_site_info', 'get_site_settings', 'update_site_settings', 'get_custom_css', 'update_custom_css' ],
 		'SEO'           => [ 'get_seo_data', 'update_seo_data', 'update_canonical', 'update_structured_data' ],
 		'Media'         => [ 'get_media', 'update_alt_text', 'create_media', 'media_upload_start', 'media_upload_chunk', 'media_upload_finish' ],
 		'Navigation'    => [ 'get_menus', 'get_menu_items', 'update_menu_item', 'create_menu_item', 'delete_menu_item', 'update_menu_item_details', 'create_menu', 'assign_menu_location' ],

@@ -76,10 +76,11 @@ class IATO_MCP_Cache {
 		'media_upload_start',
 		'media_upload_chunk',
 		'media_upload_finish',
+		'update_custom_css',
 	];
 
 	/** Receipt types whose change shows on every page. */
-	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting' ];
+	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting', 'custom_css' ];
 
 	/**
 	 * Post types other pages render, so their own URL says nothing about what is

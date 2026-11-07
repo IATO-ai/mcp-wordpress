@@ -166,6 +166,13 @@ class IATO_MCP_Rollback_Conflict {
 			case 'redirect':
 				return self::redirect( $after );
 
+			case IATO_MCP_Custom_CSS::RECEIPT:
+				$stylesheet = (string) ( self::json_array( $after )['stylesheet'] ?? '' );
+				if ( '' === $stylesheet ) {
+					return self::unverifiable( 'the receipt does not say which theme the CSS belonged to' );
+				}
+				return self::compare( IATO_MCP_Custom_CSS::after_value( $stylesheet ), $after, 'custom CSS' );
+
 			case 'site_setting':
 				// "None" can be stored as 0, '' or nothing: these compare as IDs.
 				if ( 'site_icon' === $field ) {

@@ -269,6 +269,7 @@ class IATO_MCP_Change_Receipt {
 			'elementor_template' => 'manage_options',
 			'redirect'         => 'manage_options',
 			'site_setting'     => 'manage_options',
+			'custom_css'       => 'manage_options',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -302,6 +303,7 @@ class IATO_MCP_Change_Receipt {
 	 *   menu_item, menu, menu_location               edit_theme_options (type-level: menus are site-wide)
 	 *   elementor_template                           manage_options (type-level: Theme Builder is site-wide)
 	 *   redirect                                     manage_options (type-level: site-wide)
+	 *   custom_css                                   manage_options (type-level: site-wide); preflight adds edit_css
 	 *   anything else                                manage_options (fail closed)
 	 *
 	 * When the object no longer exists (deleted post, attachment or term) there
@@ -393,6 +395,7 @@ class IATO_MCP_Change_Receipt {
 			case 'elementor_template':
 			case 'redirect':
 			case 'site_setting':
+			case 'custom_css':
 				return $typed( $type_cap, 'type-by-design' );
 
 			default:

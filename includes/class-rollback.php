@@ -342,7 +342,9 @@ class IATO_MCP_Rollback {
 			return new WP_Error(
 				'rollback_unavailable',
 				sprintf(
-					'The copy of the page this change replaced was removed on %s, when the receipt became older than the retention period. Restore the page in Elementor under History > Revisions.',
+					IATO_MCP_Custom_CSS::RECEIPT === $type
+						? 'The copy of the CSS this change replaced was removed on %s, when the receipt became older than the retention period. Restore it from the revisions of Additional CSS in the Customizer.'
+						: 'The copy of the page this change replaced was removed on %s, when the receipt became older than the retention period. Restore the page in Elementor under History > Revisions.',
 					(string) $receipt['pruned_at']
 				),
 				[ 'status' => 409, 'pruned_at' => (string) $receipt['pruned_at'] ]
@@ -371,6 +373,12 @@ class IATO_MCP_Rollback {
 				sprintf( 'The previous author, user %d, no longer exists. Choose another author with update_post.', (int) $before ),
 				[ 'status' => 409 ]
 			);
+		}
+		if ( IATO_MCP_Custom_CSS::RECEIPT === $type ) {
+			$why = IATO_MCP_Custom_CSS::rollback_unavailable( $before );
+			if ( null !== $why ) {
+				return $why;
+			}
 		}
 		if ( 'site_setting' === $type ) {
 			$why = self::site_setting_unavailable( $field, $before );
@@ -442,6 +450,8 @@ class IATO_MCP_Rollback {
 				return self::rollback_redirect( $field, $before_value );
 			case 'site_setting':
 				return self::rollback_site_setting( $field, $before_value );
+			case IATO_MCP_Custom_CSS::RECEIPT:
+				return IATO_MCP_Custom_CSS::restore( $before_value );
 			case 'post_meta':
 				return self::rollback_post_meta( $field, $post_id, $before_value );
 			case 'attachment':
