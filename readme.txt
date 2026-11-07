@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.19.1
+Stable tag: 1.19.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -182,6 +182,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.19.2 =
+* New: `get_site_info` returns `plugin_version`, the IATO MCP version running on the site, so one call confirms an update is live. Every caller sees it.
 
 = 1.19.1 =
 * Changed: The tool descriptions clients read are clearer about publish dates and authors. `create_post`'s description mentions them, `date` and `date_gmt` say they are ISO 8601 and that `date_gmt` is worked out from `date` when omitted, and `allow_future` says what is refused and when a post is scheduled.
@@ -542,6 +545,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.19.2 =
+get_site_info now returns plugin_version, so an AI client can confirm which IATO MCP version a site is running in one call.
 
 = 1.19.1 =
 Tool descriptions for post dates, authors and image uploads now match what the tools accept, and get_iato_sitemap lists its crawl_id parameter.
