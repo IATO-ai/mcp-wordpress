@@ -154,14 +154,17 @@ IATO_MCP_Server::register_tool(
 		$changes  = [];
 		$receipts = [];
 		// Before any option: a failure in here leaves every setting as it was.
-		$image_report = iato_mcp_prepare_site_images( $images );
+		$report = iato_mcp_prepare_site_images( $images );
 		foreach ( $planned as $input => $plan ) {
 			if ( isset( $images[ $input ] ) ) {
 				$receipts[]        = iato_mcp_write_site_image( $input, (int) $plan['value'], $plan['before'] );
 				$changes[ $input ] = iato_mcp_site_image_change( $input, IATO_MCP_Site_Image::current( $input ), $images[ $input ]['before_id'] );
 				continue;
 			}
-			update_option( $plan['option'], $plan['value'] ); // update_option() does not unslash
+			$warning = IATO_MCP_Elementor_Adapter::update_site_option( $plan['option'], $plan['value'] );
+			if ( null !== $warning ) {
+				$report['warnings'][] = $warning;
+			}
 			// What WordPress stored (it runs esc_html on the title and tagline): the
 			// rollback conflict check compares the stored value with the receipt's.
 			$after             = (string) get_option( $plan['option'] );
@@ -172,7 +175,7 @@ IATO_MCP_Server::register_tool(
 			flush_rewrite_rules( false ); // wp-admin does this from a hook that is not loaded on REST requests
 		}
 
-		$data = [ 'changes' => (object) $changes ] + iato_mcp_finish_site_images( $images, $image_report );
+		$data = [ 'changes' => (object) $changes ] + iato_mcp_finish_site_images( $images, $report );
 		if ( 1 === count( $receipts ) ) {
 			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
 		} elseif ( count( $receipts ) > 1 ) {
@@ -280,8 +283,8 @@ function iato_mcp_plan_site_settings( array $args, array &$images = [] ): array|
 			$planned[ $key ] = [ 'option' => $option, 'value' => $values[ $key ], 'before' => $before, 'stored' => $stored ];
 		}
 	}
-	// Last: Elementor's hook on the title can throw for a request with no user, after
-	// that value is stored. An image written before it would have a receipt no one sees.
+	// Last: another plugin's hook on an option can throw after that value is stored.
+	// An image written before it would have a receipt no one sees.
 	foreach ( $images as $key => $image ) {
 		if ( $image['id'] !== $image['before_id'] ) {
 			$planned[ $key ] = [

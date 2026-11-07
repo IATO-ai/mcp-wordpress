@@ -17,6 +17,9 @@ if ( ! class_exists( 'IATO_MCP_Server' ) ) {
 		public static function ok( array $data ): array {
 			return [ 'content' => [ [ 'type' => 'text', 'text' => json_encode( $data ) ] ] ];
 		}
+		public static function refusal( WP_Error $error ): array {
+			return [ 'isError' => true, 'content' => [ [ 'type' => 'text', 'text' => json_encode( [ 'error' => $error->get_error_code(), 'message' => $error->get_error_message() ] ) ] ] ];
+		}
 	}
 }
 if ( ! function_exists( 'add_action' ) ) {

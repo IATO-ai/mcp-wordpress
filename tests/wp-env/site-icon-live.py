@@ -397,27 +397,11 @@ else:
     print('  note: no inactive theme, theme switch not checked')
 php("set_theme_mod('custom_logo',0);echo 1;")
 
-# As a user: Elementor's own sync of the title refuses a request with no user.
 both = call('update_site_settings', {'site_icon': OTHER, 'custom_logo': WIDE, 'title': wp('option', 'get', 'blogname') + ' x'}, 'admin')
 record('all at once: a receipt each', 3 == len(both.get('change_receipts', [])) and OTHER == icon() and WIDE == logo(), both)
 for receipt in both.get('change_receipts', []):
     call('rollback', {'change_id': receipt['change_id']}, 'admin')
 record('each rolls back', 0 == logo() and not wp('option', 'get', 'blogname').endswith(' x'), logo())
-
-# Elementor's own hook on the title throws for a request with no user, after the title is
-# stored. That is older than these settings; what matters here is what it leaves.
-if KIT:
-    wp('option', 'update', 'iato_mcp_key_owner', '0')
-    name = wp('option', 'get', 'blogname')
-    wp('option', 'update', 'site_icon', str(SQUARE))
-    r = call('update_site_settings', {'title': name + ' y', 'site_icon': OTHER, 'custom_logo': WIDE})
-    if r.get('isError'):
-        record('if the title fails on an unbound key, the images are not touched', SQUARE == icon() and 0 == logo(), r)
-    else:
-        print('  note: the title did not fail on an unbound key here')
-        php("set_theme_mod('custom_logo',0);echo 1;")
-    wp('option', 'update', 'blogname', name)
-    wp('option', 'update', 'iato_mcp_key_owner', owner)
 
 # ── Elementor's Site Settings ───────────────────────────────────────────────
 print("# Elementor's Site Settings")
@@ -476,6 +460,88 @@ else:
     r2 = call('rollback', {'change_id': r['change_receipt']['change_id']})
     record('rollback restores the logo in both', 0 == logo() and '' == kit()['site_logo']['id'], (r2, kit().get('site_logo')))
     php(f"$s=get_post_meta({KIT},'_elementor_page_settings',true);unset($s['site_favicon'],$s['site_logo'],$s['iato_live_note']);update_post_meta({KIT},'_elementor_page_settings',wp_slash($s));echo 1;")
+
+# ── The title and tagline ───────────────────────────────────────────────────
+# Elementor copies both into its kit, from a hook that used to throw after the value was
+# stored on a key with no owner, and for every credential with no usable kit.
+print('# The title and tagline')
+if not KIT:
+    print('  note: no active kit, these checks not run')
+else:
+    def rest_rollback(change_id, before_value):
+        body = json.dumps({'change_id': change_id, 'before_value': before_value}).encode()
+        req = urllib.request.Request(BASE + '/wp-json/iato-mcp/v1/rollback', data=body, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEY})
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=120).read())
+        except urllib.error.HTTPError as error:
+            return {'http': error.code, 'body': error.read()[:300].decode('utf-8', 'replace')}
+
+    def texts():
+        return wp('option', 'get', 'blogname'), wp('option', 'get', 'blogdescription')
+
+    NAME, TAGLINE = texts()
+    owner = wp('option', 'get', 'iato_mcp_key_owner')
+    # A title WordPress changes on save, with a backslash the write must not lose.
+    TRICKY = 'Q & A C:' + chr(92) + 'temp'
+    for label, who, value in (('administrator password', 'admin', None), ('OAuth', 'oauth', None), ('bound site key', 'key', str(ADMIN_ID)), ('unbound site key', 'key', '0')):
+        if value is not None:
+            wp('option', 'update', 'iato_mcp_key_owner', value)
+        r = call('update_site_settings', {'title': f'{TRICKY} {label}', 'tagline': f'Tagline {label}'}, who)
+        stored_title, stored_tagline = texts()
+        record(f'{label}: both saved, with a receipt each and no warning', 2 == len(r.get('change_receipts', [])) and 'isError' not in r and 'warnings' not in r and f'Tagline {label}' == stored_tagline, r)
+        record(f'{label}: WordPress encoded the title and kept the backslash', stored_title == f'Q &amp; A C:{chr(92)}temp {label}', stored_title)
+        record(f'{label}: the response and the receipt hold what was stored', r.get('changes', {}).get('title', {}).get('after') == stored_title and stored_title in [x.get('after_value') for x in r.get('change_receipts', [])], r)
+        saved = kit()
+        record(f"{label}: Elementor's kit holds the same text", saved.get('site_name') == stored_title and saved.get('site_description') == stored_tagline, saved)
+        publish()
+        record(f'{label}: publishing Site Settings keeps them', (stored_title, stored_tagline) == texts(), texts())
+        results_of_rollback = [call('rollback', {'change_id': x['change_id']}, who) for x in r.get('change_receipts', [])]
+        saved = kit()
+        record(f'{label}: rollback restores both, in the kit too', (NAME, TAGLINE) == texts() and saved.get('site_name') == NAME and saved.get('site_description', '') == TAGLINE and not any(x.get('isError') for x in results_of_rollback), (results_of_rollback, saved))
+        publish()
+        record(f'{label}: ...and publishing keeps that', (NAME, TAGLINE) == texts(), texts())
+
+    # Still the unbound key from here.
+    note = 'C:' + chr(92) + 'temp & "quotes"'
+    save_in_kit({'iato_live_note': note})
+    r = call('update_site_settings', {'title': NAME + ' kept', 'dry_run': True})
+    record('a dry run writes to neither', (NAME, TAGLINE) == texts() and kit().get('site_name') == NAME and r.get('dry_run') is True, r)
+    r = call('update_site_settings', {'title': NAME + ' kept'})
+    saved = kit()
+    record('the other kit settings are kept, backslash included', saved.get('iato_live_note') == note and saved.get('site_name') == NAME + ' kept', saved)
+    r2 = call('update_site_settings', {'title': NAME + ' kept'})
+    record('the same title again changes nothing', 'change_receipt' not in r2 and 'isError' not in r2, r2)
+    r2 = rest_rollback(r['change_receipt']['change_id'], r['change_receipt']['before_value'])
+    record('the REST rollback route restores it too', NAME == texts()[0] and kit().get('site_name') == NAME and 'http' not in r2, r2)
+    php(f"$s=get_post_meta({KIT},'_elementor_page_settings',true);unset($s['iato_live_note']);update_post_meta({KIT},'_elementor_page_settings',wp_slash($s));echo 1;")
+
+    wp('option', 'update', 'site_icon', str(SQUARE))
+    both = call('update_site_settings', {'title': NAME + ' y', 'site_icon': OTHER, 'custom_logo': WIDE})
+    record('all at once on this key: a receipt each', 3 == len(both.get('change_receipts', [])) and OTHER == icon() and WIDE == logo() and NAME + ' y' == texts()[0], both)
+    for receipt in both.get('change_receipts', []):
+        call('rollback', {'change_id': receipt['change_id']})
+    record('...and each rolls back', SQUARE == icon() and 0 == logo() and NAME == texts()[0], (icon(), logo(), texts()))
+
+    # No usable kit: Elementor's copy throws for everyone, and there is nothing to copy to.
+    kit_status = wp('post', 'get', str(KIT), '--field=post_status')
+    for state, break_it, mend_it in (
+        ('a missing kit', lambda: wp('option', 'delete', 'elementor_active_kit'), lambda: wp('option', 'update', 'elementor_active_kit', str(KIT))),
+        ('a trashed kit', lambda: wp('post', 'update', str(KIT), '--post_status=trash'), lambda: wp('post', 'update', str(KIT), f'--post_status={kit_status}')),
+    ):
+        break_it()
+        for label, who, value in (('administrator password', 'admin', None), ('bound site key', 'key', str(ADMIN_ID)), ('unbound site key', 'key', '0')):
+            if value is not None:
+                wp('option', 'update', 'iato_mcp_key_owner', value)
+            r = call('update_site_settings', {'title': f'{NAME} {state}'}, who)
+            record(f'{state}, {label}: saved, with a receipt and no warning', f'{NAME} {state}' == texts()[0] and r.get('change_receipt') and 'isError' not in r and 'warnings' not in r, r)
+            r2 = call('rollback', {'change_id': r.get('change_receipt', {}).get('change_id', '')}, who)
+            record(f'{state}, {label}: rolls back', NAME == texts()[0] and 'isError' not in r2, r2)
+        record(f'{state}: nothing was copied to it', kit().get('site_name') == NAME, kit().get('site_name'))
+        mend_it()
+    wp('option', 'update', 'iato_mcp_key_owner', owner)
+    r = call('update_site_settings', {'title': NAME + ' back'}, 'admin')
+    record('with the kit back, Elementor copies the title again', kit().get('site_name') == NAME + ' back', kit().get('site_name'))
+    call('rollback', {'change_id': r['change_receipt']['change_id']}, 'admin')
 
 # ── Rolling back the upload of an image in use ──────────────────────────────
 print('# Rolling back the upload of an image in use')

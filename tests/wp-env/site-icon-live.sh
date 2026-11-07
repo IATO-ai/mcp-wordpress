@@ -3,7 +3,8 @@
 # get_site_settings, on real image files: validation, the sizes WordPress expects,
 # the tags on a logged-out page, receipts and rollback, every credential, Elementor's
 # saved favicon and logo surviving a publish of Site Settings, and rolling back the
-# upload of an image in use.
+# upload of an image in use. Also the title and tagline, which Elementor copies into
+# its kit: on every credential, and with a missing or trashed kit.
 #   tests/wp-env/site-icon-live.sh [base-url]
 #   tests/wp-env/site-icon-live.sh --cleanup
 # Another site: WPENV_DIR (its wp-env folder) and WPENV_SVC (default cli; tests-cli).
@@ -12,14 +13,15 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${WPENV_DIR:-$REPO}"
 export WPENV_SVC="${WPENV_SVC:-cli}"
 W() { npx @wordpress/env run "$WPENV_SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
-export THEME_MARKER=/tmp/iato-site-icon-live-theme
+# Per site, so the sites can run at the same time.
+export THEME_MARKER="/tmp/iato-site-icon-live-theme-$WPENV_SVC-$(basename "${WPENV_DIR:-$REPO}")"
 
 cleanup() {
 	if [ -f "$THEME_MARKER" ]; then
 		W wp theme activate "$(cat "$THEME_MARKER")" >/dev/null
 		rm -f "$THEME_MARKER"
 	fi
-	W wp eval '$b=get_option("iato_test_site_icon_backup");if(is_array($b)){update_option("site_icon",$b["icon"]);if(false===$b["logo"]){remove_theme_mod("custom_logo");}else{set_theme_mod("custom_logo",$b["logo"]);}update_option("iato_mcp_key_owner",$b["owner"]);update_option("blogname",$b["name"]);$k=(int)get_option("elementor_active_kit");if($k>0){if(""===$b["kit"]){delete_post_meta($k,"_elementor_page_settings");}else{update_post_meta($k,"_elementor_page_settings",wp_slash($b["kit"]));}}delete_option("iato_test_site_icon_backup");}' >/dev/null
+	W wp eval '$b=get_option("iato_test_site_icon_backup");if(is_array($b)){update_option("site_icon",$b["icon"]);if(false===$b["logo"]){remove_theme_mod("custom_logo");}else{set_theme_mod("custom_logo",$b["logo"]);}update_option("iato_mcp_key_owner",$b["owner"]);update_option("blogname",$b["name"]);update_option("blogdescription",$b["tagline"]);$k=(int)$b["kit_id"];if($k>0){update_option("elementor_active_kit",$k);wp_update_post(["ID"=>$k,"post_status"=>$b["kit_status"]]);if(""===$b["kit"]){delete_post_meta($k,"_elementor_page_settings");}else{update_post_meta($k,"_elementor_page_settings",wp_slash($b["kit"]));}}delete_option("iato_test_site_icon_backup");}' >/dev/null
 	for id in $(W wp post list --post_type=attachment,page --post_status=any,trash --s=site-icon-live --format=ids | tr ' ' '\n'); do W wp post delete "$id" --force >/dev/null; done
 	# Sizes of the fixtures whose metadata the suite removes: WordPress cannot know them.
 	W wp eval '$d=wp_upload_dir()["basedir"];foreach(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($d,FilesystemIterator::SKIP_DOTS)) as $f){if($f->isFile()&&0===strpos($f->getFilename(),"site-icon-live")){unlink($f->getPathname());}}' >/dev/null
@@ -35,7 +37,7 @@ if [ "${1:-}" = "--cleanup" ]; then
 fi
 
 export BASE="${1:-http://localhost:8888}"
-W wp eval '$k=(int)get_option("elementor_active_kit");add_option("iato_test_site_icon_backup",["name"=>get_option("blogname"),"icon"=>get_option("site_icon"),"logo"=>get_theme_mod("custom_logo"),"owner"=>get_option("iato_mcp_key_owner"),"kit"=>$k>0?get_post_meta($k,"_elementor_page_settings",true):""],"","no");' >/dev/null
+W wp eval '$k=(int)get_option("elementor_active_kit");add_option("iato_test_site_icon_backup",["name"=>get_option("blogname"),"tagline"=>get_option("blogdescription"),"kit_id"=>$k,"kit_status"=>$k>0?get_post_status($k):"","icon"=>get_option("site_icon"),"logo"=>get_theme_mod("custom_logo"),"owner"=>get_option("iato_mcp_key_owner"),"kit"=>$k>0?get_post_meta($k,"_elementor_page_settings",true):""],"","no");' >/dev/null
 export KEY=$(W wp option get iato_mcp_key)
 for user in editor author; do
 	W wp user get "$user" --field=ID >/dev/null 2>&1 || W wp user create "$user" "$user@example.test" --role="$user" --user_pass="$user-pass" >/dev/null

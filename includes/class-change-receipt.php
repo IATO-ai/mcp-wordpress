@@ -269,6 +269,8 @@ class IATO_MCP_Change_Receipt {
 			'elementor_template' => 'manage_options',
 			'redirect'         => 'manage_options',
 			'site_setting'     => 'manage_options',
+			'custom_css'       => 'manage_options',
+			'user_profile'     => 'edit_posts',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -290,6 +292,8 @@ class IATO_MCP_Change_Receipt {
 	 *   elementor_atomic (1.14.0)                    edit_post   <post_id>
 	 *   post create (rollback trashes the post)      delete_post <post_id>
 	 *   post status restoring publish/future/private edit_post   <post_id> + the type's publish cap (also[])
+	 *   post date (restores a status too)            as post status, with the status in the receipt
+	 *   post author                                  edit_post   <post_id> + the type's edit_others_posts (also[])
 	 *   image (alt text; post_id is the attachment) edit_post   <attachment_id>
 	 *   attachment (create; rollback deletes it)     delete_post <attachment_id>
 	 *   taxonomy assign / terms (post-level)         edit_post   <post_id>
@@ -300,6 +304,8 @@ class IATO_MCP_Change_Receipt {
 	 *   menu_item, menu, menu_location               edit_theme_options (type-level: menus are site-wide)
 	 *   elementor_template                           manage_options (type-level: Theme Builder is site-wide)
 	 *   redirect                                     manage_options (type-level: site-wide)
+	 *   custom_css                                   manage_options (type-level: site-wide); preflight adds edit_css
+	 *   user_profile                                 edit_user   <the user in the receipt> (yourself, or edit_users)
 	 *   anything else                                manage_options (fail closed)
 	 *
 	 * When the object no longer exists (deleted post, attachment or term) there
@@ -344,6 +350,19 @@ class IATO_MCP_Change_Receipt {
 					}
 					return $req;
 				}
+				if ( 'date' === $field || 'author' === $field ) {
+					if ( $post_id <= 0 || ! self::post_exists( $post_id ) ) {
+						return $typed( $type_cap );
+					}
+					$req       = $object( 'edit_post', $post_id );
+					$post_type = (string) ( get_post( $post_id )->post_type ?? 'post' );
+					if ( 'author' === $field ) {
+						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'edit_others_posts' ), 'object_id' => null ];
+					} elseif ( in_array( (string) ( self::decode_json_field( $receipt['before_value'] ?? null )['status'] ?? '' ), IATO_MCP_Auth::PUBLISH_STATUSES, true ) ) {
+						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'publish_posts' ), 'object_id' => null ];
+					}
+					return $req;
+				}
 				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
 
 			case 'page':
@@ -372,12 +391,18 @@ class IATO_MCP_Change_Receipt {
 						return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
 				}
 
+			case 'user_profile':
+				// Yourself, or anyone if you hold edit_users.
+				$user_id = (int) ( self::decode_json_field( $receipt['before_value'] ?? null )['user_id'] ?? 0 );
+				return $user_id > 0 && get_userdata( $user_id ) ? $object( 'edit_user', $user_id ) : $typed( 'edit_users' );
+
 			case 'menu_item':
 			case 'menu':
 			case 'menu_location':
 			case 'elementor_template':
 			case 'redirect':
 			case 'site_setting':
+			case 'custom_css':
 				return $typed( $type_cap, 'type-by-design' );
 
 			default:

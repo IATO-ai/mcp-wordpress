@@ -346,6 +346,15 @@ class IATO_MCP_Server {
 		if ( ! class_exists( 'IATO_MCP_Call_Log' ) ) {
 			return;
 		}
+		// The log holds 200 rows, and 1 MB of upload is 340 of these. What goes wrong is kept, without the file.
+		if ( 'media_upload_chunk' === $tool ) {
+			if ( 'success' === $status ) {
+				return;
+			}
+			if ( is_array( $args ) ) {
+				unset( $args['data'] );
+			}
+		}
 		$duration_ms = (int) round( ( microtime( true ) - $started ) * 1000 );
 
 		IATO_MCP_Call_Log::record( [
@@ -601,6 +610,25 @@ class IATO_MCP_Server {
 				'type' => 'text',
 				'text' => wp_json_encode( $data ),
 			]],
+		];
+	}
+
+	/**
+	 * A refusal an MCP client can act on: JSON text with the code, the message and
+	 * the error's details. Clients see only the text, so a bare WP_Error's code and
+	 * data never reach them.
+	 */
+	public static function refusal( WP_Error $error ): array {
+		$data = $error->get_error_data();
+		return [
+			'isError' => true,
+			'content' => [ [
+				'type' => 'text',
+				'text' => (string) wp_json_encode(
+					[ 'error' => $error->get_error_code(), 'message' => $error->get_error_message() ]
+					+ array_diff_key( is_array( $data ) ? $data : [], [ 'status' => true ] )
+				),
+			] ],
 		];
 	}
 }

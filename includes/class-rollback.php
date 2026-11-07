@@ -241,6 +241,9 @@ class IATO_MCP_Rollback {
 		$is_tree   = 'elementor_widget' === $receipt['target_type'];
 		$is_atomic = IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE === $receipt['target_type'];
 		$restore   = [ 'restored_value' => $before ];
+		if ( IATO_MCP_Custom_CSS::RECEIPT === $receipt['target_type'] ) {
+			$restore = [ 'restored_value' => IATO_MCP_Custom_CSS::restore_view( $before ) ];
+		}
 		if ( $is_atomic ) {
 			// 1.14.0: one atomic element's settings, shown in plain form.
 			$restore = [ 'restored_value' => IATO_MCP_Elementor_Atomic_Writer::restore_view( $receipt ) ];
@@ -281,7 +284,7 @@ class IATO_MCP_Rollback {
 		if ( $dry_run ) {
 			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
 				+ $base
-				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic ? $restore['restored_value'] : $before ] )
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic || IATO_MCP_Custom_CSS::RECEIPT === $receipt['target_type'] ? $restore['restored_value'] : $before ] )
 				+ ( $is_tree ? self::content_refresh_preview( $post_id, $before ) : [] )
 				+ [ 'conflict_check' => $report ];
 		}
@@ -342,7 +345,9 @@ class IATO_MCP_Rollback {
 			return new WP_Error(
 				'rollback_unavailable',
 				sprintf(
-					'The copy of the page this change replaced was removed on %s, when the receipt became older than the retention period. Restore the page in Elementor under History > Revisions.',
+					IATO_MCP_Custom_CSS::RECEIPT === $type
+						? 'The copy of the CSS this change replaced was removed on %s, when the receipt became older than the retention period. Restore it from the revisions of Additional CSS in the Customizer.'
+						: 'The copy of the page this change replaced was removed on %s, when the receipt became older than the retention period. Restore the page in Elementor under History > Revisions.',
 					(string) $receipt['pruned_at']
 				),
 				[ 'status' => 409, 'pruned_at' => (string) $receipt['pruned_at'] ]
@@ -358,6 +363,28 @@ class IATO_MCP_Rollback {
 		}
 		if ( IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE === $type ) {
 			$why = IATO_MCP_Elementor_Atomic_Writer::rollback_unavailable( $receipt );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
+		if ( 'post' === $type && 'date' === $field && '' === (string) ( IATO_MCP_Rollback_Conflict::json_array( $before )['date'] ?? '' ) ) {
+			return new WP_Error( 'rollback_unavailable', 'This receipt holds no date to restore.', [ 'status' => 409 ] );
+		}
+		if ( 'post' === $type && 'author' === $field && (int) $before > 0 && ! get_userdata( (int) $before ) ) {
+			return new WP_Error(
+				'rollback_unavailable',
+				sprintf( 'The previous author, user %d, no longer exists. Choose another author with update_post.', (int) $before ),
+				[ 'status' => 409 ]
+			);
+		}
+		if ( IATO_MCP_User_Profile::RECEIPT === $type ) {
+			$why = IATO_MCP_User_Profile::rollback_unavailable( $before );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
+		if ( IATO_MCP_Custom_CSS::RECEIPT === $type ) {
+			$why = IATO_MCP_Custom_CSS::rollback_unavailable( $before );
 			if ( null !== $why ) {
 				return $why;
 			}
@@ -432,6 +459,10 @@ class IATO_MCP_Rollback {
 				return self::rollback_redirect( $field, $before_value );
 			case 'site_setting':
 				return self::rollback_site_setting( $field, $before_value );
+			case IATO_MCP_Custom_CSS::RECEIPT:
+				return IATO_MCP_Custom_CSS::restore( $before_value );
+			case IATO_MCP_User_Profile::RECEIPT:
+				return IATO_MCP_User_Profile::restore( $before_value );
 			case 'post_meta':
 				return self::rollback_post_meta( $field, $post_id, $before_value );
 			case 'attachment':
@@ -662,7 +693,7 @@ class IATO_MCP_Rollback {
 			IATO_MCP_Site_Image::sync_kit( 'custom_logo', $id );
 			return true;
 		}
-		update_option( $field, null === $before_value ? '' : (string) $before_value ); // update_option() does not unslash
+		IATO_MCP_Elementor_Adapter::update_site_option( $field, null === $before_value ? '' : (string) $before_value );
 		if ( 'site_icon' === $field ) {
 			IATO_MCP_Site_Image::sync_kit( 'site_icon', (int) $before_value );
 		}
@@ -916,12 +947,28 @@ class IATO_MCP_Rollback {
 			return true;
 		}
 
+		if ( 'date' === $field ) {
+			$date   = IATO_MCP_Rollback_Conflict::json_array( $before_value );
+			$result = IATO_MCP_Auth::update_post_fields(
+				[
+					'ID'            => $post_id,
+					'post_date'     => (string) ( $date['date'] ?? '' ),
+					'post_date_gmt' => (string) ( $date['date_gmt'] ?? '' ),
+					'post_status'   => (string) ( $date['status'] ?? $post->post_status ),
+					'edit_date'     => true,
+				],
+				true
+			);
+			return is_wp_error( $result ) ? $result : true;
+		}
+
 		$post_key = match ( $field ) {
 			'title'   => 'post_title',
 			'content' => 'post_content',
 			'excerpt' => 'post_excerpt',
 			'status'  => 'post_status',
 			'slug'    => 'post_name',
+			'author'  => 'post_author',
 			default   => null,
 		};
 

@@ -307,8 +307,10 @@ class IATO_MCP_Inline_Markup {
 			}
 		}
 
+		unset( $raw_scan, $raw_lower, $decoded );
 		$removed = [];
 		$out     = self::rewrite_css( $tokens, $removed );
+		unset( $tokens ); // A 200 KB block is many tokens, and the final check makes its own.
 		if ( null === $out ) {
 			return $drop( 'it could not be read (an unclosed function)' );
 		}
@@ -321,6 +323,11 @@ class IATO_MCP_Inline_Markup {
 			return [ 'css' => null, 'removed' => array_merge( $removed, [ "whole <style> block: {$why}" ] ) ];
 		}
 		return [ 'css' => $out, 'removed' => $removed ];
+	}
+
+	/** Does this CSS end outside any comment, string or url(), so that what follows it starts afresh? */
+	public static function css_is_readable( string $css ): bool {
+		return null !== self::css_tokens( $css );
 	}
 
 	/** What in this CSS means the block cannot be kept, or null. */

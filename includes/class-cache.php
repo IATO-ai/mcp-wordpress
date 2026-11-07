@@ -73,10 +73,15 @@ class IATO_MCP_Cache {
 		'set_page_settings',
 		'set_featured_image',
 		'update_site_settings',
+		'media_upload_start',
+		'media_upload_chunk',
+		'media_upload_finish',
+		'update_custom_css',
+		'update_user_profile',
 	];
 
 	/** Receipt types whose change shows on every page. */
-	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting' ];
+	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting', 'custom_css', 'user_profile' ];
 
 	/**
 	 * Post types other pages render, so their own URL says nothing about what is
@@ -161,6 +166,10 @@ class IATO_MCP_Cache {
 				self::$pending['all'] = true; // the post is trashed; its URL is gone
 				return;
 			}
+			if ( 'post' === $type && 'date' === $field && 'publish' === ( IATO_MCP_Rollback_Conflict::json_array( $receipt['before_value'] ?? null )['status'] ?? '' ) ) {
+				self::$pending['all'] = true; // it goes back on the site
+				return;
+			}
 			self::add_target( $type, $id, $field, $receipt['after_value'] ?? null );
 		} catch ( \Throwable $e ) {
 			self::$pending['all'] = true;
@@ -206,6 +215,11 @@ class IATO_MCP_Cache {
 		}
 		// The URL cached under the old slug or status cannot be derived from the post any more.
 		if ( 'post' === $type && ( 'slug' === $field || ( 'status' === $field && 'publish' === $before ) ) ) {
+			self::$pending['all'] = true;
+			return;
+		}
+		// Archives, listings and bylines change, and a date can be in the URL.
+		if ( 'post' === $type && ( 'date' === $field || 'author' === $field ) && ( 'publish' === get_post_status( $post_id ) || 'publish' === ( IATO_MCP_Rollback_Conflict::json_array( $before )['status'] ?? '' ) ) ) {
 			self::$pending['all'] = true;
 			return;
 		}

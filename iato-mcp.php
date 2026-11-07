@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.18.0
+ * Version:     1.19.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.18.0' );
+define( 'IATO_MCP_VERSION', '1.19.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -80,11 +80,17 @@ require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-writer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
 require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
 require_once IATO_MCP_DIR . 'includes/class-site-image.php';
+require_once IATO_MCP_DIR . 'includes/class-post-date.php';
+require_once IATO_MCP_DIR . 'includes/class-custom-css.php';
+require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
+require_once IATO_MCP_DIR . 'includes/class-media-chunks.php';
 require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 
 // Phase 1 — WP native tools
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-site.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-custom-css.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-users.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-posts.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-seo.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media.php';
@@ -140,6 +146,7 @@ function iato_mcp_init() {
 	IATO_MCP_Server::init();
 	IATO_MCP_Rollback::init();
 	IATO_MCP_Receipt_Retention::init();
+	IATO_MCP_Media_Chunks::init();
 	IATO_MCP_Element_Cache_Guard::init();
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
@@ -571,6 +578,7 @@ function iato_mcp_deactivate() {
 	delete_transient( 'iato_mcp_dashboard_data' );
 	// The daily receipt cleanup; rescheduled on the first request after reactivation.
 	IATO_MCP_Receipt_Retention::unschedule();
+	IATO_MCP_Media_Chunks::unschedule();
 	IATO_MCP_Element_Cache_Guard::unschedule();
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

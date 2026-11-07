@@ -61,12 +61,16 @@ class IATO_MCP_Rollback_Conflict {
 					return self::created_object( $receipt, $post_id, 'post' );
 				}
 				$key = self::POST_FIELDS[ $field ] ?? null;
-				if ( null === $key ) {
+				if ( null === $key && 'date' !== $field ) {
 					return self::unverifiable( "unknown post field {$field}" );
 				}
 				$post = get_post( $post_id );
 				if ( ! $post ) {
 					return self::unverifiable( 'the post no longer exists' );
+				}
+				if ( 'date' === $field ) {
+					// With the status: a scheduled post that has since gone live is a change.
+					return self::compare( IATO_MCP_Post_Date::snapshot( $post ), $after, 'post date' );
 				}
 				return self::compare( $post->{$key} ?? null, $after, "post {$field}" );
 
@@ -162,6 +166,17 @@ class IATO_MCP_Rollback_Conflict {
 			case 'redirect':
 				return self::redirect( $after );
 
+			case IATO_MCP_User_Profile::RECEIPT:
+				$current = IATO_MCP_User_Profile::current( $after );
+				return null === $current ? self::unverifiable( 'the user no longer exists' ) : self::compare( $current, $after, 'profile' );
+
+			case IATO_MCP_Custom_CSS::RECEIPT:
+				$stylesheet = (string) ( self::json_array( $after )['stylesheet'] ?? '' );
+				if ( '' === $stylesheet ) {
+					return self::unverifiable( 'the receipt does not say which theme the CSS belonged to' );
+				}
+				return self::compare( IATO_MCP_Custom_CSS::after_value( $stylesheet ), $after, 'custom CSS' );
+
 			case 'site_setting':
 				// "None" can be stored as 0, '' or nothing: these compare as IDs.
 				if ( 'site_icon' === $field ) {
@@ -192,6 +207,7 @@ class IATO_MCP_Rollback_Conflict {
 		'excerpt' => 'post_excerpt',
 		'status'  => 'post_status',
 		'slug'    => 'post_name',
+		'author'  => 'post_author',
 	];
 
 	/**
