@@ -647,6 +647,16 @@ class IATO_MCP_Auth {
 				[ 'status' => 400 ]
 			);
 		}
+		// 1.19.0: a theme's Additional CSS goes through update_custom_css, whose rules
+		// would otherwise be skipped by naming its post. The lock already denies this to
+		// everyone with a user; the site key's pass below is what this stops.
+		if ( in_array( $cap, [ 'edit_post', 'delete_post' ], true ) && isset( $args[0] ) && function_exists( 'get_post_type' ) && 'custom_css' === get_post_type( (int) $args[0] ) ) {
+			return new WP_Error(
+				'custom_css_target',
+				sprintf( 'Post %d holds a theme\'s Additional CSS. Use update_custom_css. Nothing was written.', (int) $args[0] ),
+				[ 'status' => 400 ]
+			);
+		}
 
 		// Unbound site-key path: documented full admin access, decided by the
 		// explicit flag set in authenticate(), never by the absence of a user

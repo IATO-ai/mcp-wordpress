@@ -33,6 +33,10 @@ class IATO_MCP_Media_Uploader {
 		'avif'         => 'image/avif',
 	];
 
+	/** How far structure_problem() walks a file. Real images are nowhere near this, and a crafted one must not take seconds. */
+	private const MAX_WALK_STEPS   = 200000;
+	private const MAX_JPEG_MARKERS = 4096;
+
 	/** Filename substrings that indicate a smuggled script. */
 	private const FILENAME_DENYLIST = [ '.php', '.phtml', '.phar', '.pl', '.cgi', '.htaccess', '.htpasswd' ];
 
@@ -104,9 +108,11 @@ class IATO_MCP_Media_Uploader {
 	 *                               of source, which this function then consumes. A
 	 *                               parameter rather than a source type, so no tool
 	 *                               argument can ever name a path.
+	 * @param callable|null $on_created Told the attachment's ID as soon as it exists, because
+	 *                                  making its image sizes can end the request.
 	 * @return array|WP_Error
 	 */
-	public static function ingest( array $args, int $user_id, ?string $assembled = null ): array|WP_Error {
+	public static function ingest( array $args, int $user_id, ?string $assembled = null, ?callable $on_created = null ): array|WP_Error {
 		$req_id   = substr( bin2hex( random_bytes( 4 ) ), 0, 8 );
 		$t_start  = microtime( true );
 		$log_prefix = '[iato-mcp create_media:' . $req_id . ']';
@@ -323,6 +329,11 @@ class IATO_MCP_Media_Uploader {
 			return $attachment_id;
 		}
 		$log( 'attachment_inserted', [ 'attachment_id' => $attachment_id ] );
+		// Counted now: it exists, whatever happens to the image sizes.
+		self::increment_rate_counter( $user_id );
+		if ( null !== $on_created ) {
+			$on_created( (int) $attachment_id );
+		}
 
 		$alt_text       = isset( $args['alt_text'] ) ? (string) $args['alt_text'] : '';
 		$defer_subsizes = ! empty( $args['defer_subsizes'] );
@@ -356,23 +367,11 @@ class IATO_MCP_Media_Uploader {
 			}
 		}
 
-		self::increment_rate_counter( $user_id );
-
 		// A small image legitimately has no sizes, so ask WordPress which it expected.
 		$missing_sizes = $defer_subsizes ? [] : array_keys( wp_get_missing_image_subsizes( $attachment_id ) );
 
 		// Build response.
-		$intermediates = [];
-		if ( ! $defer_subsizes && isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
-			$base_url = trailingslashit( dirname( wp_get_attachment_url( $attachment_id ) ) );
-			foreach ( $metadata['sizes'] as $size_name => $size_info ) {
-				$intermediates[ $size_name ] = [
-					'url'    => $base_url . ( $size_info['file'] ?? '' ),
-					'width'  => $size_info['width'] ?? null,
-					'height' => $size_info['height'] ?? null,
-				];
-			}
-		}
+		$intermediates = $defer_subsizes ? [] : self::intermediates_of( $attachment_id, $metadata );
 
 		$log( 'returning', [ 'total' => sprintf( '%.3fs', microtime( true ) - $t_start ), 'deferred' => $defer_subsizes ? 1 : 0 ] );
 
@@ -408,6 +407,57 @@ class IATO_MCP_Media_Uploader {
 		} finally {
 			self::flush_phase_log( $req_id, $phases, $t_start, $user_id );
 		}
+	}
+
+	/** The sizes in an attachment's metadata, as a response gives them. */
+	private static function intermediates_of( int $attachment_id, mixed $metadata ): array {
+		$intermediates = [];
+		if ( isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+			$base_url = trailingslashit( dirname( (string) wp_get_attachment_url( $attachment_id ) ) );
+			foreach ( $metadata['sizes'] as $size_name => $size_info ) {
+				$intermediates[ $size_name ] = [
+					'url'    => $base_url . ( $size_info['file'] ?? '' ),
+					'width'  => $size_info['width'] ?? null,
+					'height' => $size_info['height'] ?? null,
+				];
+			}
+		}
+		return $intermediates;
+	}
+
+	/**
+	 * What ingest() would have returned for an attachment an earlier request created
+	 * before it stopped, usually while making image sizes. Those it could not make go
+	 * back to WP-Cron, so that doing it again here does not stop this request too.
+	 */
+	public static function describe_attachment( int $attachment_id, array $args ): array {
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+		$alt_text = isset( $args['alt_text'] ) ? (string) $args['alt_text'] : '';
+		if ( '' !== $alt_text && '' === (string) get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ) ) {
+			update_post_meta( $attachment_id, '_wp_attachment_image_alt', wp_slash( sanitize_text_field( $alt_text ) ) );
+		}
+		$metadata = wp_get_attachment_metadata( $attachment_id );
+		$missing  = array_keys( wp_get_missing_image_subsizes( $attachment_id ) );
+		if ( [] !== $missing ) {
+			wp_schedule_single_event( time(), 'iato_mcp_generate_subsizes', [ $attachment_id, $alt_text, substr( bin2hex( random_bytes( 4 ) ), 0, 8 ) ] );
+		}
+		$file = (string) get_attached_file( $attachment_id );
+		$size = @wp_getimagesize( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		$size = is_array( $size ) ? $size : [];
+		return [
+			'recovered'          => true,
+			'warnings'           => [ 'An earlier attempt to finish this upload stopped part way. The attachment it created is used.' . ( [] !== $missing ? ' Its image sizes are being created in the background.' : '' ) ],
+			'attachment_id'      => $attachment_id,
+			'url'                => wp_get_attachment_url( $attachment_id ),
+			'filename'           => basename( $file ),
+			'mime_type'          => (string) get_post_mime_type( $attachment_id ),
+			'file_size_bytes'    => file_exists( $file ) ? filesize( $file ) : null,
+			'width'              => $metadata['width'] ?? ( $size[0] ?? null ),
+			'height'             => $metadata['height'] ?? ( $size[1] ?? null ),
+			'alt_text'           => $alt_text,
+			'intermediate_sizes' => self::intermediates_of( $attachment_id, $metadata ),
+			'subsizes_deferred'  => [] !== $missing,
+		];
 	}
 
 	/**
@@ -731,7 +781,7 @@ class IATO_MCP_Media_Uploader {
 			return null;
 		}
 		$saw_data = false;
-		while ( true ) {
+		for ( $steps = 0; $steps < self::MAX_WALK_STEPS; $steps++ ) {
 			$head = fread( $handle, 8 ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			if ( false === $head || 8 !== strlen( $head ) ) {
 				return 'the PNG ends before its end marker, so it is cut short';
@@ -771,6 +821,7 @@ class IATO_MCP_Media_Uploader {
 				return $saw_data ? null : 'the PNG holds no image data';
 			}
 		}
+		return null; // Not a file worth working through.
 	}
 
 	/** Walks past the headers, so a thumbnail's end marker in the metadata does not count. */
@@ -778,7 +829,10 @@ class IATO_MCP_Media_Uploader {
 		if ( "\xFF\xD8" !== fread( $handle, 2 ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions
 			return null;
 		}
-		while ( true ) {
+		for ( $steps = 0; ; $steps++ ) {
+			if ( $steps >= self::MAX_JPEG_MARKERS ) {
+				return null; // Not a file worth working through.
+			}
 			$marker = fread( $handle, 2 ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			if ( false === $marker || 2 !== strlen( $marker ) ) {
 				return 'the JPEG is cut short before its image data';
@@ -825,6 +879,7 @@ class IATO_MCP_Media_Uploader {
 			fseek( $handle, 3 * ( 2 << ( $flags & 7 ) ), SEEK_CUR );
 		}
 		$cut_short = 'the GIF ends before its end marker, so it is cut short';
+		$steps     = 0;
 		while ( true ) {
 			$block = fread( $handle, 1 ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 			if ( false === $block || '' === $block ) {
@@ -849,6 +904,9 @@ class IATO_MCP_Media_Uploader {
 				return null; // Not a layout this follows.
 			}
 			while ( true ) {
+				if ( ++$steps > self::MAX_WALK_STEPS ) {
+					return null; // Not a file worth working through.
+				}
 				$size = fread( $handle, 1 ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 				if ( false === $size || '' === $size ) {
 					return $cut_short;
@@ -878,6 +936,9 @@ class IATO_MCP_Media_Uploader {
 	public static function check_new_upload( string $filename_raw, string $mime ): string|WP_Error {
 		if ( '' === $filename_raw ) {
 			return new WP_Error( 'missing_filename', 'filename is required.' );
+		}
+		if ( strlen( $filename_raw ) > 200 ) {
+			return new WP_Error( 'invalid_filename', 'filename can be at most 200 characters.' );
 		}
 		if ( self::filename_looks_dangerous( $filename_raw ) ) {
 			return new WP_Error( 'unsafe_filename', 'Filename contains a disallowed extension or sequence.' );

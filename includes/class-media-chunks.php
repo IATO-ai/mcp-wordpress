@@ -32,11 +32,18 @@ final class IATO_MCP_Media_Chunks {
 	/** Failures a new attempt with these same bytes cannot fix. */
 	private const FINAL_CODES = [ 'checksum_mismatch', 'invalid_image', 'mime_mismatch', 'mime_not_allowed', 'svg_not_supported', 'image_too_large', 'file_too_large', 'unsafe_filename', 'invalid_filename' ];
 
+	/** alt_text, title and caption are kept in the session until the upload finishes. */
+	private const MAX_FIELD_BYTES = 10000;
+
 	/** @var callable|null Stands in for IATO_MCP_Media_Uploader::ingest() in tests. */
 	private static $ingest = null;
 
-	public static function set_ingest( ?callable $ingest ): void {
-		self::$ingest = $ingest;
+	/** @var callable|null Stands in for IATO_MCP_Media_Uploader::describe_attachment() in tests. */
+	private static $describe = null;
+
+	public static function set_ingest( ?callable $ingest, ?callable $describe = null ): void {
+		self::$ingest   = $ingest;
+		self::$describe = $describe;
 	}
 
 	public static function init(): void {
@@ -64,9 +71,18 @@ final class IATO_MCP_Media_Chunks {
 	// ── Start ───────────────────────────────────────────────────────────────────
 
 	public static function start( array $args ): array|WP_Error {
-		$filename = IATO_MCP_Media_Uploader::check_new_upload( (string) ( $args['filename'] ?? '' ), (string) ( $args['mime_type'] ?? '' ) );
+		$filename = IATO_MCP_Media_Uploader::check_new_upload( self::text( $args, 'filename' ), self::text( $args, 'mime_type' ) );
 		if ( is_wp_error( $filename ) ) {
 			return $filename;
+		}
+		foreach ( [ 'alt_text', 'title', 'caption' ] as $field ) {
+			if ( isset( $args[ $field ] ) && ( ! is_string( $args[ $field ] ) || strlen( $args[ $field ] ) > self::MAX_FIELD_BYTES ) ) {
+				return new WP_Error(
+					'invalid_field',
+					sprintf( '%1$s must be text of at most %2$d bytes.', $field, self::MAX_FIELD_BYTES ),
+					[ 'field' => $field, 'max_bytes' => self::MAX_FIELD_BYTES ]
+				);
+			}
 		}
 		$total = self::whole_number( $args['total_bytes'] ?? null );
 		if ( null === $total || $total <= 0 ) {
@@ -80,7 +96,7 @@ final class IATO_MCP_Media_Chunks {
 				[ 'total_bytes' => $total, 'max_bytes' => $limit ]
 			);
 		}
-		$sha256 = strtolower( trim( (string) ( $args['sha256'] ?? '' ) ) );
+		$sha256 = strtolower( trim( self::text( $args, 'sha256' ) ) );
 		if ( ! IATO_MCP_Media_Uploader::is_sha256( $sha256 ) ) {
 			return new WP_Error( 'invalid_sha256', 'sha256 must be the 64-character hex digest of the file.' );
 		}
@@ -163,7 +179,7 @@ final class IATO_MCP_Media_Chunks {
 			);
 		}
 		if ( isset( $args['chunk_sha256'] ) ) {
-			$sent = strtolower( trim( (string) $args['chunk_sha256'] ) );
+			$sent = strtolower( trim( self::text( $args, 'chunk_sha256' ) ) );
 			if ( ! IATO_MCP_Media_Uploader::is_sha256( $sent ) ) {
 				return new WP_Error( 'invalid_sha256', 'chunk_sha256 must be a 64-character hex digest. Nothing was stored.', [ 'index' => $index ] );
 			}
@@ -187,6 +203,9 @@ final class IATO_MCP_Media_Chunks {
 			$session = self::read( $folder, $upload_id );
 			if ( null === $session ) {
 				return self::not_found();
+			}
+			if ( 'open' !== $session['state'] ) {
+				return new WP_Error( 'upload_finished', 'This upload has been finished. Call media_upload_finish again for its result.' );
 			}
 			return self::place_chunk( $handle, $folder, $upload_id, $session, $index, $bytes, ! empty( $args['dry_run'] ) );
 		} finally {
@@ -244,22 +263,23 @@ final class IATO_MCP_Media_Chunks {
 			);
 		}
 
-		$first = 0 === $every;
 		if ( $dry_run ) {
-			$would = $size + $length;
-			return [ 'dry_run' => true ] + $report( $size, $next ) + [ 'would_receive' => $would ];
+			return [ 'dry_run' => true ] + $report( $size, $next ) + [ 'would_receive' => $size + $length ];
 		}
 
+		// The size first: if the request ends between the two, a retry of this chunk fits.
+		if ( 0 === $every ) {
+			$session['chunk_bytes'] = $length;
+			if ( ! self::save( $folder, $upload_id, $session ) ) {
+				return new WP_Error( 'upload_store_failed', sprintf( 'Could not store chunk %d on the server. Send it again.', $index ), [ 'index' => $index ] );
+			}
+		}
 		fseek( $handle, $size );
 		$written = fwrite( $handle, $bytes );
 		fflush( $handle );
 		if ( $length !== $written ) {
 			ftruncate( $handle, $size );
 			return new WP_Error( 'upload_store_failed', sprintf( 'Could not store chunk %d on the server. Send it again.', $index ), [ 'index' => $index ] );
-		}
-		if ( $first ) {
-			$session['chunk_bytes'] = $length;
-			self::save( $folder, $upload_id, $session );
 		}
 		return $report( $size + $length, $index + 1 );
 	}
@@ -299,6 +319,22 @@ final class IATO_MCP_Media_Chunks {
 			if ( 'done' === $session['state'] ) {
 				return (array) $session['result'] + [ 'already_finished' => true ];
 			}
+			// An earlier request made the attachment, then stopped, most likely while making
+			// its image sizes. Doing it all again would make another each time.
+			$made = (int) ( $session['attachment_id'] ?? 0 );
+			if ( $made > 0 && get_post( $made ) ) {
+				if ( $dry_run ) {
+					return [ 'dry_run' => true, 'attachment_id' => $made, 'already_created' => true ];
+				}
+				$result           = null !== self::$describe ? ( self::$describe )( $made, $session ) : IATO_MCP_Media_Uploader::describe_attachment( $made, $session );
+				$response         = $record( $result ) + [ 'upload_id' => $upload_id ];
+				$session['state'] = 'done';
+				$session['result'] = $response;
+				self::save( $folder, $upload_id, $session );
+				@ftruncate( $handle, 0 );
+				return $response;
+			}
+
 			$attach = (int) $session['attach_to_post'];
 			if ( $attach > 0 ) {
 				if ( ! get_post( $attach ) ) {
@@ -327,7 +363,15 @@ final class IATO_MCP_Media_Chunks {
 				require_once ABSPATH . 'wp-admin/includes/file.php'; // Not loaded on REST requests.
 			}
 			$copy = wp_tempnam( (string) $session['filename'] );
-			if ( ! $copy || ! @copy( $part, $copy ) ) {
+			// Through the handle that holds the lock: Windows refuses anything else.
+			$into   = $copy ? @fopen( $copy, 'wb' ) : false;
+			$copied = false;
+			if ( false !== $into ) {
+				fseek( $handle, 0 );
+				$copied = stream_copy_to_stream( $handle, $into );
+				fclose( $into );
+			}
+			if ( $size !== $copied ) {
 				if ( $copy ) {
 					@unlink( $copy );
 				}
@@ -349,9 +393,13 @@ final class IATO_MCP_Media_Chunks {
 				static fn( mixed $value ): bool => null !== $value
 			);
 			$user_id = (int) get_current_user_id();
+			$created = static function ( int $attachment_id ) use ( $folder, $upload_id, &$session ): void {
+				$session['attachment_id'] = $attachment_id;
+				self::save( $folder, $upload_id, $session );
+			};
 			$result  = null !== self::$ingest
-				? ( self::$ingest )( $ingest_args, $user_id, $copy )
-				: IATO_MCP_Media_Uploader::ingest( $ingest_args, $user_id, $copy );
+				? ( self::$ingest )( $ingest_args, $user_id, $copy, $created )
+				: IATO_MCP_Media_Uploader::ingest( $ingest_args, $user_id, $copy, $created );
 			if ( file_exists( $copy ) ) {
 				@unlink( $copy );
 			}
@@ -502,6 +550,11 @@ final class IATO_MCP_Media_Chunks {
 			}
 		}
 		return $folder;
+	}
+
+	/** An argument that should be text. Anything else is treated as empty, and refused as that. */
+	private static function text( array $args, string $key ): string {
+		return is_string( $args[ $key ] ?? null ) ? $args[ $key ] : '';
 	}
 
 	/** A whole number as JSON sends it, or null. */

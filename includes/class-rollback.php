@@ -241,6 +241,9 @@ class IATO_MCP_Rollback {
 		$is_tree   = 'elementor_widget' === $receipt['target_type'];
 		$is_atomic = IATO_MCP_Elementor_Atomic_Writer::RECEIPT_TYPE === $receipt['target_type'];
 		$restore   = [ 'restored_value' => $before ];
+		if ( IATO_MCP_Custom_CSS::RECEIPT === $receipt['target_type'] ) {
+			$restore = [ 'restored_value' => IATO_MCP_Custom_CSS::restore_view( $before ) ];
+		}
 		if ( $is_atomic ) {
 			// 1.14.0: one atomic element's settings, shown in plain form.
 			$restore = [ 'restored_value' => IATO_MCP_Elementor_Atomic_Writer::restore_view( $receipt ) ];
@@ -281,7 +284,7 @@ class IATO_MCP_Rollback {
 		if ( $dry_run ) {
 			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
 				+ $base
-				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic ? $restore['restored_value'] : $before ] )
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic || IATO_MCP_Custom_CSS::RECEIPT === $receipt['target_type'] ? $restore['restored_value'] : $before ] )
 				+ ( $is_tree ? self::content_refresh_preview( $post_id, $before ) : [] )
 				+ [ 'conflict_check' => $report ];
 		}

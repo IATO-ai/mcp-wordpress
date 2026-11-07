@@ -330,6 +330,9 @@ for label, args, code in (
     ('over 15 MB', {'total_bytes': 15728641}, 'file_too_large'),
     ('a bad digest', {'sha256': 'abc'}, 'invalid_sha256'),
     ('a post that does not exist', {'attach_to_post': 99999999}, 'not_found'),
+    ('a title of 10 KB and a byte', {'title': 'x' * 10001}, 'invalid_field'),
+    ('a list as alt text', {'alt_text': ['x']}, 'invalid_field'),
+    ('a list as a filename', {'filename': ['x.png']}, 'missing_filename'),
 ):
     r = call('media_upload_start', {'filename': f'{T}-x.png', 'mime_type': 'image/png', 'total_bytes': 100, 'sha256': sha(b'x'), **args})
     record(f'{label}: {code}', refused(r, code) and r.get('message'), r)
@@ -388,6 +391,31 @@ record('the web server refuses the bytes', 403 == code, code)
 code = status_of(f'{base}/iato-mcp-tmp/{U}.json')
 record('and the session', 403 == code, code)
 record('the folder itself shows nothing', status_of(f'{base}/iato-mcp-tmp/') in (200, 403), status_of(f'{base}/iato-mcp-tmp/'))
+
+print('# A finish that stops part way')
+MU = "WP_CONTENT_DIR.'/mu-plugins/iato-chunks-stop.php'"
+php(f"@mkdir(dirname({MU}));file_put_contents({MU},'<?php add_filter(\"intermediate_image_sizes_advanced\",function(){{exit;}});');echo 1;")
+data = png(400, 300, noise_rows=4)
+begun = start(data, 'stops.png', alt_text='Alt after stopping')
+send_all(begun['upload_id'], data)
+count = attachments()
+try:
+    call('media_upload_finish', {'upload_id': begun['upload_id']})
+except Exception as error:  # The request ended with no JSON, as a time limit would.
+    print(f'  note: the first finish ended with {type(error).__name__}')
+record('the request stopped after making the attachment', attachments() == count + 1, attachments())
+php(f"unlink({MU});echo 1;")
+r = call('media_upload_finish', {'upload_id': begun['upload_id'], 'dry_run': True})
+record('a dry run says it already exists', r.get('already_created') is True, r)
+r = call('media_upload_finish', {'upload_id': begun['upload_id']})
+record('finish again uses that attachment: no second image, and the receipt it never had', attachments() == count + 1 and r.get('recovered') is True and r.get('change_receipt') and 'stopped part way' in (r.get('warnings') or [''])[0], r)
+record('the bytes are right, and the alt text arrived', stored_sha(r['attachment_id']) == sha(data) and php(f"echo get_post_meta({r['attachment_id']},'_wp_attachment_image_alt',true);") == 'Alt after stopping', r)
+record('its sizes are left to WP-Cron', r.get('subsizes_deferred') is True, r)
+wp('cron', 'event', 'run', 'iato_mcp_generate_subsizes')
+record('...which makes them', 'thumbnail' in sizes_of(r['attachment_id']), sizes_of(r['attachment_id']))
+again = call('media_upload_finish', {'upload_id': begun['upload_id']})
+record('and it is settled now', again.get('already_finished') is True and again.get('attachment_id') == r['attachment_id'] and attachments() == count + 1, again)
+call('rollback', {'change_id': r['change_receipt']['change_id']})
 
 print('# Limits and cleanup')
 for i in range(6):

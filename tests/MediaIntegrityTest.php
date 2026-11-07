@@ -145,6 +145,23 @@ final class MediaIntegrityTest extends TestCase {
 		$this->assertStringContainsString( 'cut short', (string) $this->problem( substr( $webp, 0, 50 ), 'image/webp' ) );
 	}
 
+	/** @return array<string,array{0:string,1:string}> */
+	public static function crafted(): array {
+		return [
+			'a JPEG of fill bytes'     => [ "\xFF\xD8\xFF\xC0\x00\x02" . str_repeat( "\xFF", 9000000 ), 'image/jpeg' ],
+			'a JPEG of tiny segments'  => [ "\xFF\xD8" . str_repeat( "\xFF\xE0\x00\x02", 2000000 ), 'image/jpeg' ],
+			'a GIF of tiny sub-blocks' => [ "GIF89a\x01\x00\x01\x00\x00\x00\x00," . str_repeat( "\x00", 9 ) . "\x02" . str_repeat( "\x01x", 4000000 ), 'image/gif' ],
+			'a PNG of tiny chunks'     => [ "\x89PNG\r\n\x1a\n" . str_repeat( pack( 'N', 0 ) . 'tEXt' . 'XXXX', 800000 ), 'image/png' ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'crafted' )]
+	public function test_a_crafted_file_does_not_take_seconds( string $bytes, string $mime ): void {
+		$start = microtime( true );
+		$this->assertNull( $this->problem( $bytes, $mime ), 'not refused: it is left to the other checks' );
+		$this->assertLessThan( 2.0, microtime( true ) - $start );
+	}
+
 	public function test_a_type_with_no_check_passes(): void {
 		$this->assertNull( $this->problem( 'anything', 'image/avif' ) );
 	}

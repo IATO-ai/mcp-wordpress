@@ -88,6 +88,33 @@ final class CustomCssTest extends TestCase {
 		$this->assertNotSame( [], IATO_MCP_Custom_CSS::refused_parts( $css ) );
 	}
 
+	public function test_css_that_is_only_comments_passes(): void {
+		$this->assertSame( [], IATO_MCP_Custom_CSS::refused_parts( '/* nothing yet */' ) );
+	}
+
+	public function test_what_strip_tags_would_change_is_noticed(): void {
+		$this->assertTrue( IATO_MCP_Custom_CSS::printed_differently( '/* width<768 */ a{}' ) );
+		$this->assertFalse( IATO_MCP_Custom_CSS::printed_differently( '/* a < b */ a > b {}' ) );
+	}
+
+	/** Comments are not judged, and strip_tags() in WordPress below 7.1 takes from inside them. */
+	public function test_the_comment_trick_for_classic_themes_is_caught(): void {
+		$css = '/*<a*/b>"*/ " /* " {} body{background:url(https://evil.example/x)} /* */';
+		$this->assertTrue( [] === IATO_MCP_Custom_CSS::refused_parts( $css ) ? IATO_MCP_Custom_CSS::printed_differently( $css ) : true );
+	}
+
+	public function test_stored_css_left_open_is_not_joined_to(): void {
+		$this->assertFalse( IATO_MCP_Inline_Markup::css_is_readable( 'a{} /* TODO' ) );
+		$this->assertFalse( IATO_MCP_Inline_Markup::css_is_readable( 'a{content:"open' ) );
+		$this->assertTrue( IATO_MCP_Inline_Markup::css_is_readable( 'a{} /* done */' ) );
+		$this->assertTrue( IATO_MCP_Inline_Markup::css_is_readable( '' ) );
+	}
+
+	public function test_a_rollback_response_does_not_carry_the_css(): void {
+		$view = IATO_MCP_Custom_CSS::restore_view( '{"stylesheet":"t","post_id":3,"css":"a{}"}' );
+		$this->assertSame( [ 'stylesheet' => 't', 'bytes' => 3, 'sha256' => hash( 'sha256', 'a{}' ) ], $view );
+	}
+
 	public function test_a_breakout_attempt_is_refused_once_its_tag_is_gone(): void {
 		$clean = IATO_MCP_Custom_CSS::strip_style_close( 'a{}</style><script>alert(1)</script>' );
 		$this->assertNotSame( [], IATO_MCP_Custom_CSS::refused_parts( $clean ) );

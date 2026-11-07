@@ -131,6 +131,12 @@ final class MediaChunksTest extends TestCase {
 			'text size'       => [ [ 'total_bytes' => 'big' ], 'invalid_total_bytes' ],
 			'over 15 MB'      => [ [ 'total_bytes' => 15728641 ], 'file_too_large' ],
 			'a bad digest'    => [ [ 'sha256' => 'abc' ], 'invalid_sha256' ],
+			'a list filename' => [ [ 'filename' => [ 'x.png' ] ], 'missing_filename' ],
+			'a list digest'   => [ [ 'sha256' => [ 'abc' ] ], 'invalid_sha256' ],
+			'a long filename' => [ [ 'filename' => str_repeat( 'x', 201 ) . '.png' ], 'invalid_filename' ],
+			'a long title'    => [ [ 'title' => str_repeat( 'x', 10001 ) ], 'invalid_field' ],
+			'a long alt text' => [ [ 'alt_text' => str_repeat( 'x', 10001 ) ], 'invalid_field' ],
+			'a list caption'  => [ [ 'caption' => [ 'x' ] ], 'invalid_field' ],
 		];
 	}
 
@@ -354,6 +360,72 @@ final class MediaChunksTest extends TestCase {
 		flock( $lock, LOCK_UN );
 		fclose( $lock );
 		$this->assertSame( [], $this->ingested );
+	}
+
+	public function test_a_request_that_stopped_after_making_the_attachment_does_not_make_another(): void {
+		IATO_Test_WP::$posts[ 42 ] = [ 'post_type' => 'attachment', 'post_status' => 'inherit' ];
+		$calls                     = 0;
+		IATO_MCP_Media_Chunks::set_ingest(
+			static function ( array $a, int $u, string $path, callable $created ) use ( &$calls ): array {
+				++$calls;
+				$created( 42 );
+				@unlink( $path );
+				throw new \RuntimeException( 'the time limit, while making image sizes' );
+			},
+			static fn( int $id, array $session ): array => [ 'attachment_id' => $id, 'recovered' => true ]
+		);
+		$id = $this->start()['upload_id'];
+		$this->send_all( $id );
+		try {
+			$this->finish( $id );
+			$this->fail( 'it stopped' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertStringContainsString( 'time limit', $e->getMessage() );
+		}
+		$dry = $this->finish( $id, [ 'dry_run' => true ] );
+		$this->assertTrue( $dry['already_created'] );
+		$r = $this->finish( $id );
+		$this->assertSame( 42, $r['attachment_id'] );
+		$this->assertTrue( $r['recovered'] );
+		$this->assertSame( 'wr_1', $r['change_receipt']['change_id'], 'it gets the receipt it never had' );
+		$this->assertSame( 1, $calls );
+		$again = $this->finish( $id );
+		$this->assertTrue( $again['already_finished'] );
+		unset( IATO_Test_WP::$posts[42] );
+	}
+
+	public function test_an_attachment_deleted_since_is_made_again(): void {
+		unset( IATO_Test_WP::$posts[ 42 ] );
+		$calls = 0;
+		IATO_MCP_Media_Chunks::set_ingest(
+			function ( array $a, int $u, string $path, callable $created ) use ( &$calls ): array {
+				if ( 1 === ++$calls ) {
+					$created( 42 );
+					@unlink( $path );
+					throw new \RuntimeException( 'stopped' );
+				}
+				@unlink( $path );
+				return [ 'attachment_id' => 43 ];
+			}
+		);
+		$id = $this->start()['upload_id'];
+		$this->send_all( $id );
+		try {
+			$this->finish( $id );
+		} catch ( \RuntimeException $e ) {
+			unset( $e );
+		}
+		$this->assertSame( 43, $this->finish( $id )['attachment_id'] );
+	}
+
+	public function test_the_chunk_size_is_kept_before_the_chunk_so_a_retry_fits(): void {
+		$id = $this->start()['upload_id'];
+		$this->send( $id, 0 );
+		// As if the request ended between saving the size and writing the bytes.
+		file_put_contents( $this->folder() . "/$id.part", '' );
+		$r = $this->send( $id, 0 );
+		$this->assertSame( 3000, $r['bytes_received'] );
+		$this->assertSame( $this->piece( 0 ), file_get_contents( $this->folder() . "/$id.part" ) );
 	}
 
 	public function test_the_uploaders_copy_is_gone_whatever_happens(): void {

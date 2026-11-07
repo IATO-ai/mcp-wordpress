@@ -307,6 +307,8 @@ Sets the active theme's Additional CSS, which prints on every page. Send `css` t
 - **Stored as sent.** Nothing is rewritten: it stores exactly what you send, or refuses. The limit is 200 KB, counted after appending (`css_too_large`).
 - **Off-site loads are refused.** `@import`, or `url()` pointing at another host, is refused with `css_not_allowed`, and `found` says what it saw. CSS on every page can send data off-site if a client is tricked by injected instructions, so a person has to add that in the Customizer. With `append_css`, only what you add is checked.
 - **Closing the style element.** Anything that would close it, such as `</style>`, is removed and listed in `sanitized_report`.
+- **Text shaped like a tag.** `<a` and the like are refused with `css_not_allowed`, even in a comment, because WordPress below 7.1 removes them when it prints the CSS, which changes what the rest means. A less-than followed by a space is fine.
+- **Appending.** If what is stored ends inside a comment, string or `url()`, `append_css` is refused with `stored_css_unreadable`, because what you add would be read as part of it. Send the whole CSS with `css`.
 - **Response.** The sizes and hashes, and a short receipt, not the CSS. Rollback restores the previous CSS for the theme it was written for, even after a theme switch. The stored copy goes after 90 days, and WordPress's own revisions remain.
 
 **Capability:** `manage_options`, and `edit_css` held by a real user, so a site key with no owner cannot use it.
@@ -375,7 +377,7 @@ For an image over about 3 KB:
 
 1. **`media_upload_start`**: `filename`, `mime_type`, `total_bytes`, `sha256`, and optionally `alt_text`, `title`, `caption` and `attach_to_post`. Returns an `upload_id`. The limit is 15 MB, or less if the site's upload limit or Settings > IATO MCP > Media Uploads says so. That setting is 10 MB by default.
 2. **`media_upload_chunk`**: `upload_id`, `index` (from 0) and `data`, the chunk's bytes in base64, up to about 3 KB decoded and 4 KB at most. Every chunk must be the size of the first, except the last. Optionally `chunk_sha256`. Sending a chunk again with the same contents is safe.
-3. **`media_upload_finish`**: `upload_id`, and optionally `defer_subsizes`. Checks the total size, the `sha256` and the image, creates the attachment and returns what `create_media` returns, with a receipt. If it times out, call it again: it returns the same result and does not upload twice.
+3. **`media_upload_finish`**: `upload_id`, and optionally `defer_subsizes`. Checks the total size, the `sha256` and the image, creates the attachment and returns what `create_media` returns, with a receipt. If it times out, call it again: it returns the same result and does not upload twice. If the earlier call stopped part way, the response has `recovered` and a warning, and any missing image sizes are made in the background.
 
 An upload belongs to the user who started it, and each user can have five open. One with no activity for an hour is removed. A `checksum_mismatch` or `invalid_image` at the finish removes the upload, so start again.
 

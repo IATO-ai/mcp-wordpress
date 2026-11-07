@@ -68,6 +68,17 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::refusal( new WP_Error( 'invalid_css_input', 'The CSS must be text. Nothing was written.' ) );
 		}
 
+		// First: judging a very large block takes a lot of memory, and a fatal would hide this.
+		if ( strlen( $sent ) > IATO_MCP_Custom_CSS::MAX_BYTES ) {
+			return IATO_MCP_Server::refusal(
+				new WP_Error(
+					'css_too_large',
+					sprintf( 'This CSS is %1$d bytes, and the most is %2$d. Nothing was written.', strlen( $sent ), IATO_MCP_Custom_CSS::MAX_BYTES ),
+					[ 'bytes' => strlen( $sent ), 'max_bytes' => IATO_MCP_Custom_CSS::MAX_BYTES ]
+				)
+			);
+		}
+
 		$stylesheet = get_stylesheet();
 		$stored     = IATO_MCP_Custom_CSS::stored( $stylesheet );
 
@@ -84,9 +95,30 @@ IATO_MCP_Server::register_tool(
 			);
 		}
 
+		// What was judged has to mean the same once joined. A comment, string or url() left
+		// open in what is stored would swallow part of it and bring the rest to life.
+		if ( $has_append && ! IATO_MCP_Inline_Markup::css_is_readable( $stored['css'] ) ) {
+			return IATO_MCP_Server::refusal(
+				new WP_Error(
+					'stored_css_unreadable',
+					'The CSS already stored ends inside a comment, string or url(), so what is added would be read as part of it. Send the whole CSS with css instead, or have a person fix it in the Customizer. Nothing was written.'
+				)
+			);
+		}
+
 		$css = $has_css ? $clean : ( '' === $stored['css'] ? $clean : $stored['css'] . "\n" . $clean );
 		// In case the join makes one.
 		$css = IATO_MCP_Custom_CSS::strip_style_close( $css );
+
+		if ( IATO_MCP_Custom_CSS::printed_differently( $css ) ) {
+			return IATO_MCP_Server::refusal(
+				new WP_Error(
+					'css_not_allowed',
+					'WordPress below 7.1 removes anything shaped like a tag when it prints this CSS, comments included, which would change what the rest means. Remove it, or have a person fix it in the Customizer. Nothing was written.',
+					[ 'found' => [ 'text shaped like a tag, such as <a, perhaps in a comment' ] ]
+				)
+			);
+		}
 
 		$bytes = strlen( $css );
 		if ( $bytes > IATO_MCP_Custom_CSS::MAX_BYTES ) {

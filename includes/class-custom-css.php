@@ -48,25 +48,44 @@ final class IATO_MCP_Custom_CSS {
 
 	/**
 	 * What in this CSS cannot be stored: off-site loads, and what could break out of the
-	 * element or run script. Empty when there is nothing wrong.
+	 * element or run script. Empty when there is nothing wrong, which includes CSS that
+	 * is only comments.
 	 *
 	 * @return string[]
 	 */
 	public static function refused_parts( string $css ): array {
-		if ( '' === trim( $css ) ) {
-			return [];
-		}
-		$check = IATO_MCP_Inline_Markup::sanitize_css( $css );
-		if ( null === $check['css'] && [] === $check['removed'] ) {
-			return [ 'it could not be read' ];
-		}
-		return $check['removed'];
+		return '' === trim( $css ) ? [] : IATO_MCP_Inline_Markup::sanitize_css( $css )['removed'];
+	}
+
+	/**
+	 * WordPress below 7.1 prints this CSS through strip_tags(), comments included. What
+	 * has been judged must be what is printed: taking a tag out of a comment can close the
+	 * comment somewhere else and bring an off-site url() to life, and a less-than with no
+	 * space after it loses everything up to the next greater-than.
+	 */
+	public static function printed_differently( string $css ): bool {
+		return strip_tags( $css ) !== $css; // phpcs:ignore WordPress.WP.AlternativeFunctions.strip_tags_strip_tags -- The very function core prints with.
 	}
 
 	/** The CSS stored for a stylesheet, unfiltered, and its post. */
 	public static function stored( string $stylesheet ): array {
 		$post = wp_get_custom_css_post( $stylesheet );
-		return [ 'post_id' => $post ? (int) $post->ID : 0, 'css' => $post ? (string) $post->post_content : '' ];
+		return [
+			'post_id'      => $post ? (int) $post->ID : 0,
+			'css'          => $post ? (string) $post->post_content : '',
+			'preprocessed' => $post ? (string) $post->post_content_filtered : '', // A preprocessor plugin's source.
+		];
+	}
+
+	/** A rollback's response says what came back, not all of it: up to 200 KB would swamp the transport. */
+	public static function restore_view( mixed $before ): array {
+		$value = IATO_MCP_Rollback_Conflict::json_array( $before );
+		$css   = (string) ( $value['css'] ?? '' );
+		return [
+			'stylesheet' => (string) ( $value['stylesheet'] ?? '' ),
+			'bytes'      => strlen( $css ),
+			'sha256'     => hash( 'sha256', $css ),
+		];
 	}
 
 	/** A receipt's before value: everything needed to put it back. */
@@ -85,10 +104,10 @@ final class IATO_MCP_Custom_CSS {
 	 * a > b into a &gt; b: that is why core's route is limited to users it does not
 	 * apply to. Removed for this one write, and decided again under the lock afterwards.
 	 */
-	public static function write( string $stylesheet, string $css ): int|WP_Error {
+	public static function write( string $stylesheet, string $css, string $preprocessed = '' ): int|WP_Error {
 		kses_remove_filters();
 		try {
-			$saved = IATO_MCP_Auth::write_unlocked( static fn() => wp_update_custom_css_post( $css, [ 'stylesheet' => $stylesheet ] ) );
+			$saved = IATO_MCP_Auth::write_unlocked( static fn() => wp_update_custom_css_post( $css, [ 'stylesheet' => $stylesheet, 'preprocessed' => $preprocessed ] ) );
 		} finally {
 			kses_init();
 		}
@@ -106,7 +125,7 @@ final class IATO_MCP_Custom_CSS {
 			}
 			return true;
 		}
-		$result = self::write( $stylesheet, (string) ( $value['css'] ?? '' ) );
+		$result = self::write( $stylesheet, (string) ( $value['css'] ?? '' ), (string) ( $value['preprocessed'] ?? '' ) );
 		return is_wp_error( $result ) ? $result : true;
 	}
 
