@@ -257,7 +257,7 @@ human_css('.mine { top: 0; }')
 CSS_POST = post_id()
 wp('option', 'update', 'iato_mcp_key_owner', '0')
 for label, tool, args in (
-    ('update_post', 'update_post', {'id': CSS_POST, 'content': '@import "https://evil.example/x.css";'}),
+    ('update_post', 'update_post', {'id': CSS_POST, 'content': 'x'}),
     ('update_elementor_data', 'update_elementor_data', {'id': CSS_POST, 'elementor_data': '[]'}),
     ('update_post_meta', 'update_post_meta', {'id': CSS_POST, 'key': 'x', 'value': 'y'}),
 ):
