@@ -290,6 +290,8 @@ class IATO_MCP_Change_Receipt {
 	 *   elementor_atomic (1.14.0)                    edit_post   <post_id>
 	 *   post create (rollback trashes the post)      delete_post <post_id>
 	 *   post status restoring publish/future/private edit_post   <post_id> + the type's publish cap (also[])
+	 *   post date (restores a status too)            as post status, with the status in the receipt
+	 *   post author                                  edit_post   <post_id> + the type's edit_others_posts (also[])
 	 *   image (alt text; post_id is the attachment) edit_post   <attachment_id>
 	 *   attachment (create; rollback deletes it)     delete_post <attachment_id>
 	 *   taxonomy assign / terms (post-level)         edit_post   <post_id>
@@ -340,6 +342,19 @@ class IATO_MCP_Change_Receipt {
 					$restoring_to = is_string( $receipt['before_value'] ?? null ) ? $receipt['before_value'] : '';
 					if ( in_array( $restoring_to, IATO_MCP_Auth::PUBLISH_STATUSES, true ) ) {
 						$post_type     = (string) ( get_post( $post_id )->post_type ?? 'post' );
+						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'publish_posts' ), 'object_id' => null ];
+					}
+					return $req;
+				}
+				if ( 'date' === $field || 'author' === $field ) {
+					if ( $post_id <= 0 || ! self::post_exists( $post_id ) ) {
+						return $typed( $type_cap );
+					}
+					$req       = $object( 'edit_post', $post_id );
+					$post_type = (string) ( get_post( $post_id )->post_type ?? 'post' );
+					if ( 'author' === $field ) {
+						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'edit_others_posts' ), 'object_id' => null ];
+					} elseif ( in_array( (string) ( self::decode_json_field( $receipt['before_value'] ?? null )['status'] ?? '' ), IATO_MCP_Auth::PUBLISH_STATUSES, true ) ) {
 						$req['also'][] = [ 'cap' => IATO_MCP_Auth::post_type_cap( $post_type, 'publish_posts' ), 'object_id' => null ];
 					}
 					return $req;

@@ -161,6 +161,10 @@ class IATO_MCP_Cache {
 				self::$pending['all'] = true; // the post is trashed; its URL is gone
 				return;
 			}
+			if ( 'post' === $type && 'date' === $field && 'publish' === ( IATO_MCP_Rollback_Conflict::json_array( $receipt['before_value'] ?? null )['status'] ?? '' ) ) {
+				self::$pending['all'] = true; // it goes back on the site
+				return;
+			}
 			self::add_target( $type, $id, $field, $receipt['after_value'] ?? null );
 		} catch ( \Throwable $e ) {
 			self::$pending['all'] = true;
@@ -206,6 +210,11 @@ class IATO_MCP_Cache {
 		}
 		// The URL cached under the old slug or status cannot be derived from the post any more.
 		if ( 'post' === $type && ( 'slug' === $field || ( 'status' === $field && 'publish' === $before ) ) ) {
+			self::$pending['all'] = true;
+			return;
+		}
+		// Archives, listings and bylines change, and a date can be in the URL.
+		if ( 'post' === $type && ( 'date' === $field || 'author' === $field ) && ( 'publish' === get_post_status( $post_id ) || 'publish' === ( IATO_MCP_Rollback_Conflict::json_array( $before )['status'] ?? '' ) ) ) {
 			self::$pending['all'] = true;
 			return;
 		}

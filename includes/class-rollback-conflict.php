@@ -61,12 +61,16 @@ class IATO_MCP_Rollback_Conflict {
 					return self::created_object( $receipt, $post_id, 'post' );
 				}
 				$key = self::POST_FIELDS[ $field ] ?? null;
-				if ( null === $key ) {
+				if ( null === $key && 'date' !== $field ) {
 					return self::unverifiable( "unknown post field {$field}" );
 				}
 				$post = get_post( $post_id );
 				if ( ! $post ) {
 					return self::unverifiable( 'the post no longer exists' );
+				}
+				if ( 'date' === $field ) {
+					// With the status: a scheduled post that has since gone live is a change.
+					return self::compare( IATO_MCP_Post_Date::snapshot( $post ), $after, 'post date' );
 				}
 				return self::compare( $post->{$key} ?? null, $after, "post {$field}" );
 
@@ -192,6 +196,7 @@ class IATO_MCP_Rollback_Conflict {
 		'excerpt' => 'post_excerpt',
 		'status'  => 'post_status',
 		'slug'    => 'post_name',
+		'author'  => 'post_author',
 	];
 
 	/**

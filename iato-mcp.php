@@ -80,6 +80,7 @@ require_once IATO_MCP_DIR . 'includes/class-elementor-atomic-writer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
 require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
 require_once IATO_MCP_DIR . 'includes/class-site-image.php';
+require_once IATO_MCP_DIR . 'includes/class-post-date.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 require_once IATO_MCP_DIR . 'includes/class-media-phase-log.php';
 

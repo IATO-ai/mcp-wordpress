@@ -362,6 +362,16 @@ class IATO_MCP_Rollback {
 				return $why;
 			}
 		}
+		if ( 'post' === $type && 'date' === $field && '' === (string) ( IATO_MCP_Rollback_Conflict::json_array( $before )['date'] ?? '' ) ) {
+			return new WP_Error( 'rollback_unavailable', 'This receipt holds no date to restore.', [ 'status' => 409 ] );
+		}
+		if ( 'post' === $type && 'author' === $field && (int) $before > 0 && ! get_userdata( (int) $before ) ) {
+			return new WP_Error(
+				'rollback_unavailable',
+				sprintf( 'The previous author, user %d, no longer exists. Choose another author with update_post.', (int) $before ),
+				[ 'status' => 409 ]
+			);
+		}
 		if ( 'site_setting' === $type ) {
 			$why = self::site_setting_unavailable( $field, $before );
 			if ( null !== $why ) {
@@ -916,12 +926,28 @@ class IATO_MCP_Rollback {
 			return true;
 		}
 
+		if ( 'date' === $field ) {
+			$date   = IATO_MCP_Rollback_Conflict::json_array( $before_value );
+			$result = IATO_MCP_Auth::update_post_fields(
+				[
+					'ID'            => $post_id,
+					'post_date'     => (string) ( $date['date'] ?? '' ),
+					'post_date_gmt' => (string) ( $date['date_gmt'] ?? '' ),
+					'post_status'   => (string) ( $date['status'] ?? $post->post_status ),
+					'edit_date'     => true,
+				],
+				true
+			);
+			return is_wp_error( $result ) ? $result : true;
+		}
+
 		$post_key = match ( $field ) {
 			'title'   => 'post_title',
 			'content' => 'post_content',
 			'excerpt' => 'post_excerpt',
 			'status'  => 'post_status',
 			'slug'    => 'post_name',
+			'author'  => 'post_author',
 			default   => null,
 		};
 

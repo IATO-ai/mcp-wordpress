@@ -603,4 +603,23 @@ class IATO_MCP_Server {
 			]],
 		];
 	}
+
+	/**
+	 * A refusal an MCP client can act on: JSON text with the code, the message and
+	 * the error's details. Clients see only the text, so a bare WP_Error's code and
+	 * data never reach them.
+	 */
+	public static function refusal( WP_Error $error ): array {
+		$data = $error->get_error_data();
+		return [
+			'isError' => true,
+			'content' => [ [
+				'type' => 'text',
+				'text' => (string) wp_json_encode(
+					[ 'error' => $error->get_error_code(), 'message' => $error->get_error_message() ]
+					+ array_diff_key( is_array( $data ) ? $data : [], [ 'status' => true ] )
+				),
+			] ],
+		];
+	}
 }
