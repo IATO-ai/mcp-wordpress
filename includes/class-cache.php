@@ -81,7 +81,7 @@ class IATO_MCP_Cache {
 	];
 
 	/** Receipt types whose change shows on every page. */
-	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting', 'custom_css', 'user_profile' ];
+	private const SITE_WIDE_TARGETS = [ 'menu_item', 'menu', 'menu_location', 'elementor_template', 'taxonomy', 'redirect', 'site_setting', 'custom_css', 'user_profile', 'permalinks' ];
 
 	/**
 	 * Post types other pages render, so their own URL says nothing about what is
@@ -214,7 +214,9 @@ class IATO_MCP_Cache {
 			return;
 		}
 		// The URL cached under the old slug or status cannot be derived from the post any more.
-		if ( 'post' === $type && ( 'slug' === $field || ( 'status' === $field && 'publish' === $before ) ) ) {
+		// A new parent (1.20.0) moves every page under it too, and menus, breadcrumbs and
+		// page lists show the order.
+		if ( 'post' === $type && ( 'slug' === $field || 'page_attributes' === $field || ( 'status' === $field && 'publish' === $before ) ) ) {
 			self::$pending['all'] = true;
 			return;
 		}

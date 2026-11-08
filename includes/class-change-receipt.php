@@ -271,6 +271,7 @@ class IATO_MCP_Change_Receipt {
 			'site_setting'     => 'manage_options',
 			'custom_css'       => 'manage_options',
 			'user_profile'     => 'edit_posts',
+			'permalinks'       => 'manage_options',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -350,6 +351,15 @@ class IATO_MCP_Change_Receipt {
 					}
 					return $req;
 				}
+				if ( 'page_attributes' === $field ) {
+					$req = ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
+					// 1.20.0: the rollback removes the redirects the move created, which is
+					// update_redirect's capability.
+					if ( [] !== ( self::decode_json_field( $receipt['after_value'] ?? null )['redirects'] ?? [] ) ) {
+						$req['also'][] = [ 'cap' => 'manage_options', 'object_id' => null ];
+					}
+					return $req;
+				}
 				if ( 'date' === $field || 'author' === $field ) {
 					if ( $post_id <= 0 || ! self::post_exists( $post_id ) ) {
 						return $typed( $type_cap );
@@ -403,6 +413,7 @@ class IATO_MCP_Change_Receipt {
 			case 'redirect':
 			case 'site_setting':
 			case 'custom_css':
+			case 'permalinks':
 				return $typed( $type_cap, 'type-by-design' );
 
 			default:

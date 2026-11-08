@@ -81,6 +81,9 @@ require_once IATO_MCP_DIR . 'includes/class-elementor-router.php';
 require_once IATO_MCP_DIR . 'includes/class-theme-builder.php';
 require_once IATO_MCP_DIR . 'includes/class-site-image.php';
 require_once IATO_MCP_DIR . 'includes/class-post-date.php';
+require_once IATO_MCP_DIR . 'includes/class-redirects.php';
+require_once IATO_MCP_DIR . 'includes/class-url-move.php';
+require_once IATO_MCP_DIR . 'includes/class-permalinks.php';
 require_once IATO_MCP_DIR . 'includes/class-custom-css.php';
 require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
@@ -308,6 +311,22 @@ a custom link, including #anchor links, or a post_id for a page; position and
 parent_id set the order and nesting). get_menus lists the theme's locations
 under locations; pass one as location to create_menu, or use
 assign_menu_location to put a menu in one.
+
+RESTRUCTURING URLS:
+A page's parent (update_post or create_post parent) makes its URL the
+parent's URL plus its slug, such as /services/web-development/. The
+permalink settings (update_site_settings permalink_structure, category_base,
+tag_base) move every post and the category, tag and author archives, such
+as posts under /blog/ with /blog/%postname%/. Both move live URLs, so they
+need confirm_url_break=true, and both create 301 redirects from the old URLs
+by default (redirect_old_urls). To restructure:
+   1. Create the parent pages first (create_post with post_type page).
+   2. Dry run the move (dry_run=true) and show the user url_changes.
+   3. Apply it. Keep the change receipt: its rollback puts the URLs back
+      and removes the redirects it created.
+   4. Update links written into content (Elementor widgets, buttons) and
+      custom menu links to the new URLs. Redirects cover visitors, but
+      internal links should point at the new URLs.
 END_UNIVERSAL;
 
 	// New-post workflow: fires whenever any non-Gutenberg builder is active.
@@ -355,7 +374,7 @@ When get_page_builder returns 'elementor':
   3. Use update_elementor_data for full-document replacements
   4. Always pass if_revision to prevent write conflicts
   5. Always use dry_run=true before committing
-  6. update_post is only permitted for: status, title, excerpt, date, date_gmt, allow_future and author; content edits go through the Elementor tools.
+  6. update_post is only permitted for: status, title, excerpt, slug, parent, menu_order, date, date_gmt, allow_future and author; content edits go through the Elementor tools.
 
 When get_page_builder returns elementor_tree_present: true, the page holds
 Elementor data but Elementor is turned off for it, so visitors see its
@@ -447,14 +466,15 @@ END_BEAVER;
  * hyphens, or wp_unique_post_slug appending "-2" on collision).
  *
  * Order of checks: type → trim/empty → length → character set → defensive
- * sanitize_title round-trip → uniqueness query.
+ * sanitize_title round-trip → uniqueness, by WordPress's own rule (1.20.0).
  *
- * @param mixed $raw     Slug as supplied by the caller.
- * @param int   $post_id Post being updated, excluded from the uniqueness check.
+ * @param mixed    $raw     Slug as supplied by the caller.
+ * @param int      $post_id Post being updated, excluded from the uniqueness check.
+ * @param int|null $parent  The parent the post will have after this call; null for its current one.
  * @return string|WP_Error Validated slug, or WP_Error with one of:
  *                         invalid_slug_format, slug_conflict.
  */
-function iato_mcp_validate_post_slug( mixed $raw, int $post_id ): string|WP_Error {
+function iato_mcp_validate_post_slug( mixed $raw, int $post_id, ?int $parent = null ): string|WP_Error {
 	if ( ! is_string( $raw ) ) {
 		return new WP_Error( 'invalid_slug_format', 'slug must be a string.' );
 	}
@@ -478,22 +498,15 @@ function iato_mcp_validate_post_slug( mixed $raw, int $post_id ): string|WP_Erro
 		return new WP_Error( 'invalid_slug_format', 'slug contains characters that WordPress would normalize. Pass a pre-normalized slug.' );
 	}
 
-	global $wpdb;
-	$conflict_id = (int) $wpdb->get_var( $wpdb->prepare(
-		"SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND ID != %d AND post_status != 'trash' LIMIT 1",
-		$slug,
-		$post_id
-	) );
-	if ( $conflict_id > 0 ) {
-		return new WP_Error(
-			'slug_conflict',
-			"Slug '{$slug}' is already used by post ID {$conflict_id}.",
-			[
-				'conflict_post_id'    => $conflict_id,
-				'conflict_post_title' => get_the_title( $conflict_id ),
-				'requested_slug'      => $slug,
-			]
-		);
+	// 1.20.0: WordPress's own rule (wp_unique_post_slug()), not a lookup across every
+	// post type. A menu item called "services" blocked a page of that slug, which
+	// WordPress itself would have accepted.
+	$post = get_post( $post_id );
+	if ( $post ) {
+		$conflict = IATO_MCP_URL_Move::slug_refusal( $slug, $post_id, (string) $post->post_type, null === $parent ? (int) $post->post_parent : $parent );
+		if ( null !== $conflict ) {
+			return $conflict;
+		}
 	}
 
 	return $slug;
