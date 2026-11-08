@@ -460,6 +460,16 @@ def with_plugin(slug, body):
 def redirect_plugin(slug, handler):
     def body():
         print(f'D. {slug}')
+        if slug == 'redirection':
+            # Redirection makes its tables and default group in its setup step, which
+            # wp-admin asks for after activation. Until then it refuses every new rule.
+            lone = page('redirection before setup')
+            holder = page('redirection setup parent')
+            r = call('update_post', {'id': lone['id'], 'parent': holder['id'], 'confirm_url_break': True})
+            record('redirection before its setup: nothing is created and the response says so', r.get('redirects_created_count') == 0 and any('could not be created' in w for w in r.get('warnings', [])), r)
+            rb = call('rollback', {'change_id': receipt_of(r)})
+            record('redirection before its setup: the move rolls back', rb.get('success'), rb)
+            wp('redirection', 'database', 'install')
         services = page(f'{slug} services')
         moved = page(f'{slug} moved')
         r = call('update_post', {'id': moved['id'], 'parent': services['id'], 'confirm_url_break': True})

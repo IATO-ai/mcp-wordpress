@@ -335,7 +335,7 @@ record('the menu workflow is in the instructions', 'create_menu' in text and 'as
 record('so is theme_locations', 'theme_locations' in text, text[:200])
 if 'ELEMENTOR IS ACTIVE' in text:
     record('the Elementor section lets update_post change the date and author',
-           'update_post is only permitted for: status, title, excerpt, date, date_gmt, allow_future and author;' in text,
+           'update_post is only permitted for: status, title, excerpt, slug, parent, menu_order, date, date_gmt, allow_future and author;' in text,
            [line for line in text.splitlines() if 'only permitted' in line])
 
 failed = [n for n, ok in results if not ok]
