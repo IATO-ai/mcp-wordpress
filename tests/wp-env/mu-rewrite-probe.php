@@ -3,7 +3,7 @@
  * Test-only mu-plugin for restructure-live: what other plugins register on init and a
  * permalink change must keep. A rewrite rule and an endpoint (lost from the stored rules
  * when they are rebuilt in the request that changed the structure), a custom post type
- * and a taxonomy whose URLs sit under the structure's front. Copied into mu-plugins for
+ * with an archive and a taxonomy whose URLs sit under the structure's front. Copied into mu-plugins for
  * the run and removed by --cleanup. Never shipped (.distignore).
  */
 
@@ -22,8 +22,9 @@ add_action(
 			'iato_probe_work',
 			[
 				'public'  => true,
-				'label'   => 'Probe work',
-				'rewrite' => [ 'slug' => 'probe-work', 'with_front' => true ],
+				'label'       => 'Probe work',
+				'has_archive' => true, // its rule is added once, with the front of the time
+				'rewrite'     => [ 'slug' => 'probe-work', 'with_front' => true ],
 			]
 		);
 		register_taxonomy(

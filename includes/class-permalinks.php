@@ -353,13 +353,7 @@ final class IATO_MCP_Permalinks {
 	 */
 	public static function posts_on_page_urls( array $changes ): array {
 		$host  = (string) parse_url( home_url( '/' ), PHP_URL_HOST );
-		$pages = [];
-		foreach ( (array) get_pages( [ 'post_status' => 'publish' ] ) as $page ) {
-			$path = IATO_MCP_Redirects::path_of( (string) get_permalink( $page ), $host );
-			if ( null !== $path ) {
-				$pages[ rtrim( $path, '/' ) ] = (int) $page->ID;
-			}
-		}
+		$pages = self::page_paths();
 		$found = [];
 		foreach ( $changes as $change ) {
 			if ( 'post' !== $change['type'] ) {
@@ -371,6 +365,24 @@ final class IATO_MCP_Permalinks {
 			}
 		}
 		return $found;
+	}
+
+	/**
+	 * Every published page's path, without its trailing slash, to its ID. Pages keep
+	 * their URLs through a permalink change. Read once per call, not once per URL.
+	 *
+	 * @return array<string,int>
+	 */
+	private static function page_paths(): array {
+		$host  = (string) parse_url( home_url( '/' ), PHP_URL_HOST );
+		$pages = [];
+		foreach ( (array) get_pages( [ 'post_status' => 'publish' ] ) as $page ) {
+			$path = IATO_MCP_Redirects::path_of( (string) get_permalink( $page ), $host );
+			if ( null !== $path ) {
+				$pages[ rtrim( $path, '/' ) ] = (int) $page->ID;
+			}
+		}
+		return $pages;
 	}
 
 	/** The warning for posts_on_page_urls(), or null. */
@@ -435,10 +447,11 @@ final class IATO_MCP_Permalinks {
 				$new_paths[ rtrim( $path, '/' ) ] = true;
 			}
 		}
+		$pages   = self::page_paths();
 		$plan    = IATO_MCP_Redirects::plan(
 			$changes,
 			$host,
-			static fn( string $path ): bool => isset( $new_paths[ rtrim( $path, '/' ) ] ) || IATO_MCP_URL_Move::path_is_live_page( $path )
+			static fn( string $path ): bool => '' === rtrim( $path, '/' ) || isset( $new_paths[ rtrim( $path, '/' ) ] ) || isset( $pages[ rtrim( $path, '/' ) ] )
 		);
 		$handler = IATO_MCP_Redirects::store()->handler();
 		$kept    = IATO_MCP_Redirects::without_existing( $plan['planned'], $handler );

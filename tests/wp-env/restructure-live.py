@@ -348,6 +348,9 @@ def permalinks():
     record('a custom post type built on the front moved too', path(work_url).startswith('/blog/probe-work/') and path(work_url_before) != path(work_url), [work_url_before, work_url])
     ok, got = opens(work_url, f'postid-{work}')
     record('it opens at its new URL', ok, got)
+    archive = php('echo get_post_type_archive_link("iato_probe_work");')
+    ok, got = opens(archive, 'post-type-archive-iato_probe_work')
+    record('its archive, whose rule is added once at registration, opens at its new URL', path(archive).startswith('/blog/') and ok, [archive, got])
     status, _, html = fetch('/iato-probe-rule/')
     record('a rule another plugin added still works after the change', status == 200 and 'IATO PROBE RULE OK' in html, (status, html[:80]))
     status, _, html = fetch(new_post.rstrip('/') + '/iato-probe-endpoint/')
@@ -373,6 +376,9 @@ def permalinks():
     record('rollback removed the redirects', not any(x.get('from_url') == path(old['post']) for x in fallback_rules()), fallback_rules()[:3])
     status, _, html = fetch('/iato-probe-rule/')
     record('the other plugin\'s rule works after the rollback too', status == 200 and 'IATO PROBE RULE OK' in html, status)
+    archive = php('echo get_post_type_archive_link("iato_probe_work");')
+    ok, got = opens(archive, 'post-type-archive-iato_probe_work')
+    record('the custom post type archive opens at its old URL again', not path(archive).startswith('/blog/') and ok, [archive, got])
     record('the rules stored after the rollback hold its bottom rule and the old category base', php('$r=get_option("rewrite_rules"); echo isset($r["^iato-probe-bottom/?$"],$r["category/(.+?)/?$"])&&!isset($r["blog/category/(.+?)/?$"])?"yes":"no";') == 'yes')
 
     # A base, no redirects, and the limit.
@@ -487,9 +493,9 @@ def main():
         with_plugin('safe-redirect-manager', redirect_plugin('safe-redirect-manager', 'safe_redirect_manager'))
         with_plugin('litespeed-cache', litespeed)
     failed = [name for name, ok in results if not ok]
-    print(f"\n{len(results) - len(failed)}/{len(results)} passed")
-    for name in failed:
-        print('  FAILED:', name)
+    print(f'# {len(results) - len(failed)} passed, {len(failed)} failed')
+    if failed:
+        print('failed:', '; '.join(failed)[:800])
     raise SystemExit(1 if failed else 0)
 
 

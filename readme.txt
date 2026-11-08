@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.19.3
+Stable tag: 1.20.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -38,6 +38,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Read and write arbitrary post meta with a credential-key denylist and a known-safe theme/builder/SEO allowlist (force=true required outside the allowlist)
 * Set per-post theme + builder page settings (hide title, sidebar layout, content layout, etc.) on Astra, Kadence, GeneratePress, and Elementor in one call
 * Read and edit navigation menus, create menus and assign them to theme locations
+* Nest pages under a parent and change the permalink structure, with 301 redirects from the old URLs and one-step undo
 * Manage categories, tags, and taxonomy terms
 * Manage JSON-LD structured data
 * Manage redirect rules
@@ -182,6 +183,16 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.20.0 =
+* New: `update_post` and `create_post` take `parent`, for pages and other hierarchical types, and `menu_order`. A page's URL becomes its parent's URL plus its slug, so /services/web-development/ can be built. `parent` is refused for posts (`parent_not_supported`). A page cannot go under itself or a page below it (`parent_cycle`). The parent must be a page of the same type that the caller can read. A parent that is not published is a warning.
+* New: A new parent moves the page and every page under it. When any of those URLs can be opened now, the call needs `confirm_url_break`. The dry run lists every URL that moves (`url_changes`) and the redirects it would create. By default each published page's old URL gets a 301 to its new one (`redirect_old_urls`), through the same redirect plugin `update_redirect` uses. Creating those redirects needs an administrator; an Editor can pass `redirect_old_urls: false`. One receipt covers the parent, the order and a slug changed in the same call, and its rollback removes the redirects before putting the page back. The whole site's cache is purged.
+* New: `update_site_settings` takes `permalink_structure`, `category_base` and `tag_base`, and `get_site_settings` returns the two bases. A change moves every post and the category, tag and author archives, so it needs `confirm_url_break`. The dry run reports `moved_count` and the first 25 URLs. 301 redirects from the old URLs are created by default, up to 1,000; with more, or more than the built-in list or Safe Redirect Manager can hold, none are created and a warning says so. Plain permalinks are refused, and so is a first change away from plain or /index.php/ permalinks, which belongs in Settings > Permalinks. Rollback restores the settings and removes the redirects.
+* New: The rewrite rules are rebuilt by the next request after a permalink change, as wp-admin does, not in the request that made it. Rebuilding them there would store rules without the ones other plugins add, such as WooCommerce's account pages, and with category archives at the old URL.
+* New: A permalink change whose new post URL is already a published page's URL is a warning: WordPress shows the page there. A page at the start of the new structure, such as /blog/ for /blog/%postname%/, keeps working, including /blog/page/2/.
+* New: `get_post` and `get_posts` return `parent` and `menu_order`.
+* Fix: `update_post` refused a page's slug when any post of any type used it, such as a menu item called "services". It now uses WordPress's own rule: a page is compared with pages and attachments under the same parent, a post with posts. A draft is checked as if published, so the slug is not renamed "-2" when it goes live. A slug WordPress reserves, such as `feed`, is refused with the slug WordPress would use instead.
+* Changed: Server instructions add a "Restructuring URLs" section (parent pages first, dry run, apply, then update links in content and menus), and on Elementor sites list `slug`, `parent` and `menu_order` among the fields `update_post` may change.
 
 = 1.19.3 =
 * Fix: On sites with Elementor, the instructions the plugin gives AI clients said `update_post` could change only `status`, `title` and `excerpt`, so clients were told not to change a post's date or author with it. The list now includes `date`, `date_gmt`, `allow_future` and `author`, and says content edits go through the Elementor tools.
@@ -549,6 +560,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.20.0 =
+Adds page parents and permalink settings, with 301 redirects from the old URLs and a one-step rollback, and stops update_post refusing a page slug that a menu item uses.
 
 = 1.19.3 =
 On Elementor sites, AI clients are now told they can change a post's date and author with update_post.
