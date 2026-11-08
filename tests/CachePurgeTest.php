@@ -132,6 +132,8 @@ final class CachePurgeTest extends TestCase {
 			'kit or template'        => [ 'elementor_widget', self::LIBRARY, 'elementor:document:replace', 'a', 'all' ],
 			'kit page settings'      => [ 'post_meta', self::LIBRARY, '_elementor_page_settings', 'a', 'all' ],
 			'slug change'            => [ 'post', self::POST, 'slug', 'old', 'all' ],
+			'new parent or order'    => [ 'post', self::POST, 'page_attributes', '{"parent":0,"menu_order":0}', 'all' ],
+			'permalink settings'     => [ 'permalinks', null, 'structure', '{}', 'all' ],
 			'unpublish'              => [ 'post', self::POST, 'status', 'publish', 'all' ],
 			'publish'                => [ 'post', self::POST, 'status', 'draft', 'post' ],
 			'unknown type no id'     => [ 'something_new', null, 'x', 'a', 'all' ],
