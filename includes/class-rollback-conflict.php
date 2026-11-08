@@ -60,6 +60,9 @@ class IATO_MCP_Rollback_Conflict {
 				if ( 'create' === $field ) {
 					return self::created_object( $receipt, $post_id, 'post' );
 				}
+				if ( IATO_MCP_URL_Move::FIELD === $field ) {
+					return IATO_MCP_URL_Move::conflict( $receipt );
+				}
 				$key = self::POST_FIELDS[ $field ] ?? null;
 				if ( null === $key && 'date' !== $field ) {
 					return self::unverifiable( "unknown post field {$field}" );
@@ -165,6 +168,9 @@ class IATO_MCP_Rollback_Conflict {
 
 			case 'redirect':
 				return self::redirect( $after );
+
+			case IATO_MCP_Permalinks::RECEIPT:
+				return IATO_MCP_Permalinks::conflict( $receipt );
 
 			case IATO_MCP_User_Profile::RECEIPT:
 				$current = IATO_MCP_User_Profile::current( $after );
@@ -586,7 +592,7 @@ class IATO_MCP_Rollback_Conflict {
 		return $out;
 	}
 
-	private static function compare( mixed $current, mixed $expected, string $what ): array {
+	public static function compare( mixed $current, mixed $expected, string $what ): array {
 		if ( self::canonical( $current ) === self::canonical( $expected ) ) {
 			return [ 'status' => 'match', 'reason' => "the {$what} is as the change left it" ];
 		}

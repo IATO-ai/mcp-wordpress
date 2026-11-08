@@ -121,6 +121,11 @@ class IATO_MCP_Rollback {
 	/** Set by a restore that did what it could and has something to add to the response (1.17.0). */
 	private static ?string $restore_warning = null;
 
+	/** For restores in other classes (1.20.0): a rollback that happened, with something to add. */
+	public static function warn( string $warning ): void {
+		self::$restore_warning = null === self::$restore_warning ? $warning : self::$restore_warning . ' ' . $warning;
+	}
+
 	/**
 	 * May the authenticated caller roll back this receipt? Object-level where
 	 * the object still exists (edit_post / delete_post / edit_term / delete_term
@@ -370,6 +375,18 @@ class IATO_MCP_Rollback {
 		if ( 'post' === $type && 'date' === $field && '' === (string) ( IATO_MCP_Rollback_Conflict::json_array( $before )['date'] ?? '' ) ) {
 			return new WP_Error( 'rollback_unavailable', 'This receipt holds no date to restore.', [ 'status' => 409 ] );
 		}
+		if ( 'post' === $type && IATO_MCP_URL_Move::FIELD === $field ) {
+			$why = IATO_MCP_URL_Move::rollback_unavailable( $receipt );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
+		if ( IATO_MCP_Permalinks::RECEIPT === $type ) {
+			$why = IATO_MCP_Permalinks::rollback_unavailable( $receipt );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
 		if ( 'post' === $type && 'author' === $field && (int) $before > 0 && ! get_userdata( (int) $before ) ) {
 			return new WP_Error(
 				'rollback_unavailable',
@@ -442,7 +459,12 @@ class IATO_MCP_Rollback {
 			case 'page':
 				return self::rollback_page( $field, $post_id, $before_value );
 			case 'post':
+				if ( IATO_MCP_URL_Move::FIELD === $field ) {
+					return IATO_MCP_URL_Move::rollback( $receipt );
+				}
 				return self::rollback_post( $field, $post_id, $before_value );
+			case IATO_MCP_Permalinks::RECEIPT:
+				return IATO_MCP_Permalinks::rollback( $receipt );
 			case 'image':
 				return self::rollback_image( $field, $post_id, $before_value );
 			case 'menu_item':

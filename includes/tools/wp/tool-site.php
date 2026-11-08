@@ -82,7 +82,7 @@ function iato_mcp_count_theme_builder_templates(): int {
 IATO_MCP_Server::register_tool(
 	'get_site_settings',
 	[
-		'description' => 'Returns site title, tagline, admin email, timezone, permalink structure, what the home page shows (show_on_front, page_on_front, page_for_posts), the site icon (site_icon: id and a 512px url, or null) and the logo (custom_logo: id and url, or null). A null url means the image no longer exists. From 512px up WordPress uses the full image, so an icon larger than that has a larger url. Requires administrator.',
+		'description' => 'Returns site title, tagline, admin email, timezone, permalink structure, the category and tag bases (category_base, tag_base: "" means WordPress\'s default, "category" and "tag"), what the home page shows (show_on_front, page_on_front, page_for_posts), the site icon (site_icon: id and a 512px url, or null) and the logo (custom_logo: id and url, or null). A null url means the image no longer exists. From 512px up WordPress uses the full image, so an icon larger than that has a larger url. Requires administrator.',
 		'inputSchema' => [ 'type' => 'object', 'properties' => new stdClass(), 'required' => [] ],
 	],
 	function ( array $args ): array|WP_Error {
@@ -101,6 +101,8 @@ IATO_MCP_Server::register_tool(
 			'admin_email'         => sanitize_text_field( get_option( 'admin_email', '' ) ),
 			'timezone'            => sanitize_text_field( get_option( 'timezone_string', '' ) ),
 			'permalink_structure' => (string) get_option( 'permalink_structure', '' ),
+			'category_base'       => (string) get_option( 'category_base', '' ),
+			'tag_base'            => (string) get_option( 'tag_base', '' ),
 			'show_on_front'       => (string) get_option( 'show_on_front', 'posts' ),
 			'page_on_front'       => (int) get_option( 'page_on_front', 0 ),
 			'page_for_posts'      => (int) get_option( 'page_for_posts', 0 ),
@@ -115,7 +117,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_site_settings',
 	[
-		'description' => 'Sets the site title, the tagline, what the home page shows, the site icon and the logo. Send only what should change: title, tagline, homepage_displays ("posts" or "page"), front_page_id (a published page; required when homepage_displays is "page"), posts_page_id (a published page other than the front page, or 0 to clear), site_icon, custom_logo. site_icon sets the favicon (the browser tab, bookmark and app icon): a Media Library attachment ID, PNG, JPEG, GIF or WebP. The image must be square and should be 512x512 or larger; it is not cropped. 0 clears it and does not delete the attachment. It also covers Site Favicon in Elementor\'s Site Settings. custom_logo sets the theme\'s logo the same way, with the same image types, and does not have to be square. Any other key is refused. Accepts dry_run. Returns the before and after value of each setting, a change receipt per setting changed (roll back with the rollback tool), warnings, and a cache object: the whole site is purged. For site_icon it also returns icon_url_32 and icon_url_192. Requires administrator.',
+		'description' => 'Sets the site title, the tagline, what the home page shows, the site icon, the logo, and the permalink settings. Send only what should change: title, tagline, homepage_displays ("posts" or "page"), front_page_id (a published page; required when homepage_displays is "page"), posts_page_id (a published page other than the front page, or 0 to clear), site_icon, custom_logo. site_icon sets the favicon (the browser tab, bookmark and app icon): a Media Library attachment ID, PNG, JPEG, GIF or WebP. The image must be square and should be 512x512 or larger; it is not cropped. 0 clears it and does not delete the attachment. It also covers Site Favicon in Elementor\'s Site Settings. custom_logo sets the theme\'s logo the same way, with the same image types, and does not have to be square. permalink_structure (such as /blog/%postname%/: starts and ends with /, contains %postname% or %post_id%), category_base and tag_base ("" for the default) move the URL of every post and of the category, tag and author archives, so they need confirm_url_break=true, and 301 redirects from the old URLs are created unless redirect_old_urls is false (at most 1,000; with more, none are created and a warning says so). dry_run lists what moves (moved_count, url_changes). The permalink change has one receipt, whose rollback restores the settings and removes those redirects. Any other key is refused. Accepts dry_run. Returns the before and after value of each setting, a change receipt per setting changed (roll back with the rollback tool), warnings, and a cache object: the whole site is purged. For site_icon it also returns icon_url_32 and icon_url_192. Requires administrator.',
 		'inputSchema' => [
 			'type'                 => 'object',
 			'properties'           => [
@@ -126,6 +128,11 @@ IATO_MCP_Server::register_tool(
 				'posts_page_id'     => [ 'type' => 'integer', 'description' => 'The posts page (page_for_posts): a published page other than the front page, or 0 to clear.' ],
 				'site_icon'         => [ 'type' => 'integer', 'minimum' => 0, 'description' => 'The favicon (browser tab, bookmark and app icon): an attachment ID. PNG, JPEG, GIF or WebP; must be square; should be 512x512 or larger. 0 clears it.' ],
 				'custom_logo'       => [ 'type' => 'integer', 'minimum' => 0, 'description' => 'The theme\'s logo: an attachment ID. PNG, JPEG, GIF or WebP. 0 clears it.' ],
+				'permalink_structure' => [ 'type' => 'string', 'description' => 'The post URL structure, such as /%postname%/ or /blog/%postname%/: starts and ends with /, contains %postname% or %post_id%, and uses only WordPress\'s tags (%year% %monthnum% %day% %hour% %minute% %second% %post_id% %postname% %category% %author%). Plain (empty) is refused. Needs confirm_url_break.' ],
+				'category_base'     => [ 'type' => 'string', 'description' => 'The start of category archive URLs, such as "topics" (lowercase letters, numbers, hyphens, slashes), or "" for WordPress\'s default, "category". Needs confirm_url_break.' ],
+				'tag_base'          => [ 'type' => 'string', 'description' => 'The start of tag archive URLs, or "" for WordPress\'s default, "tag". Needs confirm_url_break.' ],
+				'confirm_url_break' => [ 'type' => 'boolean', 'description' => 'Required true with any permalink change: it moves live URLs.' ],
+				'redirect_old_urls' => [ 'type' => 'boolean', 'description' => 'With a permalink change: create a 301 redirect from each moved URL to its new one (default true). At most 1,000; with more, none are created and a warning says so.' ],
 				'dry_run'           => [ 'type' => 'boolean', 'description' => 'Report what would change without writing.' ],
 			],
 			'required'             => [],
@@ -144,6 +151,13 @@ IATO_MCP_Server::register_tool(
 			return in_array( $planned->get_error_code(), IATO_MCP_Site_Image::REFUSALS, true ) ? IATO_MCP_Site_Image::refusal( $planned ) : $planned;
 		}
 
+		// 1.20.0: the permalink settings. Everything that moves is worked out before any
+		// setting is written, so a refusal or a site too large to check changes nothing.
+		$move = iato_mcp_plan_permalink_change( $args );
+		if ( is_wp_error( $move ) ) {
+			return IATO_MCP_Server::refusal( $move );
+		}
+
 		if ( ! empty( $args['dry_run'] ) ) {
 			$changes = [];
 			foreach ( $planned as $input => $plan ) {
@@ -151,7 +165,15 @@ IATO_MCP_Server::register_tool(
 					? iato_mcp_site_image_change( $input, (int) $plan['value'], $images[ $input ]['before_id'] )
 					: [ 'option' => $plan['option'], 'before' => $plan['before'], 'after' => $plan['stored'] ];
 			}
-			return IATO_MCP_Server::ok( [ 'dry_run' => true, 'changes' => (object) $changes ] + iato_mcp_site_image_preview( $images ) );
+			$preview = iato_mcp_site_image_preview( $images );
+			if ( null !== $move ) {
+				$changes += iato_mcp_permalink_changes( $move['before'], $move['after'] );
+				$preview += IATO_MCP_Permalinks::preview( $move );
+				if ( [] !== $move['warnings'] ) {
+					$preview['warnings'] = array_merge( $preview['warnings'] ?? [], $move['warnings'] );
+				}
+			}
+			return IATO_MCP_Server::ok( [ 'dry_run' => true, 'changes' => (object) $changes ] + $preview );
 		}
 
 		$changes  = [];
@@ -177,8 +199,21 @@ IATO_MCP_Server::register_tool(
 		if ( isset( $planned['front_page_id'] ) ) {
 			flush_rewrite_rules( false ); // wp-admin does this from a hook that is not loaded on REST requests
 		}
+		// Last, after the flush above: from here no rules are stored in this request.
+		$permalinks = null;
+		if ( null !== $move ) {
+			$permalinks = IATO_MCP_Permalinks::commit( $move );
+			$changes   += iato_mcp_permalink_changes( $move['before'], $move['after'] );
+			$receipts[] = $permalinks['receipt'];
+		}
 
 		$data = [ 'changes' => (object) $changes ] + iato_mcp_finish_site_images( $images, $report );
+		if ( null !== $permalinks ) {
+			$data += $permalinks['report'];
+			if ( [] !== $permalinks['warnings'] ) {
+				$data['warnings'] = array_merge( $data['warnings'] ?? [], $permalinks['warnings'] );
+			}
+		}
 		if ( 1 === count( $receipts ) ) {
 			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
 		} elseif ( count( $receipts ) > 1 ) {
@@ -206,16 +241,17 @@ function iato_mcp_plan_site_settings( array $args, array &$images = [] ): array|
 		'custom_logo'       => 'custom_logo',
 	];
 
-	$unknown = array_values( array_diff( array_map( 'strval', array_keys( $args ) ), array_keys( $options ), [ 'dry_run' ] ) );
+	$permalink_keys = array_merge( IATO_MCP_Permalinks::KEYS, IATO_MCP_Permalinks::FLAGS );
+	$unknown        = array_values( array_diff( array_map( 'strval', array_keys( $args ) ), array_keys( $options ), $permalink_keys, [ 'dry_run' ] ) );
 	if ( [] !== $unknown ) {
 		return new WP_Error(
 			'unknown_setting',
-			sprintf( 'update_site_settings does not accept: %s. It accepts title, tagline, homepage_displays, front_page_id, posts_page_id, site_icon and custom_logo.', implode( ', ', $unknown ) ),
+			sprintf( 'update_site_settings does not accept: %s. It accepts title, tagline, homepage_displays, front_page_id, posts_page_id, site_icon, custom_logo, permalink_structure, category_base and tag_base, with confirm_url_break and redirect_old_urls for the last three.', implode( ', ', $unknown ) ),
 			[ 'status' => 400 ]
 		);
 	}
-	if ( [] === array_intersect_key( $options, $args ) ) {
-		return new WP_Error( 'no_settings', 'Send at least one of title, tagline, homepage_displays, front_page_id, posts_page_id, site_icon or custom_logo.', [ 'status' => 400 ] );
+	if ( [] === array_intersect_key( $options, $args ) && [] === array_intersect_key( array_flip( IATO_MCP_Permalinks::KEYS ), $args ) ) {
+		return new WP_Error( 'no_settings', 'Send at least one of title, tagline, homepage_displays, front_page_id, posts_page_id, site_icon, custom_logo, permalink_structure, category_base or tag_base.', [ 'status' => 400 ] );
 	}
 
 	$values = [];
@@ -302,6 +338,42 @@ function iato_mcp_plan_site_settings( array $args, array &$images = [] ): array|
 		}
 	}
 	return $planned;
+}
+
+/**
+ * The permalink change a call asks for (1.20.0), worked out in full: null when it names
+ * none of the settings or they would not change.
+ *
+ * @return array|WP_Error|null
+ */
+function iato_mcp_plan_permalink_change( array $args ): array|WP_Error|null {
+	$plan = IATO_MCP_Permalinks::plan( $args );
+	if ( null === $plan || is_wp_error( $plan ) ) {
+		return $plan;
+	}
+	if ( ! $plan['changes'] ) {
+		return null;
+	}
+	if ( empty( $args['confirm_url_break'] ) ) {
+		return new WP_Error(
+			'url_change_requires_confirmation',
+			'Changing the permalink settings moves the URL of every post, and of the category, tag and author archives. Pass confirm_url_break=true to proceed (a dry run with it lists what moves). Redirects from the old URLs are created unless redirect_old_urls is false. Nothing was written.',
+			[ 'status' => 400 ] + iato_mcp_permalink_changes( $plan['before'], $plan['after'] )
+		);
+	}
+	$redirect = ! array_key_exists( 'redirect_old_urls', $args ) || ! empty( $args['redirect_old_urls'] );
+	return IATO_MCP_Permalinks::prepare( $plan['before'], $plan['after'], $redirect );
+}
+
+/** The permalink settings' entries in `changes`: those that differ. */
+function iato_mcp_permalink_changes( array $before, array $after ): array {
+	$changes = [];
+	foreach ( IATO_MCP_Permalinks::KEYS as $key ) {
+		if ( $before[ $key ] !== $after[ $key ] ) {
+			$changes[ $key ] = [ 'option' => $key, 'before' => $before[ $key ], 'after' => $after[ $key ] ];
+		}
+	}
+	return $changes;
 }
 
 /** Is this a page that exists and is published? */

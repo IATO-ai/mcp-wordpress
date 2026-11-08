@@ -187,7 +187,7 @@ Get full details for a single post or page.
 | `id` | integer | Post ID |
 | `slug` | string | Post slug (alternative to ID) |
 
-Returns title, content, excerpt, status, URL, author, categories, tags, `date` (the site's local time), `date_gmt` (UTC, or null for a draft with no date of its own) and `modified` (UTC).
+Returns title, content, excerpt, status, URL, `parent` (0 for none), `menu_order`, author, categories, tags, `date` (the site's local time), `date_gmt` (UTC, or null for a draft with no date of its own) and `modified` (UTC).
 
 #### `create_post`
 
@@ -203,12 +203,14 @@ Create a new post or page.
 | `date_gmt` | string | No | | The same date in UTC. Send this or `date` |
 | `allow_future` | boolean | No | `false` | Lets `status: publish` with a future date schedule the post |
 | `author` | integer | No | you | A user who can edit this type of post. Someone else needs `edit_others_posts` |
+| `parent` | integer | No | 0 | Pages only: the parent page. The URL becomes the parent's URL plus the new page's slug |
+| `menu_order` | integer | No | 0 | Pages only: the order among its siblings |
 
 **Capability:** `edit_posts`
 
 #### `update_post`
 
-Update an existing post's title, content, slug, excerpt, status, publish date or author.
+Update an existing post's title, content, slug, excerpt, status, publish date, author, parent or menu order.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -220,10 +222,24 @@ Update an existing post's title, content, slug, excerpt, status, publish date or
 | `date_gmt` | string | No | The same date in UTC. Send this or `date`: both are refused with `date_mismatch` if they are different moments |
 | `allow_future` | boolean | No | See below. Default `false` |
 | `author` | integer | No | A user who can edit this type of post. Someone else needs `edit_others_posts` |
+| `slug` | string | No | Lowercase letters, numbers and single hyphens. Refused with `slug_conflict` when WordPress would not store it as sent |
+| `parent` | integer | No | Pages only: the parent page, or `0` for none. See "Moving a page" |
+| `menu_order` | integer | No | Pages only: the order among its siblings |
+| `confirm_url_break` | boolean | No | Required for a slug change on a post that is not a draft, and for a new parent that moves a URL visitors can open |
+| `redirect_old_urls` | boolean | No | With a new parent: a 301 from each published page's old URL. Default `true` when a published page moves |
 
 **Capability:** `edit_posts`
 
-**Dates and status.**
+**Slugs.** WordPress compares a page's slug with the pages and attachments under the same parent, and a post's with posts. A menu item or a page elsewhere with the same name is no conflict. A post whose new slug gives it a published page's URL gets a warning: WordPress shows the page there. A draft is checked as if published, so its slug does not become `-2` when it goes live. A slug WordPress keeps for itself, such as `feed`, is refused with the slug it would use instead.
+
+**Moving a page.** A page's URL is its parent's URL plus its slug, so a new parent moves the page and every page under it.
+
+- **Checks.** Only pages and other hierarchical types have a parent (`parent_not_supported`). A page cannot go under itself or a page below it (`parent_cycle`). The parent must be a page of the same type you can read (`invalid_parent`). A parent that is not published is allowed, with a warning. If a page there already has this page's slug, the move is refused with `slug_conflict` rather than renamed: send a new `slug` with it.
+- **Confirmation.** When any of the URLs that move can be opened now, the call needs `confirm_url_break: true`. The refusal lists them.
+- **Dry run.** `dry_run: true` returns `url_changes` (each page's `old_url` and `new_url`) and `redirects_planned`, and writes nothing.
+- **Redirects.** By default each published page's old URL gets a 301 to its new one, through the redirect plugin `update_redirect` uses: Redirection, Safe Redirect Manager, Yoast Premium, or the plugin's own list. An old URL that already redirects is left as it is (`redirects_skipped`), and so is one with characters outside ASCII (`encoded_path`), which the plugin's own list and Safe Redirect Manager cannot match. Creating redirects needs an administrator; an Editor gets `redirects_need_admin` and can pass `redirect_old_urls: false`.
+- **Moving back.** Moving a page back with a new call, rather than a rollback, takes away the redirect the first move left on its URL (`redirects_removed`), or it would loop. A redirect someone else set on a URL the move would give a page is refused with `new_url_redirected`: remove it first.
+- **Undo.** One receipt (`page_attributes`) covers the parent, the order and a slug changed in the same call. Each entry in `redirects_created` names it as `rollback_id`. Rolling it back removes the redirects first, then puts the page back.
 
 | The post | Given | Result |
 |---|---|---|
@@ -253,13 +269,13 @@ Returns site name, URL, WordPress version, `plugin_version` (the IATO MCP versio
 
 #### `get_site_settings`
 
-Returns site title, tagline, admin email, timezone, permalink structure, what the home page shows (`show_on_front`, `page_on_front`, `page_for_posts`), the site icon (`site_icon`) and the logo (`custom_logo`). Each of the last two is `{id, url}`, or null when none is set. A null `url` means the image no longer exists. From 512 pixels up WordPress uses the full image, so the icon's `url` can be larger than that.
+Returns site title, tagline, admin email, timezone, permalink structure, the category and tag bases (`category_base`, `tag_base`; empty means WordPress's default), what the home page shows (`show_on_front`, `page_on_front`, `page_for_posts`), the site icon (`site_icon`) and the logo (`custom_logo`). Each of the last two is `{id, url}`, or null when none is set. A null `url` means the image no longer exists. From 512 pixels up WordPress uses the full image, so the icon's `url` can be larger than that.
 
 **Capability:** `manage_options` (admin only)
 
 #### `update_site_settings`
 
-Sets the site title, the tagline, what the home page shows, the site icon and the logo. Send only what should change; any other key is refused.
+Sets the site title, the tagline, what the home page shows, the site icon, the logo and the permalink settings. Send only what should change; any other key is refused.
 
 | Parameter | Option | Notes |
 |---|---|---|
@@ -270,6 +286,9 @@ Sets the site title, the tagline, what the home page shows, the site icon and th
 | `posts_page_id` | `page_for_posts` | A published page other than the front page, or `0` to clear |
 | `site_icon` | `site_icon` | The favicon (browser tab, bookmark and app icon): an attachment ID, or `0` to clear it. See below |
 | `custom_logo` | The theme's `custom_logo` | The logo: an attachment ID, or `0` to clear it. See below |
+| `permalink_structure` | `permalink_structure` | Such as `/%postname%/` or `/blog/%postname%/`. See "Permalinks" below |
+| `category_base` | `category_base` | Such as `topics`, or `""` for WordPress's default, `category` |
+| `tag_base` | `tag_base` | Or `""` for WordPress's default, `tag` |
 
 Accepts `dry_run`. Returns the before and after value of each option in `changes`, a change receipt per option changed (one `change_receipt`, or `change_receipts` for several), and a `cache` object: the whole site is purged.
 
@@ -293,6 +312,17 @@ Accepts `dry_run`. Returns the before and after value of each option in `changes
 - **Browsers** keep favicons for a long time, so a correct page can still show the old icon in a tab for a while.
 
 **Capability:** `manage_options` (admin only), and `edit_post` on the attachment, because the write changes its metadata.
+
+**Permalinks.** These move the URL of every post and of the category, tag and author archives: under `/blog/%postname%/`, `/category/news/` becomes `/blog/category/news/`. Pages keep their URLs.
+
+- **Accepted.** A structure starts and ends with `/`, contains `%postname%` or `%post_id%`, and uses only WordPress's tags (`%year%` `%monthnum%` `%day%` `%hour%` `%minute%` `%second%` `%post_id%` `%postname%` `%category%` `%author%`). Plain permalinks (an empty structure) are refused with `plain_permalinks_not_supported`. A site still on plain or `/index.php/` permalinks makes its first change in Settings > Permalinks, where WordPress checks the server can serve them (`permalinks_not_pretty`).
+- **Confirmation.** Any change needs `confirm_url_break: true`. `dry_run: true` with it returns `moved_count`, the first 25 `url_changes` and the redirects it would create.
+- **Redirects.** By default each moved URL gets a 301 (`redirect_old_urls`), at most 1,000. With more, or more than the plugin's own list (500) or Safe Redirect Manager can hold, none are created and `warnings` says so.
+- **Bases** cannot start with a word WordPress uses for its own URLs (`page`, `feed`, `author`, `search`, `wp-json` and others) or with a number, and cannot be the start of the post URLs (`blog` with `/blog/%postname%/`).
+- **Changing back.** A second change that puts URLs back where they were takes away the redirects the first one left (`redirects_removed_count`), or they would loop. A redirect someone else set on a URL that becomes live is refused with `new_url_redirected`.
+- **Warnings.** A post whose new URL is already a published page's URL is named: WordPress shows the page there. A page at the start of the new structure, such as a page at `/blog/` with `/blog/%postname%/`, keeps working, and so does its `/blog/page/2/`.
+- **Rewrite rules** are rebuilt by the first request after the change, as wp-admin does it.
+- **Undo.** One receipt (`permalinks`) restores all three settings and removes the redirects it created.
 
 #### `get_custom_css`
 
@@ -703,6 +733,7 @@ After a change, IATO purges the cache plugins it finds and adds a `cache` object
 | Menus, terms, redirects, `update_site_settings`, `update_custom_css`, `update_user_profile` | The whole site |
 | The date or author of a post that is or was published | The whole site: archives and listings change |
 | A slug change, or unpublishing a post | The whole site: the old URL can't be derived from the post any more |
+| A page's parent or menu order, or the permalink settings | The whole site: URLs, menus, breadcrumbs and page lists change |
 | An image's alt text | The page the image is attached to. Other pages using the image stay cached, and the note says so |
 
 A call that changes nothing, or a dry run, purges nothing. Dry runs and reads have no `cache` object.
@@ -731,6 +762,7 @@ Every write tool returns a `change_receipt` with a `change_id`. Pass it to the `
 - **Checking first.** `dry_run: true` reports what would be restored and whether the value has changed since, without writing anything.
 - **Site settings.** Each option `update_site_settings` changed has its own receipt. A page that is no longer published cannot be restored as the front page or posts page.
 - **Site icon and logo.** Rollback restores the previous attachment, or no icon or logo at all. An image that no longer exists cannot be restored, and a logo cannot be rolled back after a theme switch, because WordPress keeps one per theme. Rolling back `create_media` for the image in use needs `force`, which deletes the image and clears the setting.
+- **Moved pages and permalinks.** Rolling back a new parent or a permalink change first removes the redirects the change created, then restores the page or the settings. A redirect someone changed since is kept and named in `warning`. A redirect stored by a plugin that is no longer active is left in place, with a warning. If a redirect cannot be removed, nothing is restored and the rollback can be run again.
 - **Post dates and authors.** Rolling back a date restores the date, the UTC date and the status together. A scheduled post that has gone live since is a conflict. A previous author who no longer exists cannot be restored.
 - **Custom CSS.** Rollback restores the previous CSS exactly, for the theme it was written for, and removes the CSS post if the change created it. The stored copy goes after 90 days.
 - **User profiles.** One receipt covers all the fields in a call. Rollback restores them exactly, even where WordPress's filters would change them, and a user who no longer exists cannot be restored.

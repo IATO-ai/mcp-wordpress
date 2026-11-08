@@ -13,6 +13,8 @@ defined( 'ABSPATH' ) || exit;
 const IATO_MCP_POST_DATE_HELP     = 'Publish date in the site\'s local time, ISO 8601 with no offset, such as 2026-10-27T09:00:00. date_gmt is worked out from it when omitted.';
 const IATO_MCP_POST_DATE_GMT_HELP = 'The publish date in UTC, ISO 8601, such as 2026-10-27T14:00:00Z. Worked out from date when omitted. Send this or date; both together are refused if they are different moments.';
 const IATO_MCP_POST_AUTHOR_HELP   = 'The author\'s user ID. The user must be able to edit posts of this type, and giving a post to someone else needs edit_others_posts.';
+const IATO_MCP_POST_PARENT_HELP   = 'The parent page\'s ID, or 0 for none: a page of the same type that you can read, and not this page or one under it. Pages and other hierarchical types only; refused for posts (parent_not_supported). The URL becomes the parent\'s URL plus this page\'s slug.';
+const IATO_MCP_MENU_ORDER_HELP    = 'The page\'s order among its siblings (page attributes): an integer, lower first. Types with page attributes only, such as pages.';
 // The text fields create_post stores: it takes no excerpt, so one sent is not reported as sanitised.
 const IATO_MCP_CREATE_POST_TEXT   = [ 'title' => true, 'content' => true ];
 
@@ -21,7 +23,7 @@ const IATO_MCP_CREATE_POST_TEXT   = [ 'title' => true, 'content' => true ];
 IATO_MCP_Server::register_tool(
 	'get_posts',
 	[
-		'description' => 'List posts or pages with optional filters. Returns ID, title, slug, status, URL, date (the site\'s local time), date_gmt (UTC, null for a draft with no date of its own), and modified (UTC). Scope note: post_type accepts post|page|any and `any` expands to [post, page] only — Elementor Theme Builder templates (post_type=elementor_library) are NOT returned by this tool in v1.8.0; a dedicated templates listing tool lands in Layer 2 of the discovery work. If you\'re looking for what renders a specific URL, use resolve_url instead.',
+		'description' => 'List posts or pages with optional filters. Returns ID, title, slug, status, URL, parent (0 for none) and menu_order, date (the site\'s local time), date_gmt (UTC, null for a draft with no date of its own), and modified (UTC). Scope note: post_type accepts post|page|any and `any` expands to [post, page] only — Elementor Theme Builder templates (post_type=elementor_library) are NOT returned by this tool in v1.8.0; a dedicated templates listing tool lands in Layer 2 of the discovery work. If you\'re looking for what renders a specific URL, use resolve_url instead.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -60,12 +62,14 @@ IATO_MCP_Server::register_tool(
 				continue;
 			}
 			$posts[] = [
-				'id'       => $post->ID,
-				'title'    => get_the_title( $post ),
-				'slug'     => $post->post_name,
-				'status'   => $post->post_status,
-				'url'      => get_permalink( $post ),
-				'date'     => $post->post_date,
+				'id'         => $post->ID,
+				'title'      => get_the_title( $post ),
+				'slug'       => $post->post_name,
+				'status'     => $post->post_status,
+				'url'        => get_permalink( $post ),
+				'parent'     => (int) $post->post_parent,
+				'menu_order' => (int) $post->menu_order,
+				'date'       => $post->post_date,
 				'date_gmt' => IATO_MCP_Post_Date::gmt_or_null( $post->post_date_gmt ),
 				'modified' => $post->post_modified_gmt,
 			];
@@ -90,7 +94,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_post',
 	[
-		'description' => 'Get full details for a single post or page by ID or slug. date is the site\'s local time, date_gmt is UTC (null for a draft with no date of its own), and modified is UTC. Pass include_shadowing=true to detect when an Elementor Theme Builder template overrides the slug-based render (small extra cost; default off to keep the hot path fast).',
+		'description' => 'Get full details for a single post or page by ID or slug, including parent (0 for none) and menu_order. date is the site\'s local time, date_gmt is UTC (null for a draft with no date of its own), and modified is UTC. Pass include_shadowing=true to detect when an Elementor Theme Builder template overrides the slug-based render (small extra cost; default off to keep the hot path fast).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -139,6 +143,8 @@ IATO_MCP_Server::register_tool(
 			'excerpt'    => $post->post_excerpt,
 			'status'     => $post->post_status,
 			'url'        => get_permalink( $post ),
+			'parent'     => (int) $post->post_parent,
+			'menu_order' => (int) $post->menu_order,
 			'author'     => (int) $post->post_author,
 			'date'       => $post->post_date,
 			'date_gmt'   => IATO_MCP_Post_Date::gmt_or_null( $post->post_date_gmt ),
@@ -163,7 +169,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'create_post',
 	[
-		'description' => 'Create a new post or page, optionally with its publish date (date or date_gmt) and author. Returns the new post ID and URL. On page-builder sites (Elementor, Divi, etc.), follow the new-post workflow in server instructions BEFORE calling — plain HTML in post_content will not match the site\'s existing post format.',
+		'description' => 'Create a new post or page, optionally with its publish date (date or date_gmt), author, parent page (parent, for pages: the URL becomes the parent\'s URL plus the new slug) and menu_order. To build nested URLs such as /services/web-development/, create the parent page first. Returns the new post ID and URL. On page-builder sites (Elementor, Divi, etc.), follow the new-post workflow in server instructions BEFORE calling — plain HTML in post_content will not match the site\'s existing post format.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -175,6 +181,8 @@ IATO_MCP_Server::register_tool(
 				'date_gmt'  => [ 'type' => 'string', 'description' => IATO_MCP_POST_DATE_GMT_HELP ],
 				'allow_future' => [ 'type' => 'boolean', 'description' => 'status publish with a future date is refused with future_date_on_published unless this is true; the post is then scheduled. Default: false.' ],
 				'author'    => [ 'type' => 'integer', 'description' => IATO_MCP_POST_AUTHOR_HELP ],
+				'parent'    => [ 'type' => 'integer', 'minimum' => 0, 'description' => IATO_MCP_POST_PARENT_HELP ],
+				'menu_order' => [ 'type' => 'integer', 'description' => IATO_MCP_MENU_ORDER_HELP ],
 				'dry_run'   => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
 			],
 			'required' => [ 'title' ],
@@ -216,6 +224,26 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $author ) ) {
 			return IATO_MCP_Server::refusal( $author );
 		}
+		// 1.20.0: page attributes. A new post has no URL to move, so no confirmation.
+		$warnings = [];
+		$parent   = null;
+		if ( array_key_exists( 'parent', $args ) ) {
+			$checked = IATO_MCP_URL_Move::check_parent( 0, $post_type, $args['parent'] );
+			if ( is_wp_error( $checked ) ) {
+				return IATO_MCP_Server::refusal( $checked );
+			}
+			$parent = $checked['parent'];
+			if ( null !== $checked['warning'] ) {
+				$warnings[] = $checked['warning'];
+			}
+		}
+		$menu_order = null;
+		if ( array_key_exists( 'menu_order', $args ) ) {
+			$menu_order = IATO_MCP_URL_Move::check_menu_order( $post_type, $args['menu_order'] );
+			if ( is_wp_error( $menu_order ) ) {
+				return IATO_MCP_Server::refusal( $menu_order );
+			}
+		}
 
 		$postarr = [
 			'post_title'   => sanitize_text_field( $args['title'] ),
@@ -229,6 +257,12 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( null !== $author ) {
 			$postarr['post_author'] = $author;
+		}
+		if ( null !== $parent ) {
+			$postarr['post_parent'] = $parent;
+		}
+		if ( null !== $menu_order ) {
+			$postarr['menu_order'] = $menu_order;
 		}
 
 		if ( ! empty( $args['dry_run'] ) ) {
@@ -250,6 +284,15 @@ IATO_MCP_Server::register_tool(
 			}
 			if ( null !== $author ) {
 				$data['author'] = $author;
+			}
+			if ( null !== $parent ) {
+				$data['parent'] = $parent;
+			}
+			if ( null !== $menu_order ) {
+				$data['menu_order'] = $menu_order;
+			}
+			if ( [] !== $warnings ) {
+				$data['warnings'] = $warnings;
 			}
 			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( array_intersect_key( $args, IATO_MCP_CREATE_POST_TEXT ), (object) $postarr ) );
 			$notice = iato_mcp_page_builder_notice( 'create' );
@@ -289,6 +332,13 @@ IATO_MCP_Server::register_tool(
 			if ( null !== $note ) {
 				$data['status_note'] = $note;
 			}
+			if ( null !== $parent || null !== $menu_order ) {
+				$data['parent']     = (int) $created->post_parent;
+				$data['menu_order'] = (int) $created->menu_order;
+			}
+		}
+		if ( [] !== $warnings ) {
+			$data['warnings'] = $warnings;
 		}
 		IATO_MCP_Change_Receipt::append( $data, $receipt );
 		IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( array_intersect_key( $args, IATO_MCP_CREATE_POST_TEXT ), $created ) );
@@ -369,12 +419,253 @@ function iato_mcp_post_date_fields( object $post ): array {
 	];
 }
 
+/**
+ * What moving a page to a new parent will do (1.20.0), worked out before anything is
+ * written: the URLs that change (its own and every page's under it), whether the call
+ * may make that change, and the redirects it would create.
+ *
+ * @param WP_Post $post       The page, as stored.
+ * @param int     $parent_new Its new parent.
+ * @param string  $slug       The slug it will have.
+ * @param array   $args       The tool arguments.
+ * @return array{posts:int[],urls_before:array<int,string>,changes:list<array>,redirect:bool,plan:?array,warnings:string[]}|WP_Error
+ */
+function iato_mcp_plan_page_move( WP_Post $post, int $parent_new, string $slug, array $args ): array|WP_Error {
+	// The slug the page keeps must be free under the new parent, or WordPress adds "-2".
+	if ( ! isset( $args['slug'] ) && '' !== $slug ) {
+		$clash = IATO_MCP_URL_Move::slug_refusal( $slug, (int) $post->ID, (string) $post->post_type, $parent_new );
+		if ( null !== $clash ) {
+			return new WP_Error(
+				'slug_conflict',
+				sprintf( 'This page cannot keep its slug under post %1$d: %2$s Send a different slug with the move. Nothing was written.', $parent_new, $clash->get_error_message() ),
+				(array) $clash->get_error_data() + [ 'status' => 409 ]
+			);
+		}
+	}
+
+	$descendants = IATO_MCP_URL_Move::descendants( $post );
+	$posts       = array_merge( [ $post ], $descendants );
+	$before      = IATO_MCP_URL_Move::urls( $posts );
+	$changes     = IATO_MCP_URL_Move::changes( $posts, $before, IATO_MCP_URL_Move::predicted_urls( $post, $descendants, $parent_new, $slug ) );
+
+	if ( IATO_MCP_URL_Move::moves_live_url( $changes ) && empty( $args['confirm_url_break'] ) ) {
+		return new WP_Error(
+			'slug_change_requires_confirmation',
+			sprintf(
+				'Moving this page changes %d URL(s), including ones visitors can open now. Pass confirm_url_break=true to proceed. Redirects from the old URLs of published pages are created unless redirect_old_urls is false. Nothing was written.',
+				count( $changes )
+			),
+			[
+				'status'           => 400,
+				'current_url'      => $before[ (int) $post->ID ] ?? null,
+				'url_change_count' => count( $changes ),
+			] + iato_mcp_shown_url_changes( $changes )
+		);
+	}
+
+	// A redirect already on a URL the move makes live would take visitors away from it.
+	$host   = (string) parse_url( home_url( '/' ), PHP_URL_HOST );
+	$on_new = IATO_MCP_Redirects::rules_on_new_urls( $changes, $host );
+	if ( [] !== $on_new['blocking'] ) {
+		return IATO_MCP_Redirects::blocking_refusal( $on_new['blocking'] );
+	}
+
+	$published = IATO_MCP_URL_Move::moves_published_url( $changes );
+	$redirect  = array_key_exists( 'redirect_old_urls', $args ) ? ! empty( $args['redirect_old_urls'] ) : $published;
+	$is_admin  = ! is_wp_error( IATO_MCP_Auth::require_cap( 'manage_options' ) );
+	if ( $redirect && $published && ! $is_admin ) {
+		return new WP_Error(
+			'redirects_need_admin',
+			'Moving this page moves published URLs, and creating redirects from them needs an administrator (manage_options), as update_redirect does. Ask an administrator, or pass redirect_old_urls=false to move it without redirects: WordPress may still send some old URLs to the new ones itself. Nothing was written.',
+			[ 'status' => 403 ]
+		);
+	}
+	if ( [] !== $on_new['stale'] && ! $is_admin ) {
+		return new WP_Error(
+			'redirects_need_admin',
+			'A redirect left by an earlier move would send visitors away from this page\'s new URL, and removing it needs an administrator (manage_options). Ask an administrator to make this move. Nothing was written.',
+			[ 'status' => 403, 'redirects_to_remove' => $on_new['stale'] ]
+		);
+	}
+
+	$ids  = array_map( static fn( WP_Post $p ): int => (int) $p->ID, $posts );
+	$plan = $redirect && $published ? iato_mcp_plan_move_redirects( $changes, $ids ) : null;
+	return [
+		'posts'       => $ids,
+		'urls_before' => $before,
+		'changes'     => $changes,
+		'redirect'    => $redirect && $published,
+		'plan'        => $plan,
+		'stale'       => $on_new['stale'],
+		'warnings'    => null !== $plan && null !== $plan['no_room'] ? [ $plan['no_room'] ] : [],
+	];
+}
+
+/**
+ * The redirects for these URL changes, through the handler update_redirect uses: not
+ * from a path that is now another published page, nor one the handler already redirects.
+ *
+ * @param int[] $ids The posts whose URLs change.
+ * @return array{handler:string,planned:list<array{from:string,to:string}>,skipped:list<array>,no_room:?string}
+ */
+function iato_mcp_plan_move_redirects( array $changes, array $ids ): array {
+	$moving  = array_fill_keys( $ids, true );
+	$plan    = IATO_MCP_Redirects::plan(
+		$changes,
+		(string) parse_url( home_url( '/' ), PHP_URL_HOST ),
+		static fn( string $path ): bool => IATO_MCP_URL_Move::path_is_live_page( $path, $moving )
+	);
+	$handler = IATO_MCP_Redirects::store()->handler();
+	$kept    = IATO_MCP_Redirects::without_existing( $plan['planned'], $handler );
+	return [
+		'handler' => $handler,
+		'planned' => $kept['planned'],
+		'skipped' => array_merge( $plan['skipped'], $kept['skipped'] ),
+		'no_room' => IATO_MCP_Redirects::no_room( $handler, count( $kept['planned'] ) ),
+	];
+}
+
+/**
+ * The URL changes a response may list: a page the caller cannot read (another
+ * author's private or scheduled page) moves too, but is only counted.
+ *
+ * @return array{url_changes:list<array>,url_changes_hidden?:int}
+ */
+function iato_mcp_shown_url_changes( array $changes ): array {
+	$shown  = [];
+	$hidden = 0;
+	foreach ( $changes as $change ) {
+		if ( 'publish' === $change['status'] || ! is_wp_error( IATO_MCP_Auth::require_read_post( (int) $change['id'] ) ) ) {
+			$shown[] = $change;
+		} else {
+			$hidden++;
+		}
+	}
+	return [ 'url_changes' => array_slice( $shown, 0, IATO_MCP_Redirects::LIST_LIMIT ) ] + ( $hidden > 0 ? [ 'url_changes_hidden' => $hidden ] : [] );
+}
+
+/**
+ * A post given a slug whose URL is a published page's URL: WordPress shows the page
+ * there and the post cannot be reached. WordPress allows it, because it compares a
+ * post's slug only with posts, so this is a warning (1.20.0).
+ */
+function iato_mcp_slug_url_warning( WP_Post $post, string $slug ): ?string {
+	if ( is_post_type_hierarchical( $post->post_type ) || ! is_post_type_viewable( $post->post_type ) ) {
+		return null;
+	}
+	if ( ! function_exists( 'get_sample_permalink' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/post.php';
+	}
+	$sample = get_sample_permalink( $post->ID, null, $slug );
+	if ( ! is_array( $sample ) || ! isset( $sample[0], $sample[1] ) ) {
+		return null;
+	}
+	$url  = str_replace( [ '%postname%', '%pagename%' ], (string) $sample[1], (string) $sample[0] );
+	$path = IATO_MCP_Redirects::path_of( $url, (string) parse_url( home_url( '/' ), PHP_URL_HOST ) );
+	if ( null === $path || ! IATO_MCP_URL_Move::path_is_live_page( $path, [ (int) $post->ID => true ] ) ) {
+		return null;
+	}
+	return sprintf( 'The new URL, %1$s, is already a published page\'s URL. WordPress shows the page there, so visitors could not reach this %2$s at it.', $url, $post->post_type );
+}
+
+/** A dry run's report of a move. */
+function iato_mcp_page_move_preview( array $move ): array {
+	$out  = [ 'url_change_count' => count( $move['changes'] ) ] + iato_mcp_shown_url_changes( $move['changes'] );
+	$plan = $move['plan'];
+	if ( null !== $plan ) {
+		$out['redirect_handler'] = $plan['handler'];
+		$out                    += IATO_MCP_Redirects::report( null === $plan['no_room'] ? $plan['planned'] : [], null, 'redirects_planned' );
+		if ( [] !== $plan['skipped'] ) {
+			$out['redirects_skipped'] = $plan['skipped'];
+		}
+	}
+	if ( [] !== $move['stale'] ) {
+		$out['redirects_to_remove'] = $move['stale'];
+	}
+	return $out;
+}
+
+/**
+ * After the write: the URLs as WordPress now gives them, the receipt (recorded before
+ * any redirect, holding the ones about to be made, so a request cut short still leaves
+ * a rollback that finds them), then the redirects.
+ *
+ * @return array{receipt:?array,report:array,warnings:string[]}
+ */
+function iato_mcp_finish_page_move( WP_Post $fresh, array $attr_before, ?array $move ): array {
+	$out        = [ 'receipt' => null, 'report' => [], 'warnings' => [] ];
+	$attr_after = IATO_MCP_URL_Move::snapshot( $fresh, isset( $attr_before['slug'] ) );
+	if ( $attr_after === $attr_before ) {
+		return $out;
+	}
+	if ( null === $move ) {
+		$out['receipt'] = IATO_MCP_Change_Receipt::record( (int) $fresh->ID, 'post', IATO_MCP_URL_Move::FIELD, $attr_before, $attr_after );
+		return $out;
+	}
+
+	$posts   = array_values( array_filter( array_map( 'get_post', $move['posts'] ) ) );
+	$changes = IATO_MCP_URL_Move::changes( $posts, $move['urls_before'], IATO_MCP_URL_Move::urls( $posts ) );
+	$on_new  = IATO_MCP_Redirects::rules_on_new_urls( $changes, (string) parse_url( home_url( '/' ), PHP_URL_HOST ) );
+	if ( [] !== $on_new['blocking'] ) {
+		$out['warnings'][] = IATO_MCP_Redirects::blocking_refusal( $on_new['blocking'] )->get_error_message();
+	}
+	$plan    = null;
+	$rules   = [];
+	if ( $move['redirect'] ) {
+		$plan = iato_mcp_plan_move_redirects( $changes, $move['posts'] );
+		if ( null === $plan['no_room'] ) {
+			$rules = $plan['planned'];
+		} else {
+			$out['warnings'][] = $plan['no_room'];
+		}
+	}
+	$recorded       = array_map(
+		static fn( array $r ): array => [ 'handler' => $plan['handler'], 'from' => $r['from'], 'to' => $r['to'], 'type' => IATO_MCP_Redirects::TYPE ],
+		$rules
+	);
+	$receipt        = IATO_MCP_Change_Receipt::record(
+		(int) $fresh->ID,
+		'post',
+		IATO_MCP_URL_Move::FIELD,
+		$attr_before,
+		$attr_after + [ 'redirects' => $recorded ] + ( [] !== $on_new['stale'] ? [ 'removed_redirects' => $on_new['stale'] ] : [] )
+	);
+	$out['receipt'] = $receipt;
+
+	// First the rules an earlier move left on the new URLs, then the new ones.
+	$removed = IATO_MCP_Redirects::remove_stale( $on_new['stale'] );
+	$created = [];
+	if ( [] !== $rules ) {
+		$made    = IATO_MCP_Redirects::create_all( $rules, $plan['handler'] );
+		$created = $made['created'];
+		if ( [] !== $made['failed'] ) {
+			$out['warnings'][] = sprintf(
+				'%1$d redirect(s) could not be created, so those old URLs do not redirect: %2$s.',
+				count( $made['failed'] ),
+				implode( '; ', array_map( static fn( array $f ): string => $f['from'] . ' (' . $f['error'] . ')', array_slice( $made['failed'], 0, 5 ) ) )
+			);
+		}
+	}
+	$out['report'] = [ 'url_change_count' => count( $changes ) ] + iato_mcp_shown_url_changes( $changes );
+	if ( null !== $plan ) {
+		$out['report']['redirect_handler'] = $plan['handler'];
+		$out['report']                    += IATO_MCP_Redirects::report( $created, $receipt['change_id'] ?? null );
+		if ( [] !== $plan['skipped'] ) {
+			$out['report']['redirects_skipped'] = $plan['skipped'];
+		}
+	}
+	if ( [] !== $removed ) {
+		$out['report']['redirects_removed'] = $removed;
+	}
+	return $out;
+}
+
 // ── update_post ───────────────────────────────────────────────────────────────
 
 IATO_MCP_Server::register_tool(
 	'update_post',
 	[
-		'description' => 'Update an existing post title, content, slug, excerpt, status, publish date, or author. On page-builder sites (Elementor, Divi, etc.), content edits go through the builder tools — see server instructions.',
+		'description' => 'Update an existing post title, content, slug, excerpt, status, publish date, author, parent page or menu_order. On page-builder sites (Elementor, Divi, etc.), content edits go through the builder tools — see server instructions. A new parent moves the page and every page under it to new URLs: when any of them can be opened now it needs confirm_url_break=true, and 301 redirects from the old URLs of published pages are created by default (redirect_old_urls; needs an administrator). dry_run lists every URL that moves (url_changes) and the redirects it would create. The change receipt\'s rollback puts the page back and removes those redirects.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -384,7 +675,10 @@ IATO_MCP_Server::register_tool(
 				'slug'               => [ 'type' => 'string',  'description' => 'New post slug (lowercase a-z 0-9 and hyphens, no leading/trailing/double hyphens, max 200 chars). Returns slug_conflict error if taken; non-draft posts also require confirm_url_break=true.' ],
 				'excerpt'            => [ 'type' => 'string',  'description' => 'New excerpt (manual summary shown on archive/listing pages)' ],
 				'status'             => [ 'type' => 'string',  'description' => 'New status: draft|publish' ],
-				'confirm_url_break'  => [ 'type' => 'boolean', 'description' => 'Required true when changing the slug of a non-draft post; acknowledges the URL break.' ],
+				'confirm_url_break'  => [ 'type' => 'boolean', 'description' => 'Required true when changing the slug of a non-draft post, or a parent that moves a URL visitors can open; acknowledges the URL break.' ],
+				'parent'             => [ 'type' => 'integer', 'minimum' => 0, 'description' => IATO_MCP_POST_PARENT_HELP ],
+				'menu_order'         => [ 'type' => 'integer', 'description' => IATO_MCP_MENU_ORDER_HELP ],
+				'redirect_old_urls'  => [ 'type' => 'boolean', 'description' => 'With a new parent: create a 301 redirect from each published page\'s old URL to its new one. Default: true when a published page moves. Creating redirects needs an administrator (manage_options); others pass false.' ],
 				'date'               => [ 'type' => 'string',  'description' => IATO_MCP_POST_DATE_HELP ],
 				'date_gmt'           => [ 'type' => 'string',  'description' => IATO_MCP_POST_DATE_GMT_HELP ],
 				'allow_future'       => [ 'type' => 'boolean', 'description' => 'A published post given a future date is refused with future_date_on_published unless this is true; it then becomes scheduled and leaves the site until that date. A draft keeps its status and uses the date when published. Default: false.' ],
@@ -409,6 +703,30 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $object_check ) ) {
 			return $object_check;
 		}
+
+		// 1.20.0: page attributes, read first: the slug check uses the parent the post will have.
+		$parent_now = (int) $post->post_parent;
+		$parent_new = $parent_now;
+		$warnings   = [];
+		if ( array_key_exists( 'parent', $args ) ) {
+			$checked = IATO_MCP_URL_Move::check_parent( $post_id, $post->post_type, $args['parent'] );
+			if ( is_wp_error( $checked ) ) {
+				return IATO_MCP_Server::refusal( $checked );
+			}
+			$parent_new = $checked['parent'];
+			if ( null !== $checked['warning'] && $parent_new !== $parent_now ) {
+				$warnings[] = $checked['warning'];
+			}
+		}
+		$order_new = (int) $post->menu_order;
+		if ( array_key_exists( 'menu_order', $args ) ) {
+			$order = IATO_MCP_URL_Move::check_menu_order( $post->post_type, $args['menu_order'] );
+			if ( is_wp_error( $order ) ) {
+				return IATO_MCP_Server::refusal( $order );
+			}
+			$order_new = $order;
+		}
+		$moves = $parent_new !== $parent_now;
 
 		$postarr = [ 'ID' => $post_id ];
 		$before  = [];
@@ -443,7 +761,7 @@ IATO_MCP_Server::register_tool(
 			$before['status']       = $post->post_status;
 		}
 		if ( isset( $args['slug'] ) ) {
-			$slug_or_error = iato_mcp_validate_post_slug( $args['slug'], $post_id );
+			$slug_or_error = iato_mcp_validate_post_slug( $args['slug'], $post_id, $parent_new );
 			if ( is_wp_error( $slug_or_error ) ) {
 				return $slug_or_error;
 			}
@@ -461,6 +779,12 @@ IATO_MCP_Server::register_tool(
 			}
 			$postarr['post_name'] = $slug_or_error;
 			$before['slug']       = $post->post_name;
+			if ( $slug_or_error !== $post->post_name ) {
+				$shadowed = iato_mcp_slug_url_warning( $post, $slug_or_error );
+				if ( null !== $shadowed ) {
+					$warnings[] = $shadowed;
+				}
+			}
 		}
 
 		$date = IATO_MCP_Post_Date::from_args( $args );
@@ -515,6 +839,31 @@ IATO_MCP_Server::register_tool(
 			}
 		}
 
+		// 1.20.0: a new parent moves this page and every page under it.
+		$move = null;
+		if ( $moves ) {
+			$move = iato_mcp_plan_page_move( $post, $parent_new, isset( $postarr['post_name'] ) ? (string) $postarr['post_name'] : (string) $post->post_name, $args );
+			if ( is_wp_error( $move ) ) {
+				return IATO_MCP_Server::refusal( $move );
+			}
+		}
+		$attr_before = null;
+		if ( $moves || $order_new !== (int) $post->menu_order ) {
+			if ( $moves ) {
+				$postarr['post_parent'] = $parent_new;
+			}
+			if ( $order_new !== (int) $post->menu_order ) {
+				$postarr['menu_order'] = $order_new;
+			}
+			// A slug changed with the parent goes in the move's receipt, so one rollback
+			// restores the URL and removes the redirects from it together.
+			$with_slug   = $moves && isset( $before['slug'] );
+			$attr_before = IATO_MCP_URL_Move::snapshot( $post, $with_slug );
+			if ( $with_slug ) {
+				unset( $before['slug'] );
+			}
+		}
+
 		$field_to_postkey = [
 			'title'   => 'post_title',
 			'content' => 'post_content',
@@ -540,6 +889,12 @@ IATO_MCP_Server::register_tool(
 			if ( null !== $author_before ) {
 				$would['author'] = [ 'before' => $author_before, 'after' => (int) $postarr['post_author'] ];
 			}
+			if ( null !== $attr_before ) {
+				$would['page_attributes'] = [
+					'before' => $attr_before,
+					'after'  => [ 'parent' => $parent_new, 'menu_order' => $order_new ] + ( isset( $attr_before['slug'] ) ? [ 'slug' => (string) $postarr['post_name'] ] : [] ),
+				];
+			}
 			$data = [
 				'dry_run'      => true,
 				'action'       => [] === $would ? 'no_change' : 'would_update',
@@ -547,6 +902,13 @@ IATO_MCP_Server::register_tool(
 				'would_change' => (object) $would,
 				'not_checked'  => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
 			];
+			if ( null !== $move ) {
+				$data += iato_mcp_page_move_preview( $move );
+				$warnings = array_merge( $warnings, $move['warnings'] );
+			}
+			if ( [] !== $warnings ) {
+				$data['warnings'] = $warnings;
+			}
 			$note = IATO_MCP_Post_Date::status_note( $post->post_status, $status_then, $date_changes ? $date['local'] : $post->post_date );
 			if ( null !== $note ) {
 				$data['status_note'] = $note;
@@ -562,6 +924,12 @@ IATO_MCP_Server::register_tool(
 		}
 
 		$url_before = null !== $date_before ? get_permalink( $post_id ) : null;
+
+		if ( null !== $move ) {
+			// From here the write, its receipt and its redirects belong together: a client
+			// that stops waiting must not stop the request between them.
+			ignore_user_abort( true );
+		}
 
 		// Only what this call names: the other columns stay as they are, filters aside.
 		$result = IATO_MCP_Auth::update_post_fields( $postarr );
@@ -591,6 +959,13 @@ IATO_MCP_Server::register_tool(
 		if ( null !== $author_before && $fresh && (int) $fresh->post_author !== $author_before ) {
 			$receipts[] = IATO_MCP_Change_Receipt::record( $post_id, 'post', 'author', (string) $author_before, (string) (int) $fresh->post_author );
 		}
+		$moved = null;
+		if ( null !== $attr_before && $fresh ) {
+			$moved = iato_mcp_finish_page_move( $fresh, $attr_before, $move );
+			if ( null !== $moved['receipt'] ) {
+				$receipts[] = $moved['receipt'];
+			}
+		}
 
 		$data  = [
 			'id'       => $post_id,
@@ -607,6 +982,15 @@ IATO_MCP_Server::register_tool(
 		$note = IATO_MCP_Post_Date::status_note( $post->post_status, $fresh->post_status, $fresh->post_date );
 		if ( null !== $note ) {
 			$data['status_note'] = $note;
+		}
+		if ( null !== $moved ) {
+			$data['parent']     = (int) $fresh->post_parent;
+			$data['menu_order'] = (int) $fresh->menu_order;
+			$data              += $moved['report'];
+			$warnings           = array_merge( $warnings, $moved['warnings'] );
+		}
+		if ( [] !== $warnings ) {
+			$data['warnings'] = $warnings;
 		}
 
 		if ( count( $receipts ) === 1 ) {

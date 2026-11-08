@@ -86,10 +86,10 @@ final class ServerInstructionsTest extends TestCase {
 	public function test_the_list_is_read_as_a_client_receives_it(): void {
 		$text = self::instructions( [ 'elementor' ] );
 		$this->assertStringContainsString(
-			'update_post is only permitted for: status, title, excerpt, date, date_gmt, allow_future and author; content edits go through the Elementor tools.',
+			'update_post is only permitted for: status, title, excerpt, slug, parent, menu_order, date, date_gmt, allow_future and author; content edits go through the Elementor tools.',
 			$text
 		);
 		preg_match_all( self::LIST_SENTENCE, $text, $lists );
-		$this->assertSame( [ 'status, title, excerpt, date, date_gmt, allow_future and author' ], $lists[1] );
+		$this->assertSame( [ 'status, title, excerpt, slug, parent, menu_order, date, date_gmt, allow_future and author' ], $lists[1] );
 	}
 }
