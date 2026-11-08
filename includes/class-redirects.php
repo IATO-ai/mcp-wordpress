@@ -87,6 +87,13 @@ final class IATO_MCP_Redirects {
 			if ( $from === $to ) {
 				continue;
 			}
+			// A slug outside ASCII is percent-encoded in the URL, and the built-in list and
+			// Safe Redirect Manager compare the request after sanitize_text_field(), which
+			// deletes every %XX: such a rule would never fire.
+			if ( str_contains( $from . $to, '%' ) ) {
+				$skipped[] = [ 'from' => $from, 'to' => $to, 'reason' => 'encoded_path' ];
+				continue;
+			}
 			if ( isset( $seen[ $from ] ) ) {
 				continue;
 			}
@@ -108,17 +115,130 @@ final class IATO_MCP_Redirects {
 	 * @return array{planned:list<array{from:string,to:string}>,skipped:list<array{from:string,to:string,reason:string,existing_to:string}>}
 	 */
 	public static function without_existing( array $planned, string $handler ): array {
-		$keep    = [];
-		$skipped = [];
+		$keep     = [];
+		$skipped  = [];
+		$existing = self::store()->existing_many( $handler, array_column( $planned, 'from' ) );
 		foreach ( $planned as $rule ) {
-			$existing = self::store()->existing( $handler, $rule['from'] );
-			if ( null !== $existing ) {
-				$skipped[] = $rule + [ 'reason' => 'existing_rule_kept', 'existing_to' => $existing ];
+			$existing_to = $existing[ $rule['from'] ] ?? null;
+			if ( null !== $existing_to ) {
+				$skipped[] = $rule + [ 'reason' => 'existing_rule_kept', 'existing_to' => $existing_to ];
 				continue;
 			}
 			$keep[] = $rule;
 		}
 		return [ 'planned' => $keep, 'skipped' => $skipped ];
+	}
+
+	/**
+	 * Rules already redirecting a URL the write makes live: each would send visitors
+	 * away from the page there, and with a redirect from the old URL make a loop. One
+	 * that points back to that object's old URL is what an earlier move left, when the
+	 * page moves back: the write takes it away and its rollback puts it back (`stale`).
+	 * Any other means the page could not be reached there (`blocking`), and the write is
+	 * refused. The built-in list is always checked: its rules fire whatever plugin is active.
+	 *
+	 * @param list<array{old_url:string,new_url:string,status:string}> $changes
+	 * @return array{stale:list<array{handler:string,from:string,to:string,type:int}>,blocking:list<array{handler:string,from:string,to:string}>}
+	 */
+	public static function rules_on_new_urls( array $changes, string $home_host ): array {
+		$pairs = [];
+		foreach ( $changes as $change ) {
+			if ( ! in_array( $change['status'] ?? '', [ 'publish', 'private' ], true ) ) {
+				continue;
+			}
+			$new = self::path_of( (string) $change['new_url'], $home_host );
+			if ( null === $new || str_contains( $new, '%' ) || '' === rtrim( $new, '/' ) ) {
+				continue;
+			}
+			$pairs[ $new ] = self::path_of( (string) $change['old_url'], $home_host );
+		}
+		$stale    = [];
+		$blocking = [];
+		if ( [] === $pairs ) {
+			return [ 'stale' => $stale, 'blocking' => $blocking ];
+		}
+		foreach ( array_values( array_unique( [ self::store()->handler(), 'fallback' ] ) ) as $handler ) {
+			foreach ( self::store()->existing_many( $handler, array_keys( $pairs ) ) as $from => $target ) {
+				$target_path = self::target_path( (string) $target, $home_host );
+				$old         = $pairs[ $from ] ?? null;
+				if ( null !== $old && null !== $target_path && rtrim( $target_path, '/' ) === rtrim( $old, '/' ) ) {
+					$stale[] = [ 'handler' => $handler, 'from' => (string) $from, 'to' => (string) $target, 'type' => self::TYPE ];
+				} else {
+					$blocking[] = [ 'handler' => $handler, 'from' => (string) $from, 'to' => (string) $target ];
+				}
+			}
+		}
+		return [ 'stale' => $stale, 'blocking' => $blocking ];
+	}
+
+	/** Where a rule's target leads on this site: its path, or null for another site. */
+	public static function target_path( string $target, string $home_host ): ?string {
+		if ( preg_match( '#^[a-z][a-z0-9+.-]*://#i', $target ) || str_starts_with( $target, '//' ) ) {
+			$parts = parse_url( $target );
+			if ( ! is_array( $parts ) || strtolower( (string) ( $parts['host'] ?? '' ) ) !== strtolower( $home_host ) ) {
+				return null;
+			}
+			return '/' . ltrim( (string) ( $parts['path'] ?? '' ), '/' );
+		}
+		return '/' . ltrim( (string) strtok( $target, '?#' ), '/' );
+	}
+
+	/** The refusal when a URL the write makes live is redirected elsewhere. */
+	public static function blocking_refusal( array $blocking ): WP_Error {
+		return new WP_Error(
+			'new_url_redirected',
+			sprintf(
+				'%1$d URL(s) this change would give a page or post are already redirected elsewhere, so visitors could not reach them there: %2$s. Remove those redirects first. Nothing was written.',
+				count( $blocking ),
+				implode( '; ', array_map( static fn( array $b ): string => $b['from'] . ' -> ' . $b['to'] . ' (' . $b['handler'] . ')', array_slice( $blocking, 0, 10 ) ) )
+			),
+			[ 'status' => 409, 'redirected_urls' => array_slice( $blocking, 0, self::LIST_LIMIT ) ]
+		);
+	}
+
+	/**
+	 * Remove the rules an earlier move left on the new URLs. A rule someone changed in
+	 * the meantime is kept, and the write's rollback only re-creates what it removed.
+	 *
+	 * @param list<array{handler:string,from:string,to:string}> $stale
+	 * @return list<array{handler:string,from:string,to:string,type:int}> The rules removed.
+	 */
+	public static function remove_stale( array $stale ): array {
+		$removed = [];
+		foreach ( $stale as $rule ) {
+			$report = self::store()->remove( $rule['handler'], [ [ 'from' => $rule['from'], 'to' => $rule['to'] ] ] );
+			if ( $report['removed'] > 0 ) {
+				$removed[] = $rule;
+			}
+		}
+		return $removed;
+	}
+
+	/**
+	 * Put back the rules a write removed, where the path has no rule now. For rollback.
+	 *
+	 * @return string|null A warning for rules that could not be put back.
+	 */
+	public static function restore_removed( array $rules ): ?string {
+		$failed = [];
+		foreach ( $rules as $rule ) {
+			if ( ! is_array( $rule ) || ! isset( $rule['handler'], $rule['from'], $rule['to'] ) ) {
+				continue;
+			}
+			$handler = (string) $rule['handler'];
+			if ( ! self::store()->reachable( $handler ) ) {
+				$failed[] = $rule['from'];
+				continue;
+			}
+			if ( null !== self::store()->existing( $handler, (string) $rule['from'] ) ) {
+				continue;
+			}
+			$made = self::store()->create( $handler, [ [ 'handler' => $handler, 'from' => (string) $rule['from'], 'to' => (string) $rule['to'], 'type' => (int) ( $rule['type'] ?? self::TYPE ) ] ] );
+			if ( [] !== $made['failed'] ) {
+				$failed[] = $rule['from'];
+			}
+		}
+		return [] === $failed ? null : sprintf( 'These redirects, which the change had removed, could not be put back: %s.', implode( ', ', array_slice( $failed, 0, 10 ) ) );
 	}
 
 	/**
@@ -272,6 +392,41 @@ class IATO_MCP_Redirect_Store {
 		return 0;
 	}
 
+	/**
+	 * Where the handler already sends each of these paths, for those it redirects.
+	 * The built-in list and Safe Redirect Manager are read once; the others per path.
+	 *
+	 * @param string[] $paths
+	 * @return array<string,string> path => target
+	 */
+	public function existing_many( string $handler, array $paths ): array {
+		$found = [];
+		if ( 'fallback' === $handler || 'safe_redirect_manager' === $handler ) {
+			$index = [];
+			foreach ( 'fallback' === $handler ? $this->fallback_rules() : $this->srm_index() as $from => $to ) {
+				if ( is_array( $to ) ) { // a row of the built-in list
+					$from = (string) ( $to['from_url'] ?? '' );
+					$to   = (string) ( $to['to_url'] ?? '' );
+				}
+				$index[ $this->key( (string) $from ) ] ??= (string) $to;
+			}
+			foreach ( $paths as $path ) {
+				$key = $this->key( 'safe_redirect_manager' === $handler ? $this->srm_path( $path ) : $path );
+				if ( isset( $index[ $key ] ) ) {
+					$found[ $path ] = $index[ $key ];
+				}
+			}
+			return $found;
+		}
+		foreach ( $paths as $path ) {
+			$to = $this->existing( $handler, $path );
+			if ( null !== $to ) {
+				$found[ $path ] = $to;
+			}
+		}
+		return $found;
+	}
+
 	/** Where the handler already sends this path, or null. */
 	public function existing( string $handler, string $from ): ?string {
 		switch ( $handler ) {
@@ -344,7 +499,7 @@ class IATO_MCP_Redirect_Store {
 	private function create_one( string $handler, array $rule ): bool|WP_Error {
 		if ( 'safe_redirect_manager' === $handler && function_exists( 'srm_create_redirect' ) ) {
 			// The plugin's own function also clears its cached list of rules.
-			$id = srm_create_redirect( $rule['from'], $rule['to'], $rule['type'], false, 'publish', 0, 'IATO MCP: URL moved', max( 1, (int) get_current_user_id() ) );
+			$id = srm_create_redirect( $this->srm_path( $rule['from'] ), $rule['to'], $rule['type'], false, 'publish', 0, 'IATO MCP: URL moved', max( 1, (int) get_current_user_id() ) );
 			return is_wp_error( $id ) ? $id : (int) $id > 0;
 		}
 		if ( function_exists( 'iato_mcp_write_redirect' ) ) {
@@ -465,7 +620,48 @@ class IATO_MCP_Redirect_Store {
 
 	/** Paths compare without the trailing slash, as the plugins do. */
 	private function same_path( string $a, string $b ): bool {
-		return rtrim( '/' . ltrim( $a, '/' ), '/' ) === rtrim( '/' . ltrim( $b, '/' ), '/' );
+		return $this->key( $a ) === $this->key( $b );
+	}
+
+	private function key( string $path ): string {
+		return rtrim( '/' . ltrim( $path, '/' ), '/' );
+	}
+
+	/**
+	 * Safe Redirect Manager compares the request without the site's folder (on a site at
+	 * example.com/wp/, /wp/old/ is matched as /old/), so its rules are stored that way.
+	 */
+	private function srm_path( string $path ): string {
+		$home = rtrim( (string) parse_url( home_url( '/' ), PHP_URL_PATH ), '/' );
+		if ( '' !== $home && ( $path === $home || str_starts_with( $path, $home . '/' ) ) ) {
+			$path = substr( $path, strlen( $home ) );
+		}
+		return '/' . ltrim( $path, '/' );
+	}
+
+	/** @return array<string,string> Every published Safe Redirect Manager rule: from => to. */
+	private function srm_index(): array {
+		$ids = get_posts(
+			[
+				'post_type'        => 'redirect_rule',
+				'post_status'      => 'publish',
+				'numberposts'      => -1,
+				'fields'           => 'ids',
+				'suppress_filters' => true,
+			]
+		);
+		$ids   = array_map( 'intval', is_array( $ids ) ? $ids : [] );
+		$index = [];
+		if ( [] !== $ids ) {
+			update_meta_cache( 'post', $ids );
+		}
+		foreach ( $ids as $id ) {
+			$from = (string) get_post_meta( (int) $id, '_redirect_rule_from', true );
+			if ( '' !== $from && ! isset( $index[ $from ] ) ) {
+				$index[ $from ] = (string) get_post_meta( (int) $id, '_redirect_rule_to', true );
+			}
+		}
+		return $index;
 	}
 
 	private function fallback_rules(): array {
@@ -475,7 +671,8 @@ class IATO_MCP_Redirect_Store {
 
 	/** @return list<int> Published redirect_rule posts for this path. */
 	private function srm_rules( string $from ): array {
-		$ids = get_posts(
+		$from = $this->srm_path( $from );
+		$ids  = get_posts(
 			[
 				'post_type'        => 'redirect_rule',
 				'post_status'      => 'publish',

@@ -459,18 +459,32 @@ function iato_mcp_plan_page_move( WP_Post $post, int $parent_new, string $slug, 
 				'status'           => 400,
 				'current_url'      => $before[ (int) $post->ID ] ?? null,
 				'url_change_count' => count( $changes ),
-				'url_changes'      => array_slice( $changes, 0, IATO_MCP_Redirects::LIST_LIMIT ),
-			]
+			] + iato_mcp_shown_url_changes( $changes )
 		);
+	}
+
+	// A redirect already on a URL the move makes live would take visitors away from it.
+	$host   = (string) parse_url( home_url( '/' ), PHP_URL_HOST );
+	$on_new = IATO_MCP_Redirects::rules_on_new_urls( $changes, $host );
+	if ( [] !== $on_new['blocking'] ) {
+		return IATO_MCP_Redirects::blocking_refusal( $on_new['blocking'] );
 	}
 
 	$published = IATO_MCP_URL_Move::moves_published_url( $changes );
 	$redirect  = array_key_exists( 'redirect_old_urls', $args ) ? ! empty( $args['redirect_old_urls'] ) : $published;
-	if ( $redirect && $published && is_wp_error( IATO_MCP_Auth::require_cap( 'manage_options' ) ) ) {
+	$is_admin  = ! is_wp_error( IATO_MCP_Auth::require_cap( 'manage_options' ) );
+	if ( $redirect && $published && ! $is_admin ) {
 		return new WP_Error(
 			'redirects_need_admin',
 			'Moving this page moves published URLs, and creating redirects from them needs an administrator (manage_options), as update_redirect does. Ask an administrator, or pass redirect_old_urls=false to move it without redirects: WordPress may still send some old URLs to the new ones itself. Nothing was written.',
 			[ 'status' => 403 ]
+		);
+	}
+	if ( [] !== $on_new['stale'] && ! $is_admin ) {
+		return new WP_Error(
+			'redirects_need_admin',
+			'A redirect left by an earlier move would send visitors away from this page\'s new URL, and removing it needs an administrator (manage_options). Ask an administrator to make this move. Nothing was written.',
+			[ 'status' => 403, 'redirects_to_remove' => $on_new['stale'] ]
 		);
 	}
 
@@ -482,6 +496,7 @@ function iato_mcp_plan_page_move( WP_Post $post, int $parent_new, string $slug, 
 		'changes'     => $changes,
 		'redirect'    => $redirect && $published,
 		'plan'        => $plan,
+		'stale'       => $on_new['stale'],
 		'warnings'    => null !== $plan && null !== $plan['no_room'] ? [ $plan['no_room'] ] : [],
 	];
 }
@@ -510,12 +525,52 @@ function iato_mcp_plan_move_redirects( array $changes, array $ids ): array {
 	];
 }
 
+/**
+ * The URL changes a response may list: a page the caller cannot read (another
+ * author's private or scheduled page) moves too, but is only counted.
+ *
+ * @return array{url_changes:list<array>,url_changes_hidden?:int}
+ */
+function iato_mcp_shown_url_changes( array $changes ): array {
+	$shown  = [];
+	$hidden = 0;
+	foreach ( $changes as $change ) {
+		if ( 'publish' === $change['status'] || ! is_wp_error( IATO_MCP_Auth::require_read_post( (int) $change['id'] ) ) ) {
+			$shown[] = $change;
+		} else {
+			$hidden++;
+		}
+	}
+	return [ 'url_changes' => array_slice( $shown, 0, IATO_MCP_Redirects::LIST_LIMIT ) ] + ( $hidden > 0 ? [ 'url_changes_hidden' => $hidden ] : [] );
+}
+
+/**
+ * A post given a slug whose URL is a published page's URL: WordPress shows the page
+ * there and the post cannot be reached. WordPress allows it, because it compares a
+ * post's slug only with posts, so this is a warning (1.20.0).
+ */
+function iato_mcp_slug_url_warning( WP_Post $post, string $slug ): ?string {
+	if ( is_post_type_hierarchical( $post->post_type ) || ! is_post_type_viewable( $post->post_type ) ) {
+		return null;
+	}
+	if ( ! function_exists( 'get_sample_permalink' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/post.php';
+	}
+	$sample = get_sample_permalink( $post->ID, null, $slug );
+	if ( ! is_array( $sample ) || ! isset( $sample[0], $sample[1] ) ) {
+		return null;
+	}
+	$url  = str_replace( [ '%postname%', '%pagename%' ], (string) $sample[1], (string) $sample[0] );
+	$path = IATO_MCP_Redirects::path_of( $url, (string) parse_url( home_url( '/' ), PHP_URL_HOST ) );
+	if ( null === $path || ! IATO_MCP_URL_Move::path_is_live_page( $path, [ (int) $post->ID => true ] ) ) {
+		return null;
+	}
+	return sprintf( 'The new URL, %1$s, is already a published page\'s URL. WordPress shows the page there, so visitors could not reach this %2$s at it.', $url, $post->post_type );
+}
+
 /** A dry run's report of a move. */
 function iato_mcp_page_move_preview( array $move ): array {
-	$out = [
-		'url_change_count' => count( $move['changes'] ),
-		'url_changes'      => array_slice( $move['changes'], 0, IATO_MCP_Redirects::LIST_LIMIT ),
-	];
+	$out  = [ 'url_change_count' => count( $move['changes'] ) ] + iato_mcp_shown_url_changes( $move['changes'] );
 	$plan = $move['plan'];
 	if ( null !== $plan ) {
 		$out['redirect_handler'] = $plan['handler'];
@@ -523,6 +578,9 @@ function iato_mcp_page_move_preview( array $move ): array {
 		if ( [] !== $plan['skipped'] ) {
 			$out['redirects_skipped'] = $plan['skipped'];
 		}
+	}
+	if ( [] !== $move['stale'] ) {
+		$out['redirects_to_remove'] = $move['stale'];
 	}
 	return $out;
 }
@@ -547,6 +605,10 @@ function iato_mcp_finish_page_move( WP_Post $fresh, array $attr_before, ?array $
 
 	$posts   = array_values( array_filter( array_map( 'get_post', $move['posts'] ) ) );
 	$changes = IATO_MCP_URL_Move::changes( $posts, $move['urls_before'], IATO_MCP_URL_Move::urls( $posts ) );
+	$on_new  = IATO_MCP_Redirects::rules_on_new_urls( $changes, (string) parse_url( home_url( '/' ), PHP_URL_HOST ) );
+	if ( [] !== $on_new['blocking'] ) {
+		$out['warnings'][] = IATO_MCP_Redirects::blocking_refusal( $on_new['blocking'] )->get_error_message();
+	}
 	$plan    = null;
 	$rules   = [];
 	if ( $move['redirect'] ) {
@@ -561,9 +623,17 @@ function iato_mcp_finish_page_move( WP_Post $fresh, array $attr_before, ?array $
 		static fn( array $r ): array => [ 'handler' => $plan['handler'], 'from' => $r['from'], 'to' => $r['to'], 'type' => IATO_MCP_Redirects::TYPE ],
 		$rules
 	);
-	$receipt        = IATO_MCP_Change_Receipt::record( (int) $fresh->ID, 'post', IATO_MCP_URL_Move::FIELD, $attr_before, $attr_after + [ 'redirects' => $recorded ] );
+	$receipt        = IATO_MCP_Change_Receipt::record(
+		(int) $fresh->ID,
+		'post',
+		IATO_MCP_URL_Move::FIELD,
+		$attr_before,
+		$attr_after + [ 'redirects' => $recorded ] + ( [] !== $on_new['stale'] ? [ 'removed_redirects' => $on_new['stale'] ] : [] )
+	);
 	$out['receipt'] = $receipt;
 
+	// First the rules an earlier move left on the new URLs, then the new ones.
+	$removed = IATO_MCP_Redirects::remove_stale( $on_new['stale'] );
 	$created = [];
 	if ( [] !== $rules ) {
 		$made    = IATO_MCP_Redirects::create_all( $rules, $plan['handler'] );
@@ -576,16 +646,16 @@ function iato_mcp_finish_page_move( WP_Post $fresh, array $attr_before, ?array $
 			);
 		}
 	}
-	$out['report'] = [
-		'url_change_count' => count( $changes ),
-		'url_changes'      => array_slice( $changes, 0, IATO_MCP_Redirects::LIST_LIMIT ),
-	];
+	$out['report'] = [ 'url_change_count' => count( $changes ) ] + iato_mcp_shown_url_changes( $changes );
 	if ( null !== $plan ) {
 		$out['report']['redirect_handler'] = $plan['handler'];
 		$out['report']                    += IATO_MCP_Redirects::report( $created, $receipt['change_id'] ?? null );
 		if ( [] !== $plan['skipped'] ) {
 			$out['report']['redirects_skipped'] = $plan['skipped'];
 		}
+	}
+	if ( [] !== $removed ) {
+		$out['report']['redirects_removed'] = $removed;
 	}
 	return $out;
 }
@@ -709,6 +779,12 @@ IATO_MCP_Server::register_tool(
 			}
 			$postarr['post_name'] = $slug_or_error;
 			$before['slug']       = $post->post_name;
+			if ( $slug_or_error !== $post->post_name ) {
+				$shadowed = iato_mcp_slug_url_warning( $post, $slug_or_error );
+				if ( null !== $shadowed ) {
+					$warnings[] = $shadowed;
+				}
+			}
 		}
 
 		$date = IATO_MCP_Post_Date::from_args( $args );

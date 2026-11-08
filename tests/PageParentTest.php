@@ -113,4 +113,5 @@ final class PageParentTest extends TestCase {
 		$this->assertSame( [], IATO_MCP_Change_Receipt::object_cap_for( $without )['also'] );
 		$this->assertSame( 'edit_posts', IATO_MCP_Change_Receipt::object_cap_for( $without )['cap'] );
 	}
+
 }

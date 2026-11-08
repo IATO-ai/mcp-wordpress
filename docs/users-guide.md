@@ -230,14 +230,15 @@ Update an existing post's title, content, slug, excerpt, status, publish date, a
 
 **Capability:** `edit_posts`
 
-**Slugs.** WordPress compares a page's slug with the pages and attachments under the same parent, and a post's with posts. A menu item or a page elsewhere with the same name is no conflict. A draft is checked as if published, so its slug does not become `-2` when it goes live. A slug WordPress keeps for itself, such as `feed`, is refused with the slug it would use instead.
+**Slugs.** WordPress compares a page's slug with the pages and attachments under the same parent, and a post's with posts. A menu item or a page elsewhere with the same name is no conflict. A post whose new slug gives it a published page's URL gets a warning: WordPress shows the page there. A draft is checked as if published, so its slug does not become `-2` when it goes live. A slug WordPress keeps for itself, such as `feed`, is refused with the slug it would use instead.
 
 **Moving a page.** A page's URL is its parent's URL plus its slug, so a new parent moves the page and every page under it.
 
 - **Checks.** Only pages and other hierarchical types have a parent (`parent_not_supported`). A page cannot go under itself or a page below it (`parent_cycle`). The parent must be a page of the same type you can read (`invalid_parent`). A parent that is not published is allowed, with a warning. If a page there already has this page's slug, the move is refused with `slug_conflict` rather than renamed: send a new `slug` with it.
 - **Confirmation.** When any of the URLs that move can be opened now, the call needs `confirm_url_break: true`. The refusal lists them.
 - **Dry run.** `dry_run: true` returns `url_changes` (each page's `old_url` and `new_url`) and `redirects_planned`, and writes nothing.
-- **Redirects.** By default each published page's old URL gets a 301 to its new one, through the redirect plugin `update_redirect` uses: Redirection, Safe Redirect Manager, Yoast Premium, or the plugin's own list. An old URL that already redirects is left as it is (`redirects_skipped`). Creating redirects needs an administrator; an Editor gets `redirects_need_admin` and can pass `redirect_old_urls: false`.
+- **Redirects.** By default each published page's old URL gets a 301 to its new one, through the redirect plugin `update_redirect` uses: Redirection, Safe Redirect Manager, Yoast Premium, or the plugin's own list. An old URL that already redirects is left as it is (`redirects_skipped`), and so is one with characters outside ASCII (`encoded_path`), which the plugin's own list and Safe Redirect Manager cannot match. Creating redirects needs an administrator; an Editor gets `redirects_need_admin` and can pass `redirect_old_urls: false`.
+- **Moving back.** Moving a page back with a new call, rather than a rollback, takes away the redirect the first move left on its URL (`redirects_removed`), or it would loop. A redirect someone else set on a URL the move would give a page is refused with `new_url_redirected`: remove it first.
 - **Undo.** One receipt (`page_attributes`) covers the parent, the order and a slug changed in the same call. Each entry in `redirects_created` names it as `rollback_id`. Rolling it back removes the redirects first, then puts the page back.
 
 | The post | Given | Result |
@@ -317,6 +318,8 @@ Accepts `dry_run`. Returns the before and after value of each option in `changes
 - **Accepted.** A structure starts and ends with `/`, contains `%postname%` or `%post_id%`, and uses only WordPress's tags (`%year%` `%monthnum%` `%day%` `%hour%` `%minute%` `%second%` `%post_id%` `%postname%` `%category%` `%author%`). Plain permalinks (an empty structure) are refused with `plain_permalinks_not_supported`. A site still on plain or `/index.php/` permalinks makes its first change in Settings > Permalinks, where WordPress checks the server can serve them (`permalinks_not_pretty`).
 - **Confirmation.** Any change needs `confirm_url_break: true`. `dry_run: true` with it returns `moved_count`, the first 25 `url_changes` and the redirects it would create.
 - **Redirects.** By default each moved URL gets a 301 (`redirect_old_urls`), at most 1,000. With more, or more than the plugin's own list (500) or Safe Redirect Manager can hold, none are created and `warnings` says so.
+- **Bases** cannot start with a word WordPress uses for its own URLs (`page`, `feed`, `author`, `search`, `wp-json` and others) or with a number, and cannot be the start of the post URLs (`blog` with `/blog/%postname%/`).
+- **Changing back.** A second change that puts URLs back where they were takes away the redirects the first one left (`redirects_removed_count`), or they would loop. A redirect someone else set on a URL that becomes live is refused with `new_url_redirected`.
 - **Warnings.** A post whose new URL is already a published page's URL is named: WordPress shows the page there. A page at the start of the new structure, such as a page at `/blog/` with `/blog/%postname%/`, keeps working, and so does its `/blog/page/2/`.
 - **Rewrite rules** are rebuilt by the first request after the change, as wp-admin does it.
 - **Undo.** One receipt (`permalinks`) restores all three settings and removes the redirects it created.

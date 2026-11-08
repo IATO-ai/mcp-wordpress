@@ -333,7 +333,7 @@ final class IATO_MCP_URL_Move {
 		$after   = IATO_MCP_Rollback_Conflict::json_array( $receipt['after_value'] ?? null );
 		$before  = IATO_MCP_Rollback_Conflict::json_array( $receipt['before_value'] ?? null );
 		$current = self::snapshot( $post, array_key_exists( 'slug', $after ) );
-		unset( $after['redirects'] );
+		unset( $after['redirects'], $after['removed_redirects'] );
 		$check = IATO_MCP_Rollback_Conflict::compare( $current, $after, 'page\'s place in the site (parent, order and slug)' );
 		if ( 'conflict' === $check['status'] ) {
 			return $check;
@@ -383,6 +383,12 @@ final class IATO_MCP_URL_Move {
 		$note = IATO_MCP_Redirects::removal_note( $removal );
 		if ( null !== $note ) {
 			IATO_MCP_Rollback::warn( $note );
+		}
+		// The rules an earlier move left on the new URLs, which this one took away.
+		$after   = IATO_MCP_Rollback_Conflict::json_array( $receipt['after_value'] ?? null );
+		$restore = IATO_MCP_Redirects::restore_removed( is_array( $after['removed_redirects'] ?? null ) ? $after['removed_redirects'] : [] );
+		if ( null !== $restore ) {
+			IATO_MCP_Rollback::warn( $restore );
 		}
 		return true;
 	}

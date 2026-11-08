@@ -253,7 +253,32 @@ def parents():
         record('the rollback did not touch it', status == 302 and path(location) == '/somewhere-else/', (status, location))
     php('$r=get_option("iato_mcp_redirects",[]);update_option("iato_mcp_redirects",array_values(array_filter($r,fn($x)=>"/somewhere-else/"!==($x["to_url"]??""))),false);')
 
-    # 10. An unpublished parent, and create_post under a parent.
+    # 10. Moving back with update_post, not rollback: the first move's redirect would loop.
+    back = page('Moves back')
+    m1 = call('update_post', {'id': back['id'], 'parent': services['id'], 'confirm_url_break': True})
+    under = call('get_post', {'id': back['id']})['url']
+    m2 = call('update_post', {'id': back['id'], 'parent': 0, 'confirm_url_break': True})
+    record('moving a page back takes away the redirect its first move left', path(back['url']) in [x.get('from') for x in m2.get('redirects_removed', [])] and m2.get('redirects_created_count') == 1, m2)
+    ok, got = opens(back['url'], f"page-id-{back['id']}")
+    record('it opens at its old URL again, with no loop', ok, got)
+    ok, got = redirects_to(under, back['url'])
+    record('the URL it had under its parent answers 301 back', ok, got)
+    rb = call('rollback', {'change_id': receipt_of(m2)})
+    ok, got = redirects_to(back['url'], under)
+    record('rolling back the second move puts the first move\'s redirect back', rb.get('success') and ok, [rb, got])
+    ok, got = opens(under, f"page-id-{back['id']}")
+    record('and the page opens under its parent again', ok, got)
+    call('rollback', {'change_id': receipt_of(m1)})
+
+    # 11. A redirect someone set on the URL a move would give the page.
+    blocked = page('Blocked')
+    target = path(services['url']) + 'restructure-live-blocked/'
+    php('$r=get_option("iato_mcp_redirects",[]);$r[]=["from_url"=>"' + target + '","to_url"=>"/somewhere-else-2/","type"=>301];update_option("iato_mcp_redirects",$r,false);')
+    r = call('update_post', {'id': blocked['id'], 'parent': services['id'], 'confirm_url_break': True, 'dry_run': True})
+    record('a move onto a URL that is redirected elsewhere is refused (new_url_redirected)', refused(r, 'new_url_redirected') and target in r.get('message', ''), r)
+    php('$r=get_option("iato_mcp_redirects",[]);update_option("iato_mcp_redirects",array_values(array_filter($r,fn($x)=>"/somewhere-else-2/"!==($x["to_url"]??""))),false);')
+
+    # 12. An unpublished parent, and create_post under a parent.
     draft_parent = page('Draft parent', status='draft')
     r = call('create_post', {'title': f'{T} under a draft', 'post_type': 'page', 'parent': draft_parent['id'], 'dry_run': True})
     record('a parent visitors cannot open yet is a warning', bool(r.get('warnings')) and 'draft' in r['warnings'][0], r)
@@ -356,6 +381,27 @@ def permalinks():
     status, _, html = fetch(new_post.rstrip('/') + '/iato-probe-endpoint/')
     record('an endpoint another plugin added still works after the change', status == 200 and f'IATO PROBE ENDPOINT OK {post["id"]}' in html, (status, html[:80]))
     record('the rules the next request stored hold its rules, top and bottom, and the new category base', php('$r=get_option("rewrite_rules"); echo isset($r["^iato-probe-rule/?$"],$r["^iato-probe-bottom/?$"],$r["blog/category/(.+?)/?$"])&&!isset($r["category/(.+?)/?$"])?"yes":"no";') == 'yes')
+
+    # A post's slug that gives it a page's URL.
+    child = page('Child x', parent=blog['id'])
+    wp('post', 'update', str(child['id']), '--post_name=restructure-live-child-x')
+    r = call('update_post', {'id': post['id'], 'slug': 'restructure-live-child-x', 'confirm_url_break': True, 'dry_run': True})
+    record('a post slug that gives it a page\'s URL is a warning', any('restructure-live-child-x' in w and 'published page' in w for w in r.get('warnings', [])), r)
+
+    # Changing the structure straight back, not by rollback: the first change's redirects would loop.
+    a2 = call('update_site_settings', {'permalink_structure': original, 'confirm_url_break': True})
+    record('changing back takes away the redirects the first change left', a2.get('redirects_removed_count', 0) >= 1 and a2.get('redirects_created_count', 0) >= 1, {k: a2.get(k) for k in ('redirects_removed_count', 'redirects_created_count', 'warnings', 'error')})
+    ok, got = opens(old['post'], f"postid-{post['id']}")
+    record('the post opens at its first URL, with no loop', ok, got)
+    ok, got = redirects_to(new_post, old['post'])
+    record('the /blog/ URL answers 301 back', ok, got)
+    rb2 = call('rollback', {'change_id': receipt_of(a2)})
+    ok, got = redirects_to(old['post'], new_post)
+    record('rolling back the second change puts the first one\'s redirects back', rb2.get('success') and ok, [rb2, got])
+    ok, got = opens(new_post, f"postid-{post['id']}")
+    record('and the post opens under /blog/ again', ok, got)
+    r = call('update_site_settings', {'category_base': 'author', 'confirm_url_break': True, 'dry_run': True})
+    record('a base WordPress uses for its own URLs is refused', refused(r, 'invalid_permalink_setting') and 'author' in r.get('_text', ''), r)
 
     # A post given a page's URL.
     clash_page = page('Clash page')

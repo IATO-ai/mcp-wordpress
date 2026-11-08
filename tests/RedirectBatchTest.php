@@ -167,4 +167,56 @@ final class RedirectBatchTest extends TestCase {
 		$this->assertStringContainsString( '/b/', (string) $note );
 		$this->assertNull( IATO_MCP_Redirects::removal_note( [ 'removed' => 2, 'gone' => 0, 'kept' => [], 'unreachable' => [], 'failed' => [] ] ) );
 	}
+
+	public function test_a_percent_encoded_path_is_not_redirected(): void {
+		$plan = IATO_MCP_Redirects::plan( [ self::change( '/%e6%97%a5/', '/s/%e6%97%a5/' ) ], self::HOST, static fn( string $p ): bool => false );
+		$this->assertSame( [], $plan['planned'], 'the built-in list and Safe Redirect Manager delete %XX from the request before comparing' );
+		$this->assertSame( 'encoded_path', $plan['skipped'][0]['reason'] );
+	}
+
+	public function test_a_target_is_read_as_a_path_on_this_site(): void {
+		$this->assertSame( '/a/', IATO_MCP_Redirects::target_path( 'https://example.test/a/', self::HOST ) );
+		$this->assertSame( '/a/', IATO_MCP_Redirects::target_path( '/a/?x=1', self::HOST ) );
+		$this->assertSame( '/a/', IATO_MCP_Redirects::target_path( 'a/', self::HOST ) );
+		$this->assertNull( IATO_MCP_Redirects::target_path( 'https://other.test/a/', self::HOST ) );
+		$this->assertNull( IATO_MCP_Redirects::target_path( '//other.test/a/', self::HOST ) );
+	}
+
+	public function test_a_rule_left_by_an_earlier_move_on_a_new_url_is_stale_and_any_other_blocks(): void {
+		update_option(
+			'iato_mcp_redirects',
+			[
+				[ 'from_url' => '/p/', 'to_url' => '/x/p/', 'type' => 301 ],        // the page moving back: points to its old URL
+				[ 'from_url' => '/q/', 'to_url' => '/elsewhere/', 'type' => 301 ],  // someone's rule on the new URL
+				[ 'from_url' => '/r/', 'to_url' => '/x/r/', 'type' => 301 ],        // a draft's new URL: not live
+			]
+		);
+		$found = IATO_MCP_Redirects::rules_on_new_urls(
+			[ self::change( '/x/p/', '/p/' ), self::change( '/x/q/', '/q/' ), self::change( '/x/r/', '/r/', 'draft' ), self::change( '/x/s/', '/s/' ) ],
+			self::HOST
+		);
+		$this->assertSame( [ [ 'handler' => 'fallback', 'from' => '/p/', 'to' => '/x/p/', 'type' => 301 ] ], $found['stale'] );
+		$this->assertSame( [ [ 'handler' => 'fallback', 'from' => '/q/', 'to' => '/elsewhere/' ] ], $found['blocking'] );
+		$refusal = IATO_MCP_Redirects::blocking_refusal( $found['blocking'] );
+		$this->assertSame( 'new_url_redirected', $refusal->get_error_code() );
+		$this->assertStringContainsString( '/q/ -> /elsewhere/', $refusal->get_error_message() );
+	}
+
+	public function test_a_stale_rule_is_removed_and_a_rollback_puts_it_back_once(): void {
+		update_option( 'iato_mcp_redirects', [ [ 'from_url' => '/p/', 'to_url' => '/x/p/', 'type' => 301 ] ] );
+		$stale   = [ [ 'handler' => 'fallback', 'from' => '/p/', 'to' => '/x/p/', 'type' => 301 ] ];
+		$removed = IATO_MCP_Redirects::remove_stale( $stale );
+		$this->assertSame( $stale, $removed );
+		$this->assertSame( [], self::stored() );
+		$this->assertNull( IATO_MCP_Redirects::restore_removed( $removed ) );
+		$this->assertSame( [ [ 'from_url' => '/p/', 'to_url' => '/x/p/', 'type' => 301 ] ], self::stored() );
+		$this->assertNull( IATO_MCP_Redirects::restore_removed( $removed ) );
+		$this->assertCount( 1, self::stored(), 'a path that has a rule again is left alone' );
+	}
+
+	public function test_a_stale_rule_someone_changed_is_not_removed(): void {
+		update_option( 'iato_mcp_redirects', [ [ 'from_url' => '/p/', 'to_url' => '/changed/', 'type' => 301 ] ] );
+		$this->assertSame( [], IATO_MCP_Redirects::remove_stale( [ [ 'handler' => 'fallback', 'from' => '/p/', 'to' => '/x/p/', 'type' => 301 ] ] ) );
+		$this->assertCount( 1, self::stored() );
+	}
 }

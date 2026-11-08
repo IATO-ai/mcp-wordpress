@@ -37,6 +37,12 @@ final class IATO_MCP_Permalinks {
 	/** The structure tags WordPress recognises. */
 	public const TAGS = [ '%year%', '%monthnum%', '%day%', '%hour%', '%minute%', '%second%', '%post_id%', '%postname%', '%category%', '%author%' ];
 
+	/**
+	 * Where WordPress's own URLs start. A category or tag base here would take them
+	 * over: those rules come first.
+	 */
+	public const RESERVED_BASES = [ 'page', 'feed', 'comments', 'comment-page', 'search', 'author', 'type', 'attachment', 'embed', 'trackback', 'rdf', 'rss', 'rss2', 'atom', 'wp-json', 'wp-admin', 'wp-content', 'wp-includes', 'wp-sitemap' ];
+
 	/** Published posts beyond this are too many to check in one request. */
 	public const MAX_POSTS = 10000;
 
@@ -94,6 +100,10 @@ final class IATO_MCP_Permalinks {
 		}
 		if ( ! preg_match( '#^[a-z0-9-]+(/[a-z0-9-]+)*$#', $base ) ) {
 			return self::invalid( "{$key} may hold only lowercase letters, numbers, hyphens and single slashes." );
+		}
+		$first = explode( '/', $base )[0];
+		if ( in_array( $first, self::RESERVED_BASES, true ) || ctype_digit( $first ) ) {
+			return self::invalid( sprintf( '%1$s cannot start with "%2$s": WordPress uses that for its own URLs (%3$s), which the archives would take over.', $key, $first, ctype_digit( $first ) ? 'date archives' : 'pagination, feeds, search and author archives' ) );
 		}
 		return '/' . $base;
 	}
@@ -164,6 +174,12 @@ final class IATO_MCP_Permalinks {
 		$tag      = trim( $after['tag_base'], '/' ) ?: 'tag';
 		if ( $category === $tag ) {
 			return self::invalid( sprintf( 'category_base and tag_base would both be "%s", so category and tag archives would share URLs.', $category ) );
+		}
+		$front = trim( self::front( $after['permalink_structure'] ), '/' );
+		foreach ( [ 'category_base' => $category, 'tag_base' => $tag ] as $key => $base ) {
+			if ( '' !== $front && $base === $front ) {
+				return self::invalid( sprintf( '%1$s and the permalink structure would both start with /%2$s/, so archives and posts would share URLs.', $key, $front ) );
+			}
 		}
 		return [ 'before' => $before, 'after' => $after, 'changes' => ! self::same( $before, $after ) ];
 	}
@@ -417,11 +433,18 @@ final class IATO_MCP_Permalinks {
 		if ( null !== $clash ) {
 			$warnings[] = $clash;
 		}
+		// A redirect already on a URL that becomes live would take visitors away from it:
+		// one an earlier change left (pointing back here) goes, any other is a refusal.
+		$on_new = IATO_MCP_Redirects::rules_on_new_urls( $changes, (string) parse_url( home_url( '/' ), PHP_URL_HOST ) );
+		if ( [] !== $on_new['blocking'] ) {
+			return IATO_MCP_Redirects::blocking_refusal( $on_new['blocking'] );
+		}
 		$plan = $redirect ? self::plan_redirects( $changes, $new ) : null;
 		if ( null !== $plan && null !== $plan['no_room'] ) {
 			$warnings[] = $plan['no_room'];
 		}
 		return [
+			'stale'    => $on_new['stale'],
 			'before'   => $before,
 			'after'    => $after,
 			'tracked'  => $tracked,
@@ -454,7 +477,11 @@ final class IATO_MCP_Permalinks {
 			static fn( string $path ): bool => '' === rtrim( $path, '/' ) || isset( $new_paths[ rtrim( $path, '/' ) ] ) || isset( $pages[ rtrim( $path, '/' ) ] )
 		);
 		$handler = IATO_MCP_Redirects::store()->handler();
-		$kept    = IATO_MCP_Redirects::without_existing( $plan['planned'], $handler );
+		// Past the limit none are made, so there is no need to look each one up.
+		if ( count( $plan['planned'] ) > IATO_MCP_Redirects::MAX_PER_CHANGE ) {
+			return [ 'handler' => $handler, 'planned' => [], 'skipped' => $plan['skipped'], 'no_room' => IATO_MCP_Redirects::no_room( $handler, count( $plan['planned'] ) ) ];
+		}
+		$kept = IATO_MCP_Redirects::without_existing( $plan['planned'], $handler );
 		return [
 			'handler' => $handler,
 			'planned' => $kept['planned'],
@@ -472,6 +499,10 @@ final class IATO_MCP_Permalinks {
 		if ( null !== $move['plan'] ) {
 			$out += self::redirect_report( $move['plan'], null === $move['plan']['no_room'] ? $move['plan']['planned'] : [], null, 'redirects_planned' );
 		}
+		if ( [] !== $move['stale'] ) {
+			$out['redirects_to_remove_count'] = count( $move['stale'] );
+			$out['redirects_to_remove']       = array_slice( $move['stale'], 0, self::SKIPPED_LIST_LIMIT );
+		}
 		return $out;
 	}
 
@@ -485,7 +516,9 @@ final class IATO_MCP_Permalinks {
 	}
 
 	/**
-	 * Make the change, record it, then create the redirects.
+	 * Make the change, record it at once, then the redirects. The receipt holds the
+	 * redirects worked out in prepare(), so a request cut short after the change still
+	 * leaves one whose rollback finds whatever was made.
 	 *
 	 * @return array{receipt:array,report:array,warnings:string[]}
 	 */
@@ -494,36 +527,24 @@ final class IATO_MCP_Permalinks {
 		// that stops waiting must not stop the request between them.
 		ignore_user_abort( true );
 		$warnings = $move['warnings'];
-		self::apply( $move['before'], $move['after'] );
-
-		$live    = self::links( $move['tracked'] );
-		$changes = self::changes( $move['old'], $live );
-		$differ  = 0;
-		foreach ( $live as $key => $url ) {
-			if ( ( $move['new'][ $key ] ?? null ) !== $url ) {
-				$differ++;
-			}
-		}
-		if ( $differ > 0 ) {
-			$warnings[] = sprintf( 'WordPress now gives %d URL(s) other than the preview showed; the redirects follow the URLs it gives now.', $differ );
-		}
-
-		$plan  = null;
-		$rules = [];
-		if ( $move['redirect'] ) {
-			$plan = self::plan_redirects( $changes, $live );
-			if ( null === $plan['no_room'] ) {
-				$rules = $plan['planned'];
-			} elseif ( ! in_array( $plan['no_room'], $warnings, true ) ) {
-				$warnings[] = $plan['no_room'];
-			}
-		}
+		$plan     = $move['plan'];
+		$rules    = null !== $plan && null === $plan['no_room'] ? $plan['planned'] : [];
 		$recorded = array_map(
 			static fn( array $r ): array => [ 'handler' => $plan['handler'], 'from' => $r['from'], 'to' => $r['to'], 'type' => IATO_MCP_Redirects::TYPE ],
 			$rules
 		);
-		$receipt  = IATO_MCP_Change_Receipt::record( null, self::RECEIPT, self::FIELD, $move['before'], $move['after'] + [ 'redirects' => $recorded ] );
 
+		self::apply( $move['before'], $move['after'] );
+		$receipt = IATO_MCP_Change_Receipt::record(
+			null,
+			self::RECEIPT,
+			self::FIELD,
+			$move['before'],
+			$move['after'] + [ 'redirects' => $recorded ] + ( [] !== $move['stale'] ? [ 'removed_redirects' => $move['stale'] ] : [] )
+		);
+
+		// First the rules an earlier change left on the new URLs, then the new ones.
+		$removed = IATO_MCP_Redirects::remove_stale( $move['stale'] );
 		$created = [];
 		if ( [] !== $rules ) {
 			$made    = IATO_MCP_Redirects::create_all( $rules, $plan['handler'] );
@@ -537,12 +558,29 @@ final class IATO_MCP_Permalinks {
 			}
 		}
 
-		$report = [
+		// The check that the preview was right comes last: it reads every URL again.
+		$live   = self::links( $move['tracked'] );
+		$differ = [];
+		foreach ( $live as $key => $url ) {
+			if ( ( $move['new'][ $key ] ?? null ) !== $url ) {
+				$differ[] = $key;
+			}
+		}
+		if ( [] !== $differ ) {
+			$warnings[] = sprintf( 'WordPress now gives %1$d URL(s) other than the preview showed (%2$s), and their old URLs were not redirected.', count( $differ ), implode( ', ', array_slice( $differ, 0, 10 ) ) );
+		}
+
+		$changes = self::changes( $move['old'], $live );
+		$report  = [
 			'moved_count' => count( $changes ),
 			'url_changes' => array_slice( $changes, 0, self::URL_LIST_LIMIT ),
 		];
 		if ( null !== $plan ) {
 			$report += self::redirect_report( $plan, $created, $receipt['change_id'] ?? null, 'redirects_created' );
+		}
+		if ( [] !== $removed ) {
+			$report['redirects_removed_count'] = count( $removed );
+			$report['redirects_removed']       = array_slice( $removed, 0, self::SKIPPED_LIST_LIMIT );
 		}
 		return [ 'receipt' => $receipt, 'report' => $report, 'warnings' => $warnings ];
 	}
@@ -644,6 +682,11 @@ final class IATO_MCP_Permalinks {
 		$note = IATO_MCP_Redirects::removal_note( $removal );
 		if ( null !== $note ) {
 			IATO_MCP_Rollback::warn( $note );
+		}
+		$after   = IATO_MCP_Rollback_Conflict::json_array( $receipt['after_value'] ?? null );
+		$restore = IATO_MCP_Redirects::restore_removed( is_array( $after['removed_redirects'] ?? null ) ? $after['removed_redirects'] : [] );
+		if ( null !== $restore ) {
+			IATO_MCP_Rollback::warn( $restore );
 		}
 		return true;
 	}

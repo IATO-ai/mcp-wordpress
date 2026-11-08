@@ -77,6 +77,22 @@ final class PermalinkSettingsTest extends TestCase {
 		}
 	}
 
+	public function test_a_base_cannot_take_over_wordpress_own_urls(): void {
+		foreach ( [ 'page', 'author', 'feed', 'search/x', 'wp-json', '2024' ] as $base ) {
+			$r = IATO_MCP_Permalinks::check_base( 'category_base', $base );
+			$this->assertInstanceOf( WP_Error::class, $r, $base );
+			$this->assertStringContainsString( 'WordPress uses that', $r->get_error_message() );
+		}
+		$this->assertSame( '/pages', IATO_MCP_Permalinks::check_base( 'category_base', 'pages' ), 'a word that only starts like one is fine' );
+	}
+
+	public function test_a_base_cannot_be_the_start_of_the_post_urls(): void {
+		$r = IATO_MCP_Permalinks::plan( [ 'permalink_structure' => '/blog/%postname%/', 'category_base' => 'blog' ] );
+		$this->assertSame( 'invalid_permalink_setting', $r->get_error_code() );
+		$this->assertStringContainsString( '/blog/', $r->get_error_message() );
+		$this->assertTrue( IATO_MCP_Permalinks::plan( [ 'permalink_structure' => '/blog/%postname%/', 'category_base' => 'blog/topics' ] )['changes'] );
+	}
+
 	public function test_nothing_named_is_no_plan(): void {
 		$this->assertNull( IATO_MCP_Permalinks::plan( [ 'title' => 'x', 'confirm_url_break' => true ] ) );
 	}

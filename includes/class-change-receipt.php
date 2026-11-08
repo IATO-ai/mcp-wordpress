@@ -355,7 +355,8 @@ class IATO_MCP_Change_Receipt {
 					$req = ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
 					// 1.20.0: the rollback removes the redirects the move created, which is
 					// update_redirect's capability.
-					if ( [] !== ( self::decode_json_field( $receipt['after_value'] ?? null )['redirects'] ?? [] ) ) {
+					$after = self::decode_json_field( $receipt['after_value'] ?? null );
+					if ( [] !== ( $after['redirects'] ?? [] ) || [] !== ( $after['removed_redirects'] ?? [] ) ) {
 						$req['also'][] = [ 'cap' => 'manage_options', 'object_id' => null ];
 					}
 					return $req;
