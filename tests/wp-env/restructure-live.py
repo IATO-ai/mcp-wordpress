@@ -395,6 +395,7 @@ def permalinks():
         call('rollback', {'change_id': receipt_of(a)})
         php('$r=get_option("iato_mcp_redirects",[]);update_option("iato_mcp_redirects",array_values(array_filter($r,fn($x)=>!str_starts_with($x["from_url"]??"","/restructure-live-filler-"))),false);')
     record('the site is back to its own structure', wp('option', 'get', 'permalink_structure') == original)
+    wp('post', 'delete', str(blog['id']), '--force')  # section E makes its own page at /blog/
 
 
 # ── D. Plugins ─────────────────────────────────────────────────────────────────
@@ -470,7 +471,7 @@ def pro_posts_widget():
         record('a page called blog can be made for the test (is there one already?)', False)
         return
     tree = [{'id': 'rlsec01', 'elType': 'container', 'settings': {}, 'elements': [
-        {'id': 'rlposts', 'elType': 'widget', 'widgetType': 'posts', 'settings': {'posts_per_page': 1, 'pagination_type': 'numbers', 'posts_post_type': 'post'}, 'elements': []}]}]
+        {'id': 'rlposts', 'elType': 'widget', 'widgetType': 'posts', 'settings': {'_skin': 'classic', 'classic_posts_per_page': 1, 'pagination_type': 'numbers', 'posts_post_type': 'post'}, 'elements': []}]}]
     w = call('update_elementor_data', {'id': blog['id'], 'elementor_data': json.dumps(tree)})
     record('the Posts widget page is saved', not w.get('isError'), w)
     a = call('update_site_settings', {'permalink_structure': '/blog/%postname%/', 'confirm_url_break': True})
