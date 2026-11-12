@@ -53,7 +53,7 @@ class IATO_MCP_Receipt_Retention {
 	public const LAST_RUN_OPTION = 'iato_mcp_receipt_prune_last';
 
 	/** Receipt types whose before_value holds a full page copy. */
-	public const TYPES = [ 'elementor_widget', 'custom_css' ];
+	public const TYPES = [ 'elementor_widget', 'custom_css', 'page_css', 'page_script' ];
 
 	private static bool $overdue_checked = false;
 

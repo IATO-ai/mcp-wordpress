@@ -33,11 +33,15 @@ class IATO_MCP_Sanitize_Report {
 	 * the input with a different case is the same tag (kses rewrites viewBox to
 	 * viewbox).
 	 *
-	 * @return array{tags:array<string,int>,attributes:array<string,array<string,int>>}
+	 * `styles` (1.21.0): the declarations of each tag's style attributes, as
+	 * "property:value", so that one kses dropped can be named.
+	 *
+	 * @return array{tags:array<string,int>,attributes:array<string,array<string,int>>,styles:array<string,array<string,int>>}
 	 */
 	public static function inventory( string $html ): array {
 		$tags       = [];
 		$attributes = [];
+		$styles     = [];
 		$length     = strlen( $html );
 		$at         = 0;
 		while ( false !== ( $at = strpos( $html, '<', $at ) ) ) {
@@ -53,14 +57,18 @@ class IATO_MCP_Sanitize_Report {
 				++$at; // a closing tag, a declaration or a stray `<`
 				continue;
 			}
-			$name = strtolower( $match[1] );
-			$end  = self::read_attributes( $html, $at + strlen( $match[0] ), $length, $found );
+			$name  = strtolower( $match[1] );
+			$style = null;
+			$end   = self::read_attributes( $html, $at + strlen( $match[0] ), $length, $found, $style );
 			if ( null === $end ) {
 				break; // the tag never closes, so it is not one
 			}
 			$tags[ $name ] = ( $tags[ $name ] ?? 0 ) + 1;
 			foreach ( $found as $attribute ) {
 				$attributes[ $name ][ $attribute ] = ( $attributes[ $name ][ $attribute ] ?? 0 ) + 1;
+			}
+			foreach ( self::declarations( (string) $style ) as $declaration ) {
+				$styles[ $name ][ $declaration ] = ( $styles[ $name ][ $declaration ] ?? 0 ) + 1;
 			}
 			$at = $end;
 			if ( in_array( $name, self::RAW_TEXT, true ) ) {
@@ -71,16 +79,62 @@ class IATO_MCP_Sanitize_Report {
 				$at = $closer;
 			}
 		}
-		return [ 'tags' => $tags, 'attributes' => $attributes ];
+		return [ 'tags' => $tags, 'attributes' => $attributes, 'styles' => $styles ];
+	}
+
+	/**
+	 * A style attribute's declarations, each "property:value" with the property
+	 * lowercased and the spacing around it removed. Split on `;` as WordPress's
+	 * safecss_filter_attr() does, entities decoded first, since kses re-encodes them.
+	 *
+	 * @return string[]
+	 */
+	public static function declarations( string $style ): array {
+		$out = [];
+		foreach ( explode( ';', html_entity_decode( $style, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) as $part ) {
+			$part = trim( (string) preg_replace( '/[\t\r\n]+/', ' ', $part ) );
+			if ( '' === $part ) {
+				continue;
+			}
+			$colon = strpos( $part, ':' );
+			$out[] = false === $colon ? $part : strtolower( trim( substr( $part, 0, $colon ) ) ) . ':' . trim( substr( $part, $colon + 1 ) );
+		}
+		return $out;
+	}
+
+	/**
+	 * Declarations the output's style attributes have fewer of, named with their tag:
+	 * "style on <div>: color:rgb(1,2,3)". A tag that was removed takes its declarations
+	 * with it, and the tag says so.
+	 *
+	 * @return string[]
+	 */
+	public static function removed_declarations( string $before, string $after ): array {
+		$was = self::inventory( $before );
+		$now = self::inventory( $after );
+		$out = [];
+		foreach ( $was['styles'] as $tag => $declarations ) {
+			if ( empty( $now['tags'][ $tag ] ) ) {
+				continue;
+			}
+			$tag_loss = (int) $was['tags'][ $tag ] - (int) $now['tags'][ $tag ];
+			foreach ( $declarations as $declaration => $count ) {
+				if ( $count - ( $now['styles'][ $tag ][ $declaration ] ?? 0 ) > $tag_loss ) {
+					$out[] = "style on <{$tag}>: {$declaration}";
+				}
+			}
+		}
+		return $out;
 	}
 
 	/**
 	 * Read a tag's attributes from $at to the closing `>`, respecting quotes.
 	 *
-	 * @param string[] $found Filled with the lowercased attribute names.
+	 * @param string[]    $found Filled with the lowercased attribute names.
+	 * @param string|null $style Filled with the style attribute's value, when there is one.
 	 * @return int|null The offset after `>`; null when the tag never closes.
 	 */
-	private static function read_attributes( string $html, int $at, int $length, ?array &$found ): ?int {
+	private static function read_attributes( string $html, int $at, int $length, ?array &$found, ?string &$style = null ): ?int {
 		$found = [];
 		while ( $at < $length ) {
 			$at += strspn( $html, " \t\r\n\f/", $at );
@@ -95,9 +149,10 @@ class IATO_MCP_Sanitize_Report {
 				++$at; // a stray `=`
 				continue;
 			}
-			$found[] = strtolower( substr( $html, $at, $name_length ) );
-			$at     += $name_length;
-			$at     += strspn( $html, " \t\r\n\f", $at );
+			$attribute = strtolower( substr( $html, $at, $name_length ) );
+			$found[]   = $attribute;
+			$at       += $name_length;
+			$at       += strspn( $html, " \t\r\n\f", $at );
 			if ( $at >= $length || '=' !== $html[ $at ] ) {
 				continue;
 			}
@@ -111,9 +166,15 @@ class IATO_MCP_Sanitize_Report {
 				if ( false === $close ) {
 					return null;
 				}
-				$at = $close + 1;
+				$value = substr( $html, $at + 1, $close - $at - 1 );
+				$at    = $close + 1;
 			} else {
-				$at += strcspn( $html, " \t\r\n\f>", $at );
+				$span  = strcspn( $html, " \t\r\n\f>", $at );
+				$value = substr( $html, $at, $span );
+				$at   += $span;
+			}
+			if ( 'style' === $attribute && null === $style ) {
+				$style = $value; // the first one counts, as in a browser
 			}
 		}
 		return null;
@@ -159,7 +220,13 @@ class IATO_MCP_Sanitize_Report {
 	 */
 	public static function entry( string $path, string $rule, string $before, string $after, array $extra = [] ): array {
 		$removed = self::removed( $before, $after );
-		$entry   = [ 'path' => $path, 'rule' => $rule ] + $removed + $extra;
+		// 1.21.0: declarations kses took out of style attributes, next to the CSS
+		// a style block lost.
+		$declarations = 'html' === $rule ? self::removed_declarations( $before, $after ) : [];
+		if ( [] !== $declarations ) {
+			$extra['removed_css'] = array_values( array_merge( (array) ( $extra['removed_css'] ?? [] ), $declarations ) );
+		}
+		$entry = [ 'path' => $path, 'rule' => $rule ] + $removed + $extra;
 
 		$notes  = [];
 		$policy = (string) ( $extra['inline_markup'] ?? '' );
@@ -172,10 +239,29 @@ class IATO_MCP_Sanitize_Report {
 		if ( isset( self::POLICY_NOTES[ $policy ] ) ) {
 			$notes[] = self::POLICY_NOTES[ $policy ];
 		}
+		// 1.21.0: where a page's CSS can go instead. set_page_css ships switched off, so
+		// a client cannot see it in tools/list until an administrator turns it on.
+		$style_lost = in_array( 'style', $removed['removed_tags'], true )
+			|| [] !== preg_grep( '/^whole <style> block/', (array) ( $extra['removed_css'] ?? [] ) );
+		if ( 'html' === $rule && $style_lost ) {
+			$notes[] = self::page_css_enabled()
+				? 'To give this page its own CSS, send it to set_page_css instead of a <style> block.'
+				: 'set_page_css gives one page its own CSS, outside the widget. It is switched off on this site: an administrator turns it on under Settings > IATO MCP > Tools (Page assets).';
+		}
+		// Page scripts are the riskiest feature: named only where an administrator has
+		// already turned both the tool and the setting on.
+		if ( 'html' === $rule && in_array( 'script', $removed['removed_tags'], true ) && class_exists( 'IATO_MCP_Page_Script' ) && IATO_MCP_Page_Script::active() ) {
+			$notes[] = 'Scripts never run inside a widget. set_page_script stores one for the page, which runs only after an administrator approves it in wp-admin.';
+		}
 		if ( [] !== $notes ) {
 			$entry['note'] = implode( ' ', $notes );
 		}
 		return $entry;
+	}
+
+	/** Is set_page_css switched on? False when the settings are not loaded. */
+	private static function page_css_enabled(): bool {
+		return class_exists( 'IATO_MCP_Settings' ) && method_exists( 'IATO_MCP_Settings', 'is_tool_enabled' ) && IATO_MCP_Settings::is_tool_enabled( 'set_page_css' );
 	}
 
 	/** Does the text of a style or script element in $before still show in $after? For the note only. */
@@ -199,7 +285,7 @@ class IATO_MCP_Sanitize_Report {
 			return null;
 		}
 		$entry = self::entry( $path, $rule, $before, $after, $extra );
-		return [] === $entry['removed_tags'] && [] === $entry['removed_attributes'] ? null : $entry;
+		return [] === $entry['removed_tags'] && [] === $entry['removed_attributes'] && empty( $entry['removed_css'] ) ? null : $entry;
 	}
 
 	/** Cap a report, in the form sanitized_paths uses. */
@@ -224,6 +310,22 @@ class IATO_MCP_Sanitize_Report {
 				$key = preg_replace( '#/value$#', '', (string) ( $entry['path'] ?? '' ) );
 				if ( ! isset( $out[ $key ] ) ) {
 					$out[ $key ] = $entry;
+					continue;
+				}
+				// 1.21.0: a second pass over the same value (Elementor's own kses for a user
+				// without unfiltered_html) can remove more than the first; it used to be
+				// dropped, so the report said nothing was removed.
+				$added = [];
+				foreach ( [ 'removed_tags', 'removed_attributes', 'removed_css' ] as $list ) {
+					$new = array_values( array_diff( (array) ( $entry[ $list ] ?? [] ), (array) ( $out[ $key ][ $list ] ?? [] ) ) );
+					if ( [] !== $new ) {
+						$out[ $key ][ $list ] = array_values( array_merge( (array) ( $out[ $key ][ $list ] ?? [] ), $new ) );
+						$added                = array_merge( $added, $new );
+					}
+				}
+				if ( [] !== $added && 'elementor' === ( $entry['source'] ?? '' ) ) {
+					$out[ $key ]['source'] = 'elementor';
+					$out[ $key ]['note']   = trim( ( $out[ $key ]['note'] ?? '' ) . ' Elementor\'s own save removed: ' . implode( ', ', $added ) . '.' );
 				}
 			}
 		}

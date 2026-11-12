@@ -51,10 +51,14 @@ final class IATO_MCP_Custom_CSS {
 	 * element or run script. Empty when there is nothing wrong, which includes CSS that
 	 * is only comments.
 	 *
+	 * $syntax_ok: the CSS is printed as it is, where a browser reads it as text, so a
+	 * @property syntax descriptor may hold `<` (page CSS, 1.21.0). Additional CSS keeps
+	 * the old rule: WordPress prints it through strip_tags() below 7.1.
+	 *
 	 * @return string[]
 	 */
-	public static function refused_parts( string $css ): array {
-		return '' === trim( $css ) ? [] : IATO_MCP_Inline_Markup::sanitize_css( $css )['removed'];
+	public static function refused_parts( string $css, bool $syntax_ok = false ): array {
+		return '' === trim( $css ) ? [] : IATO_MCP_Inline_Markup::sanitize_css( $css, $syntax_ok )['removed'];
 	}
 
 	/**

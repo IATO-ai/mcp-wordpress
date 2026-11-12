@@ -170,7 +170,9 @@ class IATO_MCP_Elementor_Sanitizer {
 	 * not stay on the page as text, then wp_kses_post, always last (1.16.0).
 	 */
 	public static function clean_markup( string $html ): string {
-		return (string) wp_kses_post( IATO_MCP_Inline_Markup::remove_style_and_script( $html ) );
+		// 1.21.0: WordPress's post list with gaps filled (ARIA, readonly, disabled,
+		// <input>), never narrower: IATO_MCP_Inline_Markup::markup_allowlist().
+		return (string) wp_kses( IATO_MCP_Inline_Markup::remove_style_and_script( $html ), IATO_MCP_Inline_Markup::markup_allowlist() );
 	}
 
 	public static function is_url_key( string $key ): bool {

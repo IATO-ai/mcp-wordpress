@@ -2188,6 +2188,141 @@ class IATO_MCP_Elementor_Adapter {
 		return $out;
 	}
 
+	// ── What was stored, and smaller responses (1.21.0) ─────────────────────
+
+	/** A value's size and SHA-256: of the string itself, or of its JSON for anything else. */
+	public static function value_digest( mixed $value ): array {
+		$text = is_string( $value ) ? $value : (string) wp_json_encode( $value );
+		return [ 'bytes' => strlen( $text ), 'sha256' => hash( 'sha256', $text ) ];
+	}
+
+	/** The same value, read the same way get_elementor_widget would return it? */
+	private static function same_stored_value( mixed $a, mixed $b ): bool {
+		return $a === $b || ( ! is_string( $a ) && ! is_string( $b ) && wp_json_encode( $a ) === wp_json_encode( $b ) );
+	}
+
+	/**
+	 * Say for each op that set a value whether the tree as stored holds what was
+	 * sent (`stored_matches_input`), and when it does not, what it holds instead:
+	 * `stored_bytes`, `stored_sha256` and `stored_value`. The sanitising pass, or
+	 * Elementor's own save, can change a value on the way in, and `value` is what
+	 * the client sent. An op whose target cannot be read back is left as it is.
+	 *
+	 * @param array      $applied The ops, each with a JSON pointer `path` into the tree.
+	 * @param array|null $tree    The tree as stored (or, for a dry run, as it would be).
+	 */
+	public static function annotate_stored( array $applied, ?array $tree ): array {
+		if ( null === $tree ) {
+			return $applied;
+		}
+		foreach ( $applied as $i => $op ) {
+			if ( ! is_array( $op ) || ! array_key_exists( 'value', $op ) || ! in_array( $op['op'] ?? '', [ 'add', 'replace' ], true ) ) {
+				continue;
+			}
+			$stored = self::pointer_get( $tree, (string) ( $op['path'] ?? '' ) );
+			if ( is_wp_error( $stored ) ) {
+				continue;
+			}
+			$matches                              = self::same_stored_value( $op['value'], $stored );
+			$applied[ $i ]['stored_matches_input'] = $matches;
+			if ( ! $matches ) {
+				$digest                         = self::value_digest( $stored );
+				$applied[ $i ]['stored_bytes']  = $digest['bytes'];
+				$applied[ $i ]['stored_sha256'] = $digest['sha256'];
+				$applied[ $i ]['stored_value']  = $stored;
+			}
+		}
+		return $applied;
+	}
+
+	/**
+	 * Atomic ops already carry the stored value in `value`: compare it with what the
+	 * patch sent for that key. A plain value Elementor wrapped in its typed envelope
+	 * is stored differently, and says so.
+	 */
+	public static function annotate_stored_atomic( array $applied, array $settings_patch ): array {
+		foreach ( $applied as $i => $op ) {
+			if ( ! is_array( $op ) || ! array_key_exists( 'value', $op ) ) {
+				continue;
+			}
+			$key = str_replace( [ '~1', '~0' ], [ '/', '~' ], (string) substr( (string) strrchr( (string) ( $op['path'] ?? '' ), '/' ), 1 ) );
+			if ( ! array_key_exists( $key, $settings_patch ) ) {
+				continue;
+			}
+			$matches                              = self::same_stored_value( $settings_patch[ $key ], $op['value'] );
+			$applied[ $i ]['stored_matches_input'] = $matches;
+			if ( ! $matches ) {
+				$digest                         = self::value_digest( $op['value'] );
+				$applied[ $i ]['stored_bytes']  = $digest['bytes'];
+				$applied[ $i ]['stored_sha256'] = $digest['sha256'];
+			}
+		}
+		return $applied;
+	}
+
+	/** The tree a dry run would store: the sanitising pass's output, unless it does not run. */
+	public static function sanitized_tree( array $new_elements, ?array $stored_elements ): array {
+		$new_elements = self::force_arrays( $new_elements );
+		if ( IATO_MCP_Auth::unfiltered_html_allowed() ) {
+			return $new_elements;
+		}
+		return IATO_MCP_Elementor_Sanitizer::diff_tree( $new_elements, $stored_elements )['elements'];
+	}
+
+	/** The `return` argument of the Elementor write tools: 'full' (the default), 'minimal', or a refusal. */
+	public static function return_mode( array $args ): string|WP_Error {
+		$mode = $args['return'] ?? 'full';
+		if ( ! in_array( $mode, [ 'full', 'minimal' ], true ) ) {
+			return new WP_Error( 'invalid_return', 'return must be "full" or "minimal". Nothing was written.' );
+		}
+		return $mode;
+	}
+
+	/**
+	 * With `return: "minimal"`, values become their size and hash: each op's `value`,
+	 * `previous_value` and `stored_value`, an atomic dry run's `would_store`, a dry run's
+	 * planned inherited values; inherited receipts become slim. Everything else stays,
+	 * the sanitising report, the receipt and the cache object included.
+	 */
+	public static function shape_response( array $response, string $mode ): array {
+		if ( 'minimal' !== $mode ) {
+			return $response;
+		}
+		if ( isset( $response['applied_patch'] ) && is_array( $response['applied_patch'] ) ) {
+			foreach ( $response['applied_patch'] as $i => $op ) {
+				if ( ! is_array( $op ) ) {
+					continue;
+				}
+				foreach ( [ 'value' => 'value', 'previous_value' => 'previous' ] as $key => $prefix ) {
+					if ( array_key_exists( $key, $op ) ) {
+						$digest                           = self::value_digest( $op[ $key ] );
+						$op[ $prefix . '_bytes' ]         = $digest['bytes'];
+						$op[ $prefix . '_sha256' ]        = $digest['sha256'];
+						unset( $op[ $key ] );
+					}
+				}
+				unset( $op['stored_value'] );
+				$response['applied_patch'][ $i ] = $op;
+			}
+		}
+		if ( isset( $response['would_store'] ) && is_array( $response['would_store'] ) ) {
+			$response['would_store'] = array_map( [ self::class, 'value_digest' ], $response['would_store'] );
+		}
+		if ( isset( $response['inherit_planned'] ) && is_array( $response['inherit_planned'] ) ) {
+			foreach ( $response['inherit_planned'] as $i => $step ) {
+				foreach ( [ 'before', 'after' ] as $key ) {
+					if ( is_array( $step ) && array_key_exists( $key, $step ) ) {
+						$response['inherit_planned'][ $i ][ $key ] = self::value_digest( $step[ $key ] );
+					}
+				}
+			}
+		}
+		if ( isset( $response['change_receipts'] ) && is_array( $response['change_receipts'] ) ) {
+			$response['change_receipts'] = array_map( [ 'IATO_MCP_Change_Receipt', 'slim' ], $response['change_receipts'] );
+		}
+		return $response;
+	}
+
 	/** Dry-run counterpart: what the sanitising pass would change. Empty when nothing. */
 	public static function sanitize_preview( array $new_elements, ?array $stored_elements ): array {
 		if ( IATO_MCP_Auth::unfiltered_html_allowed() ) {
@@ -2298,13 +2433,17 @@ class IATO_MCP_Elementor_Adapter {
 			}
 			$unavailable = IATO_MCP_Elementor_Atomic_Writer::unavailable( $found['element'] );
 			if ( null === $unavailable ) {
-				return IATO_MCP_Elementor_Atomic_Writer::update_widget(
+				$result = IATO_MCP_Elementor_Atomic_Writer::update_widget(
 					$post_id,
 					$widget_id,
 					$found['path'],
 					$settings_patch,
 					[ 'dry_run' => $dry_run, 'echo_previous' => null !== $if_revision ]
 				);
+				if ( is_array( $result ) && isset( $result['applied_patch'] ) ) {
+					$result['applied_patch'] = self::annotate_stored_atomic( (array) $result['applied_patch'], $settings_patch );
+				}
+				return $result;
 			}
 			$problems = IATO_MCP_Elementor_Atomic::patch_problems( $found['element'], $settings_patch );
 			if ( $problems['plain_keys'] || $problems['unknown_keys'] ) {
@@ -2374,7 +2513,7 @@ class IATO_MCP_Elementor_Adapter {
 				'widget_id'        => $widget_id,
 				'dry_run'          => true,
 				'current_revision' => null,
-				'applied_patch'    => $applied_patch,
+				'applied_patch'    => self::annotate_stored( $applied_patch, self::sanitized_tree( $elements, $stored_elements ) ),
 			] + self::classic_markers( $atomic_target ) + self::preview_report( $elements, $stored_elements );
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
@@ -2397,7 +2536,8 @@ class IATO_MCP_Elementor_Adapter {
 			'post_id'             => $post_id,
 			'widget_id'           => $widget_id,
 			'current_revision'    => $pipeline['current_revision'],
-			'applied_patch'       => $applied_patch,
+			// 1.21.0: read back, so the response says what was stored, not only what was sent.
+			'applied_patch'       => self::annotate_stored( $applied_patch, self::stored_elements( $post_id ) ),
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
 		] + self::classic_markers( $atomic_target ) + self::pipeline_report( $pipeline );

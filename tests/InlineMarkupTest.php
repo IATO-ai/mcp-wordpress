@@ -37,15 +37,56 @@ final class InlineMarkupTest extends TestCase {
 	// ── The allowlist ─────────────────────────────────────────────────────
 
 	public function test_only_the_elements_asked_for(): void {
-		$this->assertSame( [ 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'title' ], array_keys( IATO_MCP_Inline_Markup::svg_allowlist() ) );
+		$this->assertSame(
+			[ 'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'title', 'text', 'tspan', 'defs', 'lineargradient', 'radialgradient', 'stop', 'marker', 'clippath', 'use' ],
+			array_keys( IATO_MCP_Inline_Markup::svg_allowlist() )
+		);
+		foreach ( [ 'foreignobject', 'script', 'animate', 'set', 'image', 'feimage', 'animatetransform', 'animatemotion' ] as $never ) {
+			$this->assertArrayNotHasKey( $never, IATO_MCP_Inline_Markup::svg_allowlist() );
+		}
 	}
 
 	public function test_no_scripting_or_url_attribute_is_allowed_anywhere(): void {
 		foreach ( IATO_MCP_Inline_Markup::svg_allowlist() as $element => $attributes ) {
-			foreach ( array_keys( $attributes ) as $attribute ) {
+			foreach ( $attributes as $attribute => $rule ) {
 				$this->assertSame( strtolower( (string) $attribute ), (string) $attribute, "{$element}: wp_kses compares lowercased names" );
 				$this->assertStringStartsNotWith( 'on', (string) $attribute, $element );
-				$this->assertNotContains( $attribute, [ 'href', 'xlink:href', 'src', 'action', 'formaction', 'begin', 'to', 'from', 'values', 'attributename' ], $element );
+				$this->assertNotContains( $attribute, [ 'xlink:href', 'src', 'action', 'formaction', 'begin', 'to', 'from', 'values', 'attributename' ], $element );
+				if ( 'href' === $attribute ) {
+					$this->assertSame( 'use', $element, 'href only on use' );
+					$this->assertSame( [ 'value_callback' => [ IATO_MCP_Inline_Markup::class, 'is_fragment' ] ], $rule, 'and only as #id' );
+				}
+			}
+		}
+	}
+
+	/** @return array<string,array{0:mixed,1:bool}> */
+	public static function use_targets(): array {
+		return [
+			'an id'               => [ '#g1', true ],
+			'an id with dots'     => [ '#icon.arrow-1', true ],
+			'spaces around'       => [ ' #a ', true ],
+			'another file'        => [ 'sprite.svg#a', false ],
+			'another site'        => [ 'https://example.com/x.svg#a', false ],
+			'protocol relative'   => [ '//example.com/x.svg#a', false ],
+			'javascript'          => [ 'javascript:alert(1)', false ],
+			'data'                => [ 'data:image/svg+xml,<svg/>#a', false ],
+			'a bare hash'         => [ '#', false ],
+			'starts with a digit' => [ '#1a', true ],
+			'a quote'             => [ '#a"b', false ],
+			'not text'            => [ [ '#a' ], false ],
+		];
+	}
+
+	#[DataProvider( 'use_targets' )]
+	public function test_use_points_only_inside_the_document( mixed $href, bool $allowed ): void {
+		$this->assertSame( $allowed, IATO_MCP_Inline_Markup::is_fragment( $href ) );
+	}
+
+	public function test_every_svg_element_takes_the_aria_attributes_and_the_markers(): void {
+		foreach ( IATO_MCP_Inline_Markup::svg_allowlist() as $element => $attributes ) {
+			foreach ( [ 'aria-hidden', 'aria-label', 'aria-pressed', 'marker-end', 'clip-path', 'text-anchor' ] as $attribute ) {
+				$this->assertArrayHasKey( $attribute, $attributes, $element );
 			}
 		}
 	}

@@ -272,6 +272,10 @@ class IATO_MCP_Change_Receipt {
 			'custom_css'       => 'manage_options',
 			'user_profile'     => 'edit_posts',
 			'permalinks'       => 'manage_options',
+			'page_css'         => 'edit_posts',
+			'page_fonts'       => 'edit_posts',
+			'preview_link'     => 'edit_posts',
+			'page_script'      => 'manage_options',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -377,6 +381,10 @@ class IATO_MCP_Change_Receipt {
 				return ( $post_id > 0 && self::post_exists( $post_id ) ) ? $object( 'edit_post', $post_id ) : $typed( $type_cap );
 
 			case 'page':
+			case 'page_css':
+			case 'page_fonts':
+			case 'preview_link':
+			case 'page_script':
 			case 'post_meta':
 			case 'elementor_widget':
 			case 'elementor_atomic':

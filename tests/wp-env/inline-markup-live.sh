@@ -2,7 +2,7 @@
 # Live checks for 1.15.0's inline SVG and style opt-in, with real kses, real Elementor
 # and every credential: OAuth, bound site key, unbound site key, Application Passwords
 # for an administrator, an editor and an author.
-#   tests/wp-env/inline-markup-live.sh [dev|tests]
+#   tests/wp-env/inline-markup-live.sh [dev|tests|e422]
 #   tests/wp-env/inline-markup-live.sh [dev|tests] --cleanup
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -11,7 +11,9 @@ TARGET="${1:-dev}"
 case "$TARGET" in
 	dev)   SVC=cli;       BASE=http://localhost:8888 ;;
 	tests) SVC=tests-cli; BASE=http://localhost:8889 ;;
-	*) echo "usage: $0 [dev|tests] [--cleanup]"; exit 2 ;;
+	# Elementor 4.2.2 (1.21.0), from ../iato-sprint/wp-env-422, which must be started.
+	e422)  SVC=cli;       BASE=http://localhost:8894; cd "$REPO/../iato-sprint/wp-env-422" ;;
+	*) echo "usage: $0 [dev|tests|e422] [--cleanup]"; exit 2 ;;
 esac
 W() { npx @wordpress/env run "$SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
 SRC=wp-content/plugins/mcp-wordpress/tests/wp-env

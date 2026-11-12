@@ -109,6 +109,9 @@ if ( ! function_exists( 'rest_sanitize_boolean' ) ) {
 /** Stand-in for the real settings class (not loaded in unit tests). */
 if ( ! class_exists( 'IATO_MCP_Settings' ) ) {
 	class IATO_MCP_Settings {
+		/** Mirrors the real list; DefaultOffToolsTest checks that it does. */
+		public const DEFAULT_OFF_TOOLS = [ 'get_page_css', 'set_page_css', 'get_page_fonts', 'set_page_fonts', 'create_preview_link', 'get_page_script', 'set_page_script' ];
+
 		public static function is_tool_enabled( string $tool ): bool {
 			return ! in_array( $tool, IATO_Test_Abilities_State::$disabled_tools, true );
 		}

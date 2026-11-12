@@ -7,7 +7,9 @@
 #   tests/wp-env/elementor-sanitize-live.sh [base-url]
 #   tests/wp-env/elementor-sanitize-live.sh --cleanup
 set -u
-cd "$(dirname "$0")/../.."
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+# Another site (1.21.0): WPENV_DIR, its wp-env folder, with that site's base URL.
+cd "${WPENV_DIR:-$REPO}"
 W() { npx @wordpress/env run cli "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
 MU=wp-content/mu-plugins/iato-mcp-test-elementor.php
 
@@ -45,4 +47,4 @@ export FIXTURE=$(W wp eval-file wp-content/plugins/mcp-wordpress/tests/wp-env/cr
 export FIXTURE_AUTHOR=$(W wp eval-file wp-content/plugins/mcp-wordpress/tests/wp-env/create-sanitize-fixture.php author --user=author | tail -1)
 echo "fixture: $FIXTURE"
 echo "author fixture: $FIXTURE_AUTHOR"
-python3 -I tests/wp-env/elementor-sanitize-live.py
+python3 -I "$REPO/tests/wp-env/elementor-sanitize-live.py"

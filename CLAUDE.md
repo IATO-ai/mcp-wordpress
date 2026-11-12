@@ -38,7 +38,12 @@ WordPress Plugin (iato-mcp)
   ├── class-user-profile.php          ← the public fields of a profile, past the save filters
   ├── class-sanitize-report.php       ← what sanitising removed (`sanitized_report`)
   ├── class-element-cache-guard.php   ← keeps Elementor's element cache key and shortcode out of tool calls
-  ├── class-inline-markup.php         ← opt-in inline SVG and style blocks in HTML widgets
+  ├── class-inline-markup.php         ← opt-in inline SVG and style blocks in HTML widgets; the markup rule's allowlist
+  ├── class-page-css.php              ← page CSS: one post's CSS, printed in its head (1.21.0)
+  ├── class-page-fonts.php            ← page fonts through Elementor's font loader (1.21.0)
+  ├── class-preview-link.php          ← expiring draft preview links (1.21.0)
+  ├── class-page-assets-admin.php     ← the "Page assets" tab and the Plugins-screen warning (1.21.0)
+  ├── class-page-script.php           ← page scripts: stored pending, run after a password-checked approval (1.21.0)
   ├── class-schema.php                ← migrations, table repair and health
   └── tools/
       ├── wp/        ← WP REST wrappers (posts, SEO, media, menus, taxonomy, Elementor, etc.)
@@ -116,6 +121,8 @@ When adding a new MCP tool, three edits must land together — missing any of th
 5. List every argument the handler reads in `inputSchema`, and read every property listed. `tests/ToolSchemaParityTest.php` (1.19.1) loads every tool file in a fresh process and compares each registered schema with the keys its handler reads, found from source by `tests/tool-arg-reader.php`: `$args['key']`, `array_key_exists( 'key', $args )`, `$args[ $x ]` inside a `foreach` over a literal list or a class constant, and `$args` handed whole to the plugin's own functions and static methods, followed under its parameter name there. Names kept for IATO's Autopilot (`post_id` for `id`) go in its `ALIASES`; a read the reader cannot follow fails until it is made plain or explained in `UNDERSTOOD`. Nested object properties are not compared.
 6. When a tool gains an argument, check the server instructions (`iato_mcp_build_server_instructions()` in `iato-mcp.php`) for text that lists that tool's arguments. The Elementor section lists the fields `update_post` may change there, and it stayed at `status, title, excerpt` until 1.19.3. `tests/ServerInstructionsTest.php` (1.19.3) builds the instructions with each combination of page builders active and checks that every field the list names is in `update_post`'s schema. It does not notice a field missing from the list.
 
+7. A tool that ships switched off (1.21.0, the page asset tools): add it to `IATO_MCP_Settings::DEFAULT_OFF_TOOLS` and to the stand-in class in `tests/stubs-abilities.php`, and never to `TOOL_MIGRATION_BACKFILL` (`tests/DefaultOffToolsTest.php` checks both). `is_tool_enabled()` treats it as off on a fresh install, where the saved list is empty, and an upgrade never adds it. Switching it off only hides the tool: what it stored keeps working.
+
 Step 3 is the one that historically gets missed. The backfill map lives next to `TOOL_NAMES` in the same file specifically so a reviewer can eyeball the two lists side-by-side and confirm parity. Adding a new tool without a matching backfill entry is the failure mode; the loop walker in `iato-mcp.php` handles every other detail.
 
 Removing a tool is the reverse: take it out of `TOOL_NAMES` and from any category placement; leave `TOOL_MIGRATION_BACKFILL` alone (historical entries are still correct).
@@ -180,6 +187,10 @@ Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` 
 | `set_featured_image` | tools/wp/tool-featured-image.php | edit_posts |
 | `create_media` | tools/wp/tool-media-upload.php | upload_files |
 | `media_upload_start` / `media_upload_chunk` / `media_upload_finish` | tools/wp/tool-media-upload.php | upload_files; `attach_to_post` also edit_post (1.19.0) |
+| `get_page_css` / `set_page_css` | tools/wp/tool-page-assets.php | edit_post; set also a bound user holding edit_css past the lock (1.21.0, ships off) |
+| `get_page_fonts` / `set_page_fonts` | tools/wp/tool-page-assets.php | edit_post; set needs Elementor (1.21.0, ships off) |
+| `create_preview_link` | tools/wp/tool-page-assets.php | edit_post + the publish cap for the type (1.21.0, ships off) |
+| `get_page_script` / `set_page_script` | tools/wp/tool-page-script.php | edit_post; set also the "Allow page scripts" setting, a bound user, manage_options and unfiltered_html past the lock (1.21.0, ships off) |
 
 `get_post` accepts an opt-in `include_shadowing: true` parameter that attaches `is_shadowed_by` when an Elementor Theme Builder template overrides the slug-based render. Default is off so the hot path stays fast.
 
@@ -187,7 +198,7 @@ Step 3 is the trap. The AJAX handler lives directly above `ajax_test_api_key()` 
 
 `update_post` accepts a `slug` parameter alongside title/content/excerpt/status. Slug input is strictly validated (lowercase a-z/0-9/hyphens, no leading/trailing/double hyphens, max 200 chars, must round-trip through `sanitize_title()` unchanged) and conflicts return `slug_conflict` rather than auto-suffixing. Changing the slug of a non-draft post additionally requires `confirm_url_break: true` since it breaks inbound links. `create_post` and `update_post` responses include a `notice` field on builder-driven sites (Elementor / Divi / WPBakery / Beaver Builder) — on Elementor it tells the agent to fetch a reference post and use the Elementor widget tools; on the others it tells the agent the layout must be finished in WP admin. The `notice` field is absent on Gutenberg-only sites.
 
-`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`, `elementor_atomic` (1.14.0, one Atomic Editor element's settings; see "Elementor Atomic (Editor V4) writer"), `post_meta`, `attachment`, `site_setting` (1.15.0, `update_site_settings`; the option name in `field`, limited to `IATO_MCP_Rollback_Conflict::SITE_OPTIONS` and `SITE_THEME_MODS`), `menu` and `menu_location` (1.17.0; see "Menus and theme locations"), `elementor_template` (1.17.0; see "Theme Builder templates"), `custom_css` and `user_profile` (1.19.0), `permalinks` (1.20.0; see "Page parents and permalinks"). `update_post` records one receipt per changed field (`title`, `content`, `slug`, `excerpt`, `status`), and `page_attributes` for a new parent or menu order (1.20.0); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`. `update_post_meta`, `set_page_settings`, and `set_featured_image` all record under `target_type=post_meta` with the meta key in `field` — rollback restores the previous value or deletes the key if `before_value` was null. `create_media` records `target_type=attachment, field=create` and rolls back via `wp_delete_attachment(force=true)` (the underlying file is removed).
+`rollback` reverses a prior write by `change_id`. Any write tool that returns a `change_receipt` (or `change_receipts[]`) can be undone in one MCP call — Claude passes the `change_id` back to `rollback`, which validates the stored before_value, dispatches by `target_type`, and marks the receipt rolled-back so it cannot be re-applied. Wraps `IATO_MCP_Rollback::rollback_by_id` (the same dispatch path used by the REST endpoint at `wp-json/iato-mcp/v1/rollback`). Receipt `target_type` values: `post`, `page`, `image`, `menu_item`, `taxonomy`, `redirect`, `elementor_widget`, `elementor_atomic` (1.14.0, one Atomic Editor element's settings; see "Elementor Atomic (Editor V4) writer"), `post_meta`, `attachment`, `site_setting` (1.15.0, `update_site_settings`; the option name in `field`, limited to `IATO_MCP_Rollback_Conflict::SITE_OPTIONS` and `SITE_THEME_MODS`), `menu` and `menu_location` (1.17.0; see "Menus and theme locations"), `elementor_template` (1.17.0; see "Theme Builder templates"), `custom_css` and `user_profile` (1.19.0), `permalinks` (1.20.0; see "Page parents and permalinks"), `page_css`, `page_fonts`, `preview_link` and `page_script` (1.21.0; see "Page assets"). `update_post` records one receipt per changed field (`title`, `content`, `slug`, `excerpt`, `status`), and `page_attributes` for a new parent or menu order (1.20.0); `create_post` records `target_type=post, field=create` and rolls back via `wp_trash_post`. `update_post_meta`, `set_page_settings`, and `set_featured_image` all record under `target_type=post_meta` with the meta key in `field` — rollback restores the previous value or deletes the key if `before_value` was null. `create_media` records `target_type=attachment, field=create` and rolls back via `wp_delete_attachment(force=true)` (the underlying file is removed).
 
 **Receipt actors, the rollback rule and the conflict check (1.13.0, schema step 4).** `IATO_MCP_Change_Receipt::record()` stores who made the change: `actor_user_id`, `actor_kind` (`site_key` | `oauth` | `application_password`, or `wordpress` outside an MCP request) and `actor_client_id` (OAuth), from `IATO_MCP_Auth::credential()` via `current_actor()`; every returned receipt carries `actor` (`describe_actor()`: user id, login, kind, client id and name). `mark_rolled_back()` stores `rolled_back_by_*` the same way. Before schema step 4 has run (`has_actor_columns()`), receipts are written without these columns rather than lost. `IATO_MCP_Rollback::check_permission()` (tool and REST route) keeps the 1.12.1 object-level checks and then, for a receipt with an actor, requires the same WordPress user or `manage_options` (`require_cap()`, so the unbound key, a bound key and OAuth tokens, whose users are administrators, always pass); otherwise `rollback_actor_mismatch` (403). Receipts without an actor (recorded before 1.13.0) keep the object rules alone. `IATO_MCP_Rollback::execute()` is the shared core: already-rolled-back (names who), `preflight()` (Elementor receipts that hold only a hash, `update_term` receipts without a term id → `rollback_unavailable`), `IATO_MCP_Rollback_Conflict::check()` (`includes/class-rollback-conflict.php`: one reader per target_type/field returns the current value in the form the receipt recorded; canonical comparison treats '' as null, decodes JSON, ignores key order and scalar types; creates conflict when the object was modified after `applied_at`, deletes when the object is back; redirects of handlers whose rules the plugin cannot read, unknown fields and missing objects are `unverifiable` and proceed), refusal `rollback_conflict` (409, `conflict_check` with `current_value` / `expected_value`) unless `force: true`, `dry_run: true` (reports `would_roll_back`, `would_restore`, the check; writes nothing), dispatch, mark. The `rollback` tool returns refusals that carry details (`rollback_conflict`, `rollback_actor_mismatch`, `rollback_unavailable`, `already_rolled_back`) as an isError result whose text is JSON (`iato_mcp_rollback_error()`), because MCP clients see only the text. For the check to hold, record sites store what was actually written, read back with the reader the check uses: `update_post` / `create_post` (WordPress filters titles and content on save), `update_seo_data`, `update_canonical`, `update_alt_text`, `update_menu_item_details` (`IATO_MCP_Rollback_Conflict::menu_item_value()`); `update_term` snapshots carry `term_id`. Elementor receipts (`elementor_widget`) store the pre-write `_elementor_data` text as `before_value` (one full copy per edit; responses keep the slim receipt) and the stored revision hash as `after_value`; rollback restores the text through the `post_meta` path (`write_elementor_meta()`), reports `restored_revision` instead of the tree, and when the post had no Elementor data before `update_elementor_data` the before value is an envelope (`IATO_MCP_Rollback::no_elementor_envelope()`: a JSON object with the original `post_content` and builder flag; trees are JSON arrays) whose rollback removes `_elementor_data`, restores the flag and writes the original content back verbatim (`restore_post_content()`: `wp_slash()`, kses lock lifted and core's kses content filters removed for that write, both restored in `finally`). Taxonomy `assign` / `terms` rollbacks take the taxonomy from any term in the receipt (`taxonomy_of_ids()`), after IDs included. The REST route accepts `force` and `dry_run` too and still requires the caller's `before_value` to equal the stored one (for Elementor receipts that is the whole tree). Tests: `tests/RollbackActorConflictTest.php` (stubs in `tests/stubs-actor.php`); live: `tests/wp-env/rollback-actor-live.sh` → `.py` (mints an OAuth access token straight into the tables; `--cleanup`) and `tests/wp-env/rollback-plugins-live.sh` → `.py` (installs Yoast SEO, Safe Redirect Manager and Redirection for the run; `--cleanup` uninstalls them). Known limits: a created redirect cannot be rolled back on any handler, and with Redirection no redirect receipt has a before value (the plugin cannot read Redirection's rules), so none can be rolled back.
 
@@ -304,6 +315,17 @@ Tests: `tests/AbilitiesRegistrationTest.php` (loads the production bridge files 
 
 Because the lock is lifted around `Document::save()`, Elementor's own `kses_post_deep` (whole document) does not run for bound-key and OAuth requests; the diff pass is the sanitiser for classic widgets on both paths. Elementor's per-prop atomic sanitising (URL, HTML wrapper tags, `custom_css`) still runs inside its props parser regardless of capability, and its content-sanitizer module still applies to non-`manage_options` users.
 
+**What was stored, and `return` (1.21.0).** Applies to `update_elementor_widget`, `update_elementor_patch` and `update_elementor_data`.
+
+- **Every op says what was stored.** `IATO_MCP_Elementor_Adapter::annotate_stored()` gives each `add` / `replace` op `stored_matches_input`. When that is false, it also gives `stored_bytes`, `stored_sha256` and `stored_value`.
+  - **Where it reads from:** after a write, the tree read back with `stored_elements()`. On a dry run, `sanitized_tree()`, the diff pass's output. A dry run cannot see Elementor's own save, so it can't predict what that save does.
+  - **Atomic ops:** they already carry the stored value in `value`. `annotate_stored_atomic()` compares it with the patch's value for that key.
+  - **The hash:** of the string `get_elementor_widget` returns, or of `wp_json_encode()` of anything else (`value_digest()`).
+- **`return: "full" | "minimal"`.**
+  - `return_mode()` checks it in each tool handler, never in `do_update_widget()`, so the helpers and the bulk tool that share it do not have to declare it. A bad value is `invalid_return`.
+  - `shape_response()` turns `value`, `previous_value` and `stored_value` into `*_bytes` / `*_sha256`, an atomic dry run's `would_store` and a dry run's `inherit_planned` values into digests, and inherited receipts into slim ones.
+  - The idempotency cache stores the shaped response. `return` is part of the payload hash.
+
 **Tree shape (1.16.0).** `IATO_MCP_Elementor_Adapter::tree_shape_error()` refuses what crashes the page for every visitor while Elementor's save reports nothing wrong: a tree with named keys, a node that is not an object, no `elType`, a widget with no `widgetType`, `settings` that are not an object (`null` included). It also refuses a non-scalar `id`. Limited to what was seen to break Elementor 4.3.5, so an element with no `id` or an unknown type stays allowed, as do `elements` with gaps in their numbering. `update_elementor_data` and `update_elementor_patch` check it before their dry runs (`elementor_invalid_tree`, in `DETAILED_ERRORS`), single-widget dry runs and `IATO_MCP_Elementor_Atomic_Writer::apply()` check the page they would store, and `write_pipeline()` is the backstop, except with `verbatim`. Known limit: this is the tree's shape, not each widget's settings. A value of the wrong type for its control (an array as a heading's `title`) can still break a page; rollback recovers it. Because a render can still throw, `IATO_MCP_Server::close_buffers()` closes whatever a tool call left open, on the tool and REST rollback paths, so nothing comes out ahead of the JSON response.
 
 **Meta keys.** `IATO_MCP_Meta_Policy::ELEMENTOR_WRITABLE` (`_elementor_page_settings`, `_elementor_edit_mode`, `_elementor_template_type`) are the only `_elementor_` keys `update_post_meta` and `inherit_keys` may write; every other key under that prefix (element tree, element cache, CSS, SVG, caches, conditions, anything an addon adds) is refused with `elementor_content_key`, which names the Elementor tool to use. `set_page_settings` is unaffected. Rollback restores receipts verbatim (the before value is read from the receipts table, never from the request), so old `post_meta` receipts for now-refused keys still roll back. `decode_data()` accepts a tree stored as an array (pre-1.13.0 `update_post_meta` writes).
@@ -411,6 +433,75 @@ A receipt is an undo promise, so `record()` checks its insert and never returns 
 - Known limits: only exact URLs are redirected (not an old URL's `/page/2/` or feeds; WordPress's 404 guessing often covers them); date archives move without redirects; links written into content and custom menu links keep the old URLs; rollback adds no redirects from the new URLs back; Yoast Premium is unit-tested only.
 - Tests: `tests/PageParentTest.php`, `tests/PermalinkSettingsTest.php`, `tests/RedirectBatchTest.php`, `tests/SlugConflictTest.php` (`tests/stubs-url-move.php`, separate processes); live: `tests/wp-env/restructure-live.sh [base-url] [--plugins]` → `.py`, with the test-only mu-plugin `tests/wp-env/mu-rewrite-probe.php` (a top and a bottom rule, an endpoint, a custom post type and a taxonomy on the front). `--plugins` installs Redirection, Safe Redirect Manager and LiteSpeed Cache one at a time; the Pro site adds a `/blog/` page with an Elementor Posts widget.
 
+## Page assets (1.21.0)
+
+Files:
+- `includes/class-page-css.php` (`IATO_MCP_Page_CSS`)
+- `includes/class-page-fonts.php` (`IATO_MCP_Page_Fonts`)
+- `includes/class-preview-link.php` (`IATO_MCP_Preview_Link`)
+- `includes/class-page-assets-admin.php` (`IATO_MCP_Page_Assets_Admin`)
+- `includes/tools/wp/tool-page-assets.php`
+
+All five tools ship switched off (`DEFAULT_OFF_TOOLS`).
+
+- **Page CSS.**
+  - **Storage:** `_iato_mcp_page_css`.
+  - **Rules:** those of `update_custom_css`: `strip_style_close()` (reported), then `refused_parts( $css, true )`. `true` because the plugin prints it itself, as it is: `<style id="iato-mcp-page-css">` at `wp_head` 102, after Additional CSS at 101, whenever the queried object is that post (`queried_post_id()`). That covers the front page, Canvas (its template calls `wp_head()`), preview links and Elementor's editor preview.
+  - **Who:** `may_write()`: a bound user, `edit_css` read inside `write_unlocked()`, and `edit_post`. No `manage_options`, unlike Additional CSS.
+  - **Checked again when printed:** `passes()`, cached per hash in the transient `iato_mcp_page_css_ok_<sha256>`, failures too. A value written another way never prints unchecked.
+  - **Receipt:** `page_css` / `css`: before `{css}`, after `{bytes, sha256}`. In retention `TYPES`. Cache: that post.
+- **Page fonts.**
+  - **Storage:** `_iato_mcp_page_fonts`, an array of family names.
+  - **Checked:** with `\Elementor\Fonts::get_font_type()` (Pro's custom and Adobe fonts included; seam `set_elementor()`), on the write and again when printed.
+  - **Loaded:** at `wp_enqueue_scripts` 20 through `Plugin::$instance->frontend->enqueue_font()`, which prints at `wp_head` 7. Elementor's local Google fonts apply. `Frontend::init()` stops in Elementor preview mode, so fonts do not load in the editor.
+  - **No weights:** Elementor requests all 18 variants of a family.
+  - **Receipt:** `page_fonts` / `fonts`, the lists before and after. The same in Elementor 3.35.9, 4.2.2 and 4.3.x.
+- **Preview links.**
+  - **The token:** 32 characters from `wp_generate_password( 32, false, false )`. Only `hash()`, an HMAC of the post ID and the token with `wp_salt( 'auth' )`, is stored, in `_iato_mcp_preview_links` (`[{link_id, hash, expires, user_id, created}]`). Meta copied to another post or site (a duplicate, an import) opens nothing there.
+  - **Which links count:** at most `MAX_LINKS` live. Expired ones, and any whose `expires` is later than `created + MAX_TTL`, are dropped when read. `transition_post_status` revokes every link when the post leaves `STATUSES`, so publishing then returning to draft does not bring one back.
+  - **Who:** `may_create()`: `edit_post`, `require_publish_cap()` for the type, and only `draft`, `pending` or `future` (`preview_not_needed` otherwise).
+  - **A request with the token:** `pre_get_posts` on the main query, only when it is singular, not the posts page (where WordPress ignores the ID and lists posts) and `page_id` and `p` agree, checks the token with `hash_equals()`. It then sets `post_status` to the post's own status, which WordPress's status check (class-wp-query.php, after `posts_results`) lets through for a logged-out visitor. `only_that_post()` on `posts_results` keeps the main query's result to that one post. `may_create()` refuses the posts page (`preview_not_supported`). Elementor renders drafts without looking at the status.
+  - **Its response:** `DONOTCACHEPAGE`, `litespeed_control_set_nocache`, `nocache_headers()`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`, and `noindex` / `nofollow` through `wp_robots`.
+  - **Receipt:** `preview_link` / `create`: after `{link_id, expires}`, never the token. Its rollback revokes the link, and one already gone counts as revoked. The conflict check is `unverifiable`.
+- **Meta.** `_iato_mcp_page_` and `_iato_mcp_preview_` are in `IATO_MCP_Meta_Policy::DENY_PATTERNS`: no meta tool may write them, `force` and `inherit_keys` included, and reads redact them. Rollback's preflight refuses a `post_meta` receipt for either prefix (`rollback_unavailable`), so a receipt from before 1.21.0 cannot put one back.
+- **wp-admin.**
+  - **The tab:** `?tab=assets` lists posts with either meta, and live links. Remove CSS, Remove fonts, Revoke and Revoke all are `admin_post_` handlers. Each has a nonce per post (and link), records a receipt (actor kind `wordpress`) and runs `IATO_MCP_Cache::begin()` / `flush()`.
+  - **Scripts:** the action `iato_mcp_page_assets_tab` is where page scripts add their section.
+  - **The Plugins screen:** while the plugin is active, a notice under its row (`after_plugin_row_{basename}`) and a confirmation on its Deactivate link (`plugin_action_links_{basename}`) give the count from `count()`, filtered by `iato_mcp_page_assets_count`. WordPress runs no code of an inactive plugin, so the warning has to come first.
+- **Uninstall** deletes preview links and the verified-CSS transients, and keeps page CSS and fonts: they are page content, and reinstalling brings them back.
+- **Server instructions:** a "PAGE ASSETS" section, built only from the tools switched on.
+- **The report:** `IATO_MCP_Sanitize_Report::entry()` adds a note naming `set_page_css` whenever the html rule removed a style block. When the tool is off, the note says where to turn it on.
+- **Known limit:** the token is in the URL, so access logs and analytics on the page record it.
+- **Page scripts** (`includes/class-page-script.php`, `IATO_MCP_Page_Script`; `includes/tools/wp/tool-page-script.php`). Added in a commit of their own so they can be dropped with one revert.
+  - **Gates on a write:** the setting `iato_mcp_page_scripts_enabled` (`'1'` / `'0'`, default off, wired in all three places of the settings checklist), both tools off in the Tools card, and `may_write()`: the setting, a bound user, `manage_options`, `unfiltered_html` read past the lock, and `edit_post`.
+  - **Refused:** `refusal()` refuses `<script`, `</script`, `<!--`, invalid UTF-8, over 100 KB, and Unicode format characters (`\p{Cf}`: direction controls, zero-width characters) and U+2028/U+2029. What the administrator reads must be what runs: the review found a "Trojan Source" script that reads as a comment and runs as code.
+  - **The review screen:** `review_html()` escapes the script and shows every character outside ASCII as a marked `\u{…}`, with a count.
+  - **Storage:** the script in `_iato_mcp_page_script`. Approvals in the option `iato_mcp_page_script_approvals` (`post_id => {sha256, user_id, at}`), never in post meta.
+  - **Printing:** `print_script()` at `wp_footer` 100 with `wp_print_inline_script_tag()`, only when all of these hold:
+    - `active()`: the setting and `set_page_script` switched on;
+    - the queried object is that post;
+    - `status()` is `approved` (the approved hash equals the stored script's);
+    - not Elementor's editor or preview.
+  - **Approving:** the tab's section (`iato_mcp_page_assets_tab`) shows each script whole, escaped. Approve is `admin_post_iato_mcp_approve_page_script`:
+    - `manage_options` and `unfiltered_html`;
+    - a nonce for `post_id` + `sha256`;
+    - the current text still hashing to that `sha256` (`changed` otherwise);
+    - `wp_check_password()`, replaceable through `iato_mcp_verify_script_approval( $ok, $user )`;
+    - at most `MAX_FAILURES` wrong passwords per user in 15 minutes.
+
+    No MCP credential works on `admin-post.php`. Revoke needs only the nonce. Both purge the post.
+  - **Stopping:** `update_option_` and `add_option_` hooks on the setting and on `iato_mcp_tools` (`tool_on_in()`; an empty list means the defaults, where it is off), and `iato_mcp_deactivate()`, all call `purge_all()` for every post with a script.
+    - `purge_post()` calls `IATO_MCP_Cache::purge( 'post', $id )` directly, so it purges even with "Purge page caches after changes" off. Only the `iato_mcp_cache_purge` filter can skip it.
+    - Revoke reports a cache in front of the site (`IATO_MCP_Cache::site_info()` notes) through `iato_edge`.
+  - **Reads:** `get_page_script` names the approver by display name, not login.
+  - **Elsewhere:**
+    - the deactivation count adds approved scripts through `iato_mcp_page_assets_count`;
+    - receipt `page_script` / `script` (`manage_options`, object `edit_post`, in retention);
+    - rollback restores the text, which runs only if still approved;
+    - uninstall removes the meta, the approvals and the setting;
+    - the report names `set_page_script` for a removed `<script>` only while `active()`.
+- **Tests:** `tests/PageScriptTest.php`, `tests/PageAssetsTest.php`, `tests/DefaultOffToolsTest.php`, `tests/UninstallTest.php`. Live: `tests/wp-env/page-assets-live.sh [base-url] [--plugins]` → `.py`, with the test-only mu-plugin `tests/wp-env/mu-page-assets-probe.php` (it shows in a header that LiteSpeed was told not to cache, since no local site runs a LiteSpeed server).
+
 ## Chunked media uploads (1.19.0)
 
 `includes/class-media-chunks.php` (`IATO_MCP_Media_Chunks`), `includes/class-media-uploader.php`, `includes/tools/wp/tool-media-upload.php`.
@@ -466,7 +557,31 @@ A receipt is an undo promise, so `record()` checks its insert and never returns 
 
 **Whole elements (1.16.0).** `IATO_MCP_Elementor_Sanitizer::clean_markup()` is the markup rule for Elementor values, `create_post` / `update_post` content and the `create_media` description: `IATO_MCP_Inline_Markup::remove_style_and_script()` cuts STYLE and SCRIPT tokens with the scanner, then `wp_kses_post` runs, always last, because cutting text out of sanitised markup can join what is left into something live. Below WordPress 6.5 the tokenizer does not exist and the value goes to kses unchanged. `write_pipeline()` step 5 renders with no inline CSS. CSS already on pages as text is not cleaned up: a tool cannot tell it from real content.
 
+**Never narrower (1.21.0).**
+
+- **The markup rule.** `clean_markup()` hands `wp_kses()` the array `IATO_MCP_Inline_Markup::markup_allowlist()`, never the `'post'` context. That array is built on every call from `wp_kses_allowed_html( 'post' )`, as other plugins filtered it, with gaps filled:
+  - every ARIA attribute (`ARIA`) and `inert` on every tag;
+  - `disabled` on button, fieldset, input and textarea, and `readonly` on input and textarea;
+  - `<input>`, only where nothing allows it yet: `type` limited to `INPUT_TYPES`, no `src` or `formaction`.
+
+  An attribute already allowed keeps its rule. Passing an array keeps WordPress from adding `<form>` because `<input>` is allowed (`kses.php`, the 5.0.1 rule); on a site where a plugin already allows `<input>`, `wp_kses_allowed_html()` has already added `<form>`, and it stays.
+- **The check.** `tests/wp-env/sanitizer-compat-live.sh` runs a fixture set through v1.20.0's sanitizer, read from `git show` with its classes renamed into the gitignored `tests/wp-env/.compat-1.20.0/`, and through the current one, with the opt-in off and on, and with a filter allowing `<input>` as some plugins do. It fails if anything 1.20.0 kept is lost, or a value 1.20.0 stored unchanged changes.
+- **The report.**
+  - `IATO_MCP_Sanitize_Report` also lists declarations kses took out of `style` attributes, in `removed_css` as `style on <div>: color:rgb(1,2,3)` (`removed_declarations()`, html rule only).
+  - `merge()` now joins a second entry for the same path rather than dropping it: Elementor's own kses for an Author removed more than the plugin's pass, and the report said nothing was removed. The joined entry gets `source: "elementor"` and a note listing what that save removed.
+
 **Opt-in.** `includes/class-inline-markup.php` (`IATO_MCP_Inline_Markup`), `includes/class-html-token-scanner.php` (loaded on demand: it extends `WP_HTML_Tag_Processor`). Setting `iato_mcp_inline_markup_enabled`, `'1'` / `'0'`, default off.
+
+- **1.21.0, SVG:**
+  - Added: `ellipse`, `text`, `tspan`, `defs`, `lineargradient`, `radialgradient`, `stop`, `marker`, `clippath` and `use`, with their geometry. Every SVG element also takes the marker, clip and text attributes and every ARIA attribute.
+  - `use` may carry `href` only as `#id` (`is_fragment()`): a kses `value_callback`, then `remove_outside_use()` before kses takes out any other `<use>` and its closer, so the report lists it, then `passes_final_check()` as the backstop.
+- **1.21.0, `@property`:** `sanitize_css( $css, $syntax_ok )` keeps a `syntax` descriptor holding `<` (`'<number>'`, or escaped as `'\3c number\3e '`).
+  - Which strings count: those the tokenizer finds right after `syntax:` directly in a `@property` block, whose decoded text matches `is_syntax_descriptor()` (`SYNTAX_TYPES`, `|`, `+`, `#`, identifiers).
+  - `blank_syntax_descriptors()` empties those spans before the plain search and `css_hazard()`, so any other `<` still drops the block. `css_final_check()` does the same.
+  - `filter()` passes `$syntax_ok` only when `styles_are_html()` says so: `WP_HTML_Processor` (6.7+) reads the whole value, every STYLE is in the HTML namespace, and it counts as many as the tokenizer. Inside `<svg>` a browser reads `<` there as a tag.
+  - `passes_final_check()` repeats that check for any kept block holding `<`.
+- **1.21.0, SVG `<title>`:** the tokenizer reads every `<title>` as text, but inside `<svg>` a browser reads its children as markup, where the paint and clip `url()` rule would never see them. So `passes_final_check()` fails a value whose `<title>` source (`raw_title_text()`, through the scanner's token span, so `&lt;` does not count) holds `<`.
+  - Additional CSS keeps the old rule: `refused_parts()` defaults to `false`, and `printed_differently()` refuses it anyway.
 
 - **It does not grant `unfiltered_html`.** The kses lock stays on for the request. `policy()` reads the capability inside `write_unlocked()`, requiring `unfiltered_html` and `manage_options` (an Editor holds the first; the setting says administrators). User 0 holds neither. `unfiltered_html_allowed()` is unchanged. Works on OAuth, bound key and Application Password.
 - **One value.** `IATO_MCP_Elementor_Sanitizer::walk()` knows the element and passes `$html_widget`; `diff_value()` applies `sanitize_html_setting()` only to exactly `<id>/settings/html` of `elType: widget`, `widgetType: html`. `sanitize_value()` cannot host this: it sees a sliced path, and `styles/html` looks the same. The meta policy calls `sanitize_value()` and is untouched.
@@ -595,7 +710,7 @@ POST /wp/v2/menu-items               create/update menu item
 - IATO API Key (password input, validated on save)
 - Default crawl ID (text, used as fallback when bridge tools aren't passed a `crawl_id`)
 - Per-tool enable/disable checkboxes
-- Caching and HTML widgets (v1.15.0): `iato_mcp_cache_purge_enabled` (`'1'`/`'0'`, default on), `iato_mcp_inline_markup_enabled` (`'1'`/`'0'`, default off). Readers pass their default to `get_option()`: the one registered with `register_setting()` is not applied on MCP requests.
+- Caching and HTML widgets (v1.15.0): `iato_mcp_cache_purge_enabled` (`'1'`/`'0'`, default on), `iato_mcp_inline_markup_enabled` (`'1'`/`'0'`, default off). Page scripts (v1.21.0): `iato_mcp_page_scripts_enabled` (`'1'`/`'0'`, default off). Readers pass their default to `get_option()`: the one registered with `register_setting()` is not applied on MCP requests.
 - Media uploads (v1.6.0): `iato_mcp_media_url_source_enabled` (`'1'`/`'0'` string flag, default off; stored as a string for the same reason as `iato_mcp_abilities_enabled`), `iato_mcp_media_url_host_allowlist` (hostnames, one per line), `iato_mcp_media_max_upload_size` (bytes, default 10MB), `iato_mcp_media_upload_rate_limit` (per-user per-minute, default 20)
 
 No governance policy UI, no autopilot toggle, no resync.

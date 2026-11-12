@@ -81,8 +81,9 @@ final class SanitizeReportTest extends TestCase {
 		$note = IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<style>a{}</style>', 'a{}' )['note'];
 		$this->assertStringContainsString( 'visible text', $note );
 		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<svg></svg>', '' ), 'nothing to warn about' );
-		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<p>x</p><style>a{}</style><script>b()</script>', '<p>x</p>' ), 'whole elements were removed' );
-		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<style></style>', '' ), 'an empty element leaves nothing' );
+		// 1.21.0: a removed style block also gets the set_page_css pointer, so look for the warning itself.
+		$this->assertStringNotContainsString( 'visible text', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<p>x</p><style>a{}</style><script>b()</script>', '<p>x</p>' )['note'] ?? '', 'whole elements were removed' );
+		$this->assertStringNotContainsString( 'visible text', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<style></style>', '' )['note'] ?? '', 'an empty element leaves nothing' );
 		$this->assertArrayHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<p>x</p><style>a{}', '<p>x</p>a{}' ), 'an unclosed tag stays as text' );
 		$this->assertArrayHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<script>a>b</script>', 'a&gt;b' ), 'kses encodes what it keeps' );
 		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<img alt="<style>x</style>" src="y">', 'x' ), 'a lookalike in an attribute is no style element' );
@@ -107,6 +108,32 @@ final class SanitizeReportTest extends TestCase {
 		$a = [ [ 'path' => 'e1/settings/title', 'rule' => 'html' ] ];
 		$b = [ [ 'path' => 'e1/settings/title/value', 'rule' => 'html' ], [ 'path' => 'e2/settings/x', 'rule' => 'url' ] ];
 		$this->assertSame( [ 'e1/settings/title', 'e2/settings/x' ], array_column( IATO_MCP_Sanitize_Report::merge( $a, $b ), 'path' ) );
+	}
+
+	public function test_a_removed_style_block_points_at_set_page_css(): void {
+		$entry = IATO_MCP_Sanitize_Report::entry( 'w/settings/html', 'html', '<p>x</p><style>a{}</style>', '<p>x</p>' );
+		$this->assertStringContainsString( 'set_page_css', $entry['note'] );
+		$dropped = IATO_MCP_Sanitize_Report::entry( 'w/settings/html', 'html', '<style>a</style>', '', [ 'inline_markup' => 'kept', 'removed_css' => [ 'whole <style> block: it contains <' ] ] );
+		$this->assertStringContainsString( 'set_page_css', $dropped['note'], 'also when the opt-in dropped the whole block' );
+		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'w/settings/html', 'html', '<p onclick="x">a</p>', '<p>a</p>' ) );
+		$this->assertArrayNotHasKey( 'note', IATO_MCP_Sanitize_Report::entry( 'w/settings/title', 'text', '<style>a</style>', 'a' ), 'only the markup rule' );
+	}
+
+	public function test_a_later_pass_that_removed_more_is_not_lost(): void {
+		$ours      = [ [ 'path' => 'w/settings/html', 'rule' => 'html', 'removed_tags' => [], 'removed_attributes' => [] ] ];
+		$elementor = [ [ 'path' => 'w/settings/html', 'rule' => 'html', 'removed_tags' => [ 'input' ], 'removed_attributes' => [ 'aria-pressed' ], 'source' => 'elementor' ] ];
+		$merged    = IATO_MCP_Sanitize_Report::merge( $ours, $elementor );
+		$this->assertCount( 1, $merged );
+		$this->assertSame( [ 'input' ], $merged[0]['removed_tags'] );
+		$this->assertSame( [ 'aria-pressed' ], $merged[0]['removed_attributes'] );
+		$this->assertSame( 'elementor', $merged[0]['source'] );
+		$this->assertStringContainsString( "Elementor's own save removed: input, aria-pressed.", $merged[0]['note'] );
+	}
+
+	public function test_a_later_pass_that_removed_nothing_new_changes_nothing(): void {
+		$ours = [ [ 'path' => 'w/settings/html', 'rule' => 'html', 'removed_tags' => [ 'script' ], 'removed_attributes' => [] ] ];
+		$same = [ [ 'path' => 'w/settings/html/value', 'rule' => 'html', 'removed_tags' => [ 'script' ], 'removed_attributes' => [], 'source' => 'elementor' ] ];
+		$this->assertSame( $ours, IATO_MCP_Sanitize_Report::merge( $ours, $same ) );
 	}
 
 	public function test_add_to_marks_only_real_changes(): void {

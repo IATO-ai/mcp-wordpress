@@ -176,6 +176,18 @@ class IATO_MCP_Rollback_Conflict {
 				$current = IATO_MCP_User_Profile::current( $after );
 				return null === $current ? self::unverifiable( 'the user no longer exists' ) : self::compare( $current, $after, 'profile' );
 
+			case IATO_MCP_Page_CSS::RECEIPT:
+				return $post_id > 0 ? self::compare( IATO_MCP_Page_CSS::after_value( $post_id ), $after, 'page CSS' ) : self::unverifiable( 'the receipt names no post' );
+
+			case IATO_MCP_Page_Fonts::RECEIPT:
+				return $post_id > 0 ? self::compare( IATO_MCP_Page_Fonts::stored( $post_id ), self::json_array( $after ), 'page fonts' ) : self::unverifiable( 'the receipt names no post' );
+
+			case IATO_MCP_Page_Script::RECEIPT:
+				return $post_id > 0 ? self::compare( IATO_MCP_Page_Script::after_value( $post_id ), $after, 'page script' ) : self::unverifiable( 'the receipt names no post' );
+
+			case IATO_MCP_Preview_Link::RECEIPT:
+				return self::unverifiable( 'revoking a preview link overwrites nothing' );
+
 			case IATO_MCP_Custom_CSS::RECEIPT:
 				$stylesheet = (string) ( self::json_array( $after )['stylesheet'] ?? '' );
 				if ( '' === $stylesheet ) {

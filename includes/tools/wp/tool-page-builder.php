@@ -240,6 +240,7 @@ IATO_MCP_Server::register_tool(
 				'activate_builder'      => [ 'type' => 'boolean', 'description' => 'Required for a post that holds Elementor data while Elementor is turned off for it (get_page_builder reports elementor_tree_present: true). Switches it to Elementor, which replaces what visitors see, so ask the user first. Rollback restores it.' ],
 				'inherit_settings_from' => [ 'type' => 'integer', 'description' => 'Optional source post ID. When set, copies a curated set of theme + Elementor page-level meta keys onto the target.' ],
 				'inherit_keys'          => [ 'type' => 'array',   'description' => 'Optional override of the inherited key list. Defaults to a built-in curated list when omitted.', 'items' => [ 'type' => 'string' ] ],
+				'return'                => [ 'type' => 'string',  'enum' => [ 'full', 'minimal' ], 'description' => 'full (default) or minimal: inherited values become their bytes and sha256, and inherited receipts come back slim. Applies to dry runs too.' ],
 			],
 			'required' => [ 'id', 'elementor_data' ],
 		],
@@ -256,6 +257,10 @@ IATO_MCP_Server::register_tool(
 
 		if ( ! $post_id ) {
 			return new WP_Error( 'missing_id', 'id is required.' );
+		}
+		$return = IATO_MCP_Elementor_Adapter::return_mode( $args );
+		if ( is_wp_error( $return ) ) {
+			return IATO_MCP_Server::refusal( $return );
 		}
 
 		$post = get_post( $post_id );
@@ -449,7 +454,7 @@ IATO_MCP_Server::register_tool(
 			] + ( $set_builder ? [ 'would_set_builder_mode' => true, 'would_replace_content_chars' => strlen( $old_content ) ] : [] )
 				+ $atomic_check['report'] + ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ? [ 'elementor_save' => 'skipped', 'skipped_reason' => $atomic_check['pipeline_opts']['skip_save'] ] : [] ) + IATO_MCP_Elementor_Adapter::preview_report( $decoded, $stored_elements );
 			IATO_MCP_Sanitize_Report::add_to( $preview, $atomic_check['sanitized_report'] ?? [] );
-			return IATO_MCP_Server::ok( $preview );
+			return IATO_MCP_Server::ok( IATO_MCP_Elementor_Adapter::shape_response( $preview, $return ) );
 		}
 
 		// The shared pipeline (IATO_MCP_Elementor_Adapter::write_pipeline): sanitise
@@ -525,6 +530,6 @@ IATO_MCP_Server::register_tool(
 		if ( ! empty( $inherit_skipped ) ) {
 			$response['inherited_skipped'] = $inherit_skipped;
 		}
-		return IATO_MCP_Server::ok( $response );
+		return IATO_MCP_Server::ok( IATO_MCP_Elementor_Adapter::shape_response( $response, $return ) );
 	}
 );

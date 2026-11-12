@@ -78,6 +78,10 @@ class IATO_MCP_Cache {
 		'media_upload_finish',
 		'update_custom_css',
 		'update_user_profile',
+		'set_page_css',
+		'set_page_fonts',
+		'create_preview_link',
+		'set_page_script',
 	];
 
 	/** Receipt types whose change shows on every page. */

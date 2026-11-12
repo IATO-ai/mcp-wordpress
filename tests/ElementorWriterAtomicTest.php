@@ -161,7 +161,9 @@ final class ElementorWriterAtomicTest extends TestCase {
 		$this->assertIsArray( $r );
 		$this->assertSame( [ 'iato-native', 'atomic', 'live' ], [ $r['applied_via'], $r['schema'], $r['state'] ] );
 		$this->assertSame( [ [ 'key' => 'tag', 'from' => 'h2', 'to' => 'h3' ] ], $r['applied'] );
-		$this->assertSame( [ [ 'op' => 'replace', 'path' => '/0/elements/0/settings/tag', 'value' => self::env( 'string', 'h3' ), 'previous_value' => self::env( 'string', 'h2' ) ] ], $r['applied_patch'] );
+		$stored = IATO_MCP_Elementor_Adapter::value_digest( self::env( 'string', 'h3' ) );
+		// 1.21.0: the plain 'h3' sent is stored in Elementor's typed envelope, and the op says so.
+		$this->assertSame( [ [ 'op' => 'replace', 'path' => '/0/elements/0/settings/tag', 'value' => self::env( 'string', 'h3' ), 'previous_value' => self::env( 'string', 'h2' ), 'stored_matches_input' => false, 'stored_bytes' => $stored['bytes'], 'stored_sha256' => $stored['sha256'] ] ], $r['applied_patch'] );
 		$this->assertTrue( $r['elementor_save'] );
 		$this->assertSame( 'elementor', $r['stored_by'] );
 		$this->assertTrue( $r['verified'] );
