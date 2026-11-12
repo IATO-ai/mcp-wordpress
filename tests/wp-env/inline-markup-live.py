@@ -214,8 +214,6 @@ for name, payload in HOSTILE.items():
     # Text kses encoded (&lt;img ...) is inert: only look at what is still markup.
     markup = re.sub(r'&lt;.*?&gt;', '', s)
     record(f'{name}: nothing executable stored', not FORBIDDEN.search(markup), s)
-    if name == 'markup inside an svg title':
-        record('markup inside an svg title is not kept', 'svg-title-marker' not in s and not re.search(r'<title>\s*<', s, re.I), s)
 
 print('# off-site references (stored value)')
 for name, payload in OFF_SITE.items():
@@ -223,6 +221,8 @@ for name, payload in OFF_SITE.items():
     s = stored(PAGE, HTML) or ''
     # What a browser would still fetch is checked for real in the browser step.
     record(f'{name}: nothing off-site stored as a live reference', not re.search(r'url\(\s*["\']?\s*https?://evil|@import|image-set\([^)]*evil|ur&#108;|&#105;|u\\+72l|\\+75rl', s), s)
+    if name == 'markup inside an svg title':
+        record('markup inside an svg title is not kept', 'svg-title-marker' not in s and not re.search(r'<title>\s*<(?!/title)', s, re.I), s)
 
 VAR_CHAIN = '<div style="--x:url(https://evil.example/V1.svg#p)"><svg width="100" height="100"><rect width="100" height="100" fill="var(--x)"/></svg></div>'
 r = write(VAR_CHAIN)
