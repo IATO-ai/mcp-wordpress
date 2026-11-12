@@ -196,6 +196,7 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * New: Elementor write responses say for each change whether the stored value is what was sent (`stored_matches_input`). When it is not, they say what was stored. `update_elementor_widget`, `update_elementor_patch` and `update_elementor_data` take `return: "minimal"`, which returns sizes and hashes instead of whole values.
 * Fix: `sanitized_report` now names style declarations WordPress removed from `style` attributes. When Elementor's own filter removed more for a user without `unfiltered_html`, that used to be left out of the report.
 * Fix: a removed `<style>` block's report names `set_page_css` and where to turn it on.
+* Fix: With "Allow inline SVG and style blocks" on, a value with markup inside an SVG `<title>` is no longer kept by the opt-in: a browser reads that markup, while the filter read it as text. Such a value now goes through the ordinary rule.
 
 = 1.20.0 =
 * New: `update_post` and `create_post` take `parent`, for pages and other hierarchical types, and `menu_order`. A page's URL becomes its parent's URL plus its slug, so /services/web-development/ can be built. `parent` is refused for posts (`parent_not_supported`). A page cannot go under itself or a page below it (`parent_cycle`). The parent must be a page of the same type that the caller can read. A parent that is not published is a warning.
