@@ -607,7 +607,8 @@ These five tools ship switched off. An administrator turns them on in **Settings
 
 Makes a URL that shows one draft, pending or scheduled post to anyone who has it, without a login, so an AI client can look at its own work before it is published.
 
-- **Lifetime:** `ttl_seconds`, 15 minutes by default and an hour at most. The link also stops working once the post is published or trashed.
+- **Lifetime:** `ttl_seconds`, 15 minutes by default and an hour at most. The link also stops working for good once the post is published or trashed, even if it goes back to draft.
+- **Not for the posts page:** the page that lists your posts has no preview link (`preview_not_supported`).
 - **Revoking:** roll back the link's receipt, or use **Revoke** in the Page assets tab.
 - **Responses to it:** never cached by page caches, and marked `noindex` and `Referrer-Policy: no-referrer`.
 - **Keep it private:** the token is in the URL, so access logs and analytics on that page record it.

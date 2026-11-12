@@ -208,7 +208,7 @@ IATO_MCP_Server::register_tool(
 		}
 		$may = IATO_MCP_Preview_Link::may_create( $post_id );
 		if ( is_wp_error( $may ) ) {
-			return 'preview_not_needed' === $may->get_error_code() ? IATO_MCP_Server::refusal( $may ) : $may;
+			return in_array( $may->get_error_code(), [ 'preview_not_needed', 'preview_not_supported' ], true ) ? IATO_MCP_Server::refusal( $may ) : $may;
 		}
 		$ttl = IATO_MCP_Preview_Link::ttl( $args['ttl_seconds'] ?? null );
 		if ( is_wp_error( $ttl ) ) {

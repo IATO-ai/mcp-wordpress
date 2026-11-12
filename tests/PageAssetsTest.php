@@ -91,6 +91,13 @@ final class PageAssetsTest extends TestCase {
 		$this->assertArrayNotHasKey( IATO_MCP_Page_CSS::META, IATO_Test_WP::$meta[ self::POST ] ?? [], 'an empty value removes the meta' );
 	}
 
+	public function test_no_meta_tool_may_write_the_page_asset_keys_even_with_force(): void {
+		require_once IATO_MCP_DIR . 'includes/class-meta-policy.php';
+		foreach ( [ '_iato_mcp_page_css', '_iato_mcp_page_fonts', '_iato_mcp_page_script', '_iato_mcp_preview_links', '_IATO_MCP_PAGE_SCRIPT' ] as $key ) {
+			$this->assertInstanceOf( WP_Error::class, IATO_MCP_Meta_Policy::check_write( $key, true ), $key );
+		}
+	}
+
 	// ── Page fonts ────────────────────────────────────────────────────────
 
 	private function elementor( bool $google = true ): void {
@@ -155,6 +162,34 @@ final class PageAssetsTest extends TestCase {
 		$this->assertStringNotContainsString( $token, (string) wp_json_encode( $stored ), 'only the hash is stored' );
 		IATO_Test_WP::$meta[ self::POST ][ IATO_MCP_Preview_Link::META ][0]['expires'] = time() - 1;
 		$this->assertFalse( IATO_MCP_Preview_Link::valid( self::POST, $token ), 'expired' );
+		$this->assertSame( [], IATO_MCP_Preview_Link::links( self::POST ) );
+	}
+
+	public function test_a_link_copied_to_another_post_opens_nothing_there(): void {
+		$link  = IATO_MCP_Preview_Link::create( self::POST, 900 );
+		$token = (string) preg_replace( '/^.*iato_preview=/', '', $link['url'] );
+		IATO_Test_WP::$posts[71] = [ 'post_type' => 'page', 'post_status' => 'draft' ];
+		IATO_Test_WP::$meta[71][ IATO_MCP_Preview_Link::META ] = IATO_Test_WP::$meta[ self::POST ][ IATO_MCP_Preview_Link::META ];
+		$this->assertTrue( IATO_MCP_Preview_Link::valid( self::POST, $token ) );
+		$this->assertFalse( IATO_MCP_Preview_Link::valid( 71, $token ), 'the stored form is tied to the post' );
+	}
+
+	public function test_a_lifetime_no_link_is_given_does_not_count(): void {
+		$link  = IATO_MCP_Preview_Link::create( self::POST, 900 );
+		$token = (string) preg_replace( '/^.*iato_preview=/', '', $link['url'] );
+		IATO_Test_WP::$meta[ self::POST ][ IATO_MCP_Preview_Link::META ][0]['expires'] = time() + 10 * IATO_MCP_Preview_Link::MAX_TTL;
+		$this->assertFalse( IATO_MCP_Preview_Link::valid( self::POST, $token ), 'crafted meta that never expires' );
+	}
+
+	public function test_a_link_ends_when_its_post_is_published_or_trashed(): void {
+		IATO_MCP_Preview_Link::create( self::POST, 900 );
+		if ( ! class_exists( 'WP_Post' ) ) {
+			eval( 'final class WP_Post { public int $ID = 0; public function __construct( object $o ) { $this->ID = (int) $o->ID; } }' );
+		}
+		$post = new WP_Post( (object) [ 'ID' => self::POST, 'post_type' => 'page', 'post_status' => 'publish' ] );
+		IATO_MCP_Preview_Link::status_changed( 'pending', 'draft', $post );
+		$this->assertCount( 1, IATO_MCP_Preview_Link::links( self::POST ), 'still a status it was made for' );
+		IATO_MCP_Preview_Link::status_changed( 'publish', 'draft', $post );
 		$this->assertSame( [], IATO_MCP_Preview_Link::links( self::POST ) );
 	}
 

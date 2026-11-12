@@ -14,7 +14,8 @@ case "$TARGET" in
 	dev)    SVC=cli;       BASE=http://localhost:8888 ;;
 	tests)  SVC=tests-cli; BASE=http://localhost:8889 ;;
 	legacy) SVC=cli;       BASE=http://localhost:8890; cd "$REPO/../iato-sprint/wp-env-legacy" ;;
-	*) echo "usage: $0 [dev|tests|legacy] [--plugins|--cleanup]"; exit 2 ;;
+	e422)   SVC=cli;       BASE=http://localhost:8894; cd "$REPO/../iato-sprint/wp-env-422" ;;
+	*) echo "usage: $0 [dev|tests|legacy|e422] [--plugins|--cleanup]"; exit 2 ;;
 esac
 W() { npx @wordpress/env run "$SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
 MU=wp-content/mu-plugins/iato-mcp-test-cache.php

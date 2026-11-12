@@ -4,7 +4,7 @@
  * scheduled post to anyone who has it, so a client can look at its own work. For
  * create_preview_link, the "Page assets" tab and rollback (which revokes the link).
  *
- * The token is 32 random characters; only its SHA-256 is stored, in the post's
+ * The token is 32 random characters; only an HMAC of it, the post and the site's salt is stored, in the post's
  * `_iato_mcp_preview_links` meta (denied to every meta tool), with the expiry. A
  * request carrying a valid token for that post is let through WordPress's status
  * check by asking the main query for the post's own status, and gets no-cache,
@@ -38,7 +38,26 @@ final class IATO_MCP_Preview_Link {
 
 	public static function init(): void {
 		add_action( 'pre_get_posts', [ self::class, 'pre_get_posts' ] );
+		add_filter( 'posts_results', [ self::class, 'only_that_post' ], 10, 2 );
 		add_filter( 'wp_robots', [ self::class, 'robots' ] );
+		// A link ends when its post leaves the statuses it was made for.
+		add_action( 'transition_post_status', [ self::class, 'status_changed' ], 10, 3 );
+	}
+
+	/**
+	 * The stored form of a token: an HMAC over the post and the token with the site's
+	 * own salt, so meta copied to another post or another site (a duplicate, an import)
+	 * opens nothing there.
+	 */
+	public static function hash( int $post_id, string $token ): string {
+		return hash_hmac( 'sha256', $post_id . '|' . $token, function_exists( 'wp_salt' ) ? wp_salt( 'auth' ) : 'iato-mcp' );
+	}
+
+	/** @param string $new @param string $old @param WP_Post $post */
+	public static function status_changed( $new, $old, $post ): void {
+		if ( $post instanceof WP_Post && $new !== $old && ! in_array( $new, self::STATUSES, true ) && [] !== self::links( (int) $post->ID ) ) {
+			self::revoke( (int) $post->ID, null );
+		}
 	}
 
 	/** The live links of a post, expired ones left out. @return array<int,array{link_id:string,hash:string,expires:int,user_id:int,created:int}> */
@@ -47,7 +66,9 @@ final class IATO_MCP_Preview_Link {
 		$now   = time();
 		$out   = [];
 		foreach ( is_array( $value ) ? $value : [] as $link ) {
-			if ( is_array( $link ) && isset( $link['hash'], $link['expires'], $link['link_id'] ) && (int) $link['expires'] > $now ) {
+			// A lifetime longer than any this plugin gives is not one it wrote.
+			if ( is_array( $link ) && isset( $link['hash'], $link['expires'], $link['link_id'] ) && (int) $link['expires'] > $now
+				&& (int) $link['expires'] <= (int) ( $link['created'] ?? 0 ) + self::MAX_TTL ) {
 				$out[] = [
 					'link_id' => (string) $link['link_id'],
 					'hash'    => (string) $link['hash'],
@@ -82,6 +103,9 @@ final class IATO_MCP_Preview_Link {
 		$publish = IATO_MCP_Auth::require_publish_cap( (string) $post->post_type );
 		if ( is_wp_error( $publish ) ) {
 			return $publish;
+		}
+		if ( (int) get_option( 'page_for_posts' ) === $post_id ) {
+			return new WP_Error( 'preview_not_supported', 'This page is the posts page, which lists posts rather than showing its own content, so it has no preview link.', [ 'status' => 409 ] );
 		}
 		if ( ! in_array( $post->post_status, self::STATUSES, true ) ) {
 			return new WP_Error(
@@ -123,7 +147,7 @@ final class IATO_MCP_Preview_Link {
 		$expires = time() + $ttl;
 		$links[] = [
 			'link_id' => $link_id,
-			'hash'    => hash( 'sha256', $token ),
+			'hash'    => self::hash( $post_id, $token ),
 			'expires' => $expires,
 			'user_id' => (int) get_current_user_id(),
 			'created' => time(),
@@ -151,7 +175,7 @@ final class IATO_MCP_Preview_Link {
 		if ( 1 !== preg_match( '/^[A-Za-z0-9]{32}$/', $token ) ) {
 			return false;
 		}
-		$hash = hash( 'sha256', $token );
+		$hash = self::hash( $post_id, $token );
 		foreach ( self::links( $post_id ) as $link ) {
 			if ( hash_equals( $link['hash'], $hash ) ) {
 				return true;
@@ -186,7 +210,14 @@ final class IATO_MCP_Preview_Link {
 		if ( '' === $token ) {
 			return;
 		}
-		$post_id = (int) ( $query->get( 'page_id' ) ?: $query->get( 'p' ) );
+		// One post, shown as itself: never a listing (the posts page ignores its ID), and
+		// never a URL that names two posts.
+		$page_id = (int) $query->get( 'page_id' );
+		$p       = (int) $query->get( 'p' );
+		if ( ! $query->is_singular() || $query->is_posts_page || ( $page_id > 0 && $p > 0 && $page_id !== $p ) ) {
+			return;
+		}
+		$post_id = $page_id ?: $p;
 		$post    = $post_id > 0 ? get_post( $post_id ) : null;
 		if ( ! $post || ! in_array( $post->post_status, self::STATUSES, true ) || ! self::valid( $post_id, $token ) ) {
 			return;
@@ -194,6 +225,20 @@ final class IATO_MCP_Preview_Link {
 		$query->set( 'post_status', $post->post_status );
 		self::$active = $post_id;
 		self::no_cache();
+	}
+
+	/**
+	 * posts_results: while a preview is active, the main query returns that post and
+	 * nothing else, whatever else the URL asked for.
+	 *
+	 * @param array    $posts
+	 * @param WP_Query $query
+	 */
+	public static function only_that_post( $posts, $query ) {
+		if ( self::$active <= 0 || ! $query instanceof WP_Query || ! $query->is_main_query() || ! is_array( $posts ) ) {
+			return $posts;
+		}
+		return array_values( array_filter( $posts, static fn( $p ): bool => $p instanceof WP_Post && (int) $p->ID === self::$active ) );
 	}
 
 	/** Keep page caches, search engines and other sites' logs away from a preview. */

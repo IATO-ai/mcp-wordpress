@@ -181,6 +181,9 @@ def page_css(p1, p2):
     record('...nor a page script', r.get('isError'), r)
     r = call('get_post_meta', {'id': p1, 'key': '_iato_mcp_page_css', 'include_protected': True})
     record('get_post_meta does not read it', r.get('isError') or CSS not in json.dumps(r), r)
+    old = php(f'$r = IATO_MCP_Change_Receipt::record( {p2}, "post_meta", "_iato_mcp_page_css", null, ".x{{}}" ); echo $r["change_id"] ?? "";')
+    rb = call('rollback', {'change_id': old})
+    record('an older post_meta receipt cannot put page CSS back', old.startswith('wr_') and refused(rb, 'rollback_unavailable'), rb)
 
     print('B. rollback')
     r = call('set_page_css', {'id': p1, 'css': '.second{}'})
@@ -261,6 +264,28 @@ def preview_links(p1, p2, p3):
     record('rolling a link back revokes it', status == 200 and rb.get('success') and status2 == 404, (status, rb, status2))
     stored = wp('post', 'meta', 'get', str(p1), '_iato_mcp_preview_links', '--format=json')
     record('the token itself is never stored', token not in stored, stored[:200])
+
+    # 1.21.0 review: the posts page lists posts, so a link must never become a listing.
+    fourth = call('create_preview_link', {'id': p3})
+    front = wp('option', 'get', 'show_on_front')
+    wp('option', 'update', 'show_on_front', 'page')
+    wp('option', 'update', 'page_for_posts', str(p3))
+    try:
+        r = call('create_preview_link', {'id': p3})
+        record('the posts page gets no preview link', refused(r, 'preview_not_supported'), r)
+        status, _, html = fetch(fourth.get('url', '/'))
+        # WordPress lists posts there; the token must not make it list drafts.
+        record('a link made before the page became the posts page lists no draft', f'{T} draft one body' not in html and 'contributor draft' not in html and 'author draft' not in html, status)
+    finally:
+        wp('option', 'update', 'page_for_posts', '0')
+        wp('option', 'update', 'show_on_front', front or 'posts')
+    status, _, _ = fetch(f"/?page_id={p3}&p={p1}&iato_preview={(fourth.get('url') or '=').split('iato_preview=')[-1]}")
+    record('a URL naming two posts is refused', status == 404, status)
+    fifth = call('create_preview_link', {'id': p3})
+    call('update_post', {'id': p3, 'status': 'publish'})
+    call('update_post', {'id': p3, 'status': 'draft'})
+    status, _, _ = fetch(fifth.get('url', '/'))
+    record('publishing a post ends its links, even if it goes back to draft', status == 404, status)
     return link
 
 

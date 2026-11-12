@@ -10,7 +10,8 @@
 # (removed after; refuses to start if it is already installed).
 # Another site: WPENV_DIR (its wp-env folder) and WPENV_SVC (default cli; tests-cli).
 # The wp-admin password of the local user `admin` comes from ADMIN_PASS (wp-env's
-# default, "password", when unset).
+# default, "password", when unset). KEEP=1 leaves pages for a browser check and prints
+# their URLs (BROWSER_*); run --cleanup afterwards.
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${WPENV_DIR:-$REPO}"
@@ -20,7 +21,7 @@ MU=wp-content/mu-plugins/iato-mcp-test-page-assets-probe.php
 SRC=wp-content/plugins/mcp-wordpress/tests/wp-env
 
 cleanup() {
-	W wp eval '$b=get_option("iato_test_page_assets_backup");if(is_array($b)){foreach(["iato_mcp_tools","show_on_front","page_on_front","iato_mcp_key_owner","elementor_local_google_fonts","_elementor_local_google_fonts","iato_mcp_page_scripts_enabled"] as $k){if(null===$b[$k]){delete_option($k);}else{update_option($k,$b[$k]);}}delete_option("iato_test_page_assets_backup");}' >/dev/null
+	W wp eval '$b=get_option("iato_test_page_assets_backup");if(is_array($b)){foreach(["iato_mcp_tools","show_on_front","page_on_front","page_for_posts","iato_mcp_key_owner","elementor_local_google_fonts","_elementor_local_google_fonts","iato_mcp_page_scripts_enabled"] as $k){if(null===$b[$k]){delete_option($k);}else{update_option($k,$b[$k]);}}delete_option("iato_test_page_assets_backup");}' >/dev/null
 	for id in $(W wp post list --post_type=post,page --post_status=any,trash --s=page-assets-live --format=ids | tr ' ' '\n'); do W wp post delete "$id" --force >/dev/null; done
 	if [ "$(W wp option get iato_test_page_assets_installed_litespeed-cache)" = "1" ]; then
 		W wp plugin deactivate litespeed-cache >/dev/null
@@ -55,7 +56,7 @@ fi
 W wp plugin activate elementor >/dev/null
 W mkdir -p wp-content/mu-plugins
 W cp "$SRC/mu-page-assets-probe.php" "$MU"
-W wp eval 'add_option("iato_test_page_assets_backup",["iato_mcp_tools"=>get_option("iato_mcp_tools",null),"show_on_front"=>get_option("show_on_front",null),"page_on_front"=>get_option("page_on_front",null),"iato_mcp_key_owner"=>get_option("iato_mcp_key_owner",null),"elementor_local_google_fonts"=>get_option("elementor_local_google_fonts",null),"_elementor_local_google_fonts"=>get_option("_elementor_local_google_fonts",null),"iato_mcp_page_scripts_enabled"=>get_option("iato_mcp_page_scripts_enabled",null)],"","no");' >/dev/null
+W wp eval 'add_option("iato_test_page_assets_backup",["iato_mcp_tools"=>get_option("iato_mcp_tools",null),"show_on_front"=>get_option("show_on_front",null),"page_on_front"=>get_option("page_on_front",null),"page_for_posts"=>get_option("page_for_posts",null),"iato_mcp_key_owner"=>get_option("iato_mcp_key_owner",null),"elementor_local_google_fonts"=>get_option("elementor_local_google_fonts",null),"_elementor_local_google_fonts"=>get_option("_elementor_local_google_fonts",null),"iato_mcp_page_scripts_enabled"=>get_option("iato_mcp_page_scripts_enabled",null)],"","no");' >/dev/null
 export KEY=$(W wp option get iato_mcp_key)
 export OWNER=$(W wp option get iato_mcp_key_owner)
 STAMP=$(date +%s)
@@ -69,5 +70,6 @@ export PW_CONTRIB=$(W wp user application-password create assetscontrib live-ass
 export ADMIN_PASS="${ADMIN_PASS:-password}"
 python3 -I "$REPO/tests/wp-env/page-assets-live.py"
 rc=$?
-cleanup
+# KEEP=1 leaves the pages for a browser check (it prints their URLs); run --cleanup after.
+[ "${KEEP:-0}" = "1" ] || cleanup
 exit $rc

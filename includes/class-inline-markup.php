@@ -342,6 +342,23 @@ class IATO_MCP_Inline_Markup {
 		return $html;
 	}
 
+	/**
+	 * The raw text between the <title> the walker stands on and its closing tag. The
+	 * decoded text can hold < from &lt;, which is no tag, so the source is read. The
+	 * tokenizer treats TITLE as one token running through its closing tag.
+	 */
+	private static function raw_title_text( string $html, IATO_MCP_Html_Token_Scanner $walker ): string {
+		$text = (string) $walker->get_modifiable_text();
+		$span = $walker->token_span();
+		if ( null === $span ) {
+			return $text;
+		}
+		$token = substr( $html, $span[0], $span[1] );
+		$open  = strpos( $token, '>' );
+		$close = strripos( $token, '</title' );
+		return false === $open || false === $close || $close <= $open ? $text : substr( $token, $open + 1, $close - $open - 1 );
+	}
+
 	/** How many STYLE elements WordPress' tokenizer finds. */
 	private static function count_style_tokens( string $html ): int {
 		$scanner = new IATO_MCP_Html_Token_Scanner( $html );
@@ -405,7 +422,8 @@ class IATO_MCP_Inline_Markup {
 	private static function passes_final_check( string $html, int $style_blocks ): bool {
 		$allowed = self::allowed_html();
 		$svg     = self::svg_allowlist();
-		$walker  = new WP_HTML_Tag_Processor( $html );
+		require_once __DIR__ . '/class-html-token-scanner.php';
+		$walker  = new IATO_MCP_Html_Token_Scanner( $html );
 		$styles  = 0;
 		$angle   = false;
 		while ( $walker->next_token() ) {
@@ -429,6 +447,11 @@ class IATO_MCP_Inline_Markup {
 				$text  = (string) $walker->get_modifiable_text();
 				$angle = $angle || str_contains( $text, '<' ) || str_contains( self::decode_escapes( $text ), '<' );
 				continue;
+			}
+			// The tokenizer reads every <title> as text, but in <svg> a browser reads its
+			// children as markup, where nothing here would check them (1.21.0 review).
+			if ( 'title' === $tag && str_contains( self::raw_title_text( $html, $walker ), '<' ) ) {
+				return false;
 			}
 			if ( 'use' === $tag ) {
 				$href = $walker->get_attribute( 'href' );

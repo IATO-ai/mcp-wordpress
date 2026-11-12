@@ -204,6 +204,9 @@ OFF_SITE = {
     'no slashes inside var': '<style>.r4{background-image:var(--n,image-set("http:evil.example/R4.png" 1x))}</style><div class="r4">x</div>',
     'an https form inside var': '<style>.r4b{background-image:var(--n,image-set("https:evil.example/R4b.png" 1x))}</style><div class="r4b">x</div>',
     'var inside var': '<style>.r5{background-image:var(--n,image-set(var(--u) 1x))}</style><div class="r5" style="--u:\'https://evil.example/R5.png\'">x</div>',
+    # 1.21.0 review: an SVG <title> holds markup in a browser, and text for the tokenizer.
+    # A plain marker, not a working reference: 1.20.0 kept what was inside the title.
+    'markup inside an svg title': '<svg width="9" height="9"><title><svg><rect class="svg-title-marker" width="9" height="9"/></svg></title></svg><style>a{}</style>',
 }
 for name, payload in HOSTILE.items():
     r = write(payload)
@@ -211,6 +214,8 @@ for name, payload in HOSTILE.items():
     # Text kses encoded (&lt;img ...) is inert: only look at what is still markup.
     markup = re.sub(r'&lt;.*?&gt;', '', s)
     record(f'{name}: nothing executable stored', not FORBIDDEN.search(markup), s)
+    if name == 'markup inside an svg title':
+        record('markup inside an svg title is not kept', 'svg-title-marker' not in s and not re.search(r'<title>\s*<', s, re.I), s)
 
 print('# off-site references (stored value)')
 for name, payload in OFF_SITE.items():

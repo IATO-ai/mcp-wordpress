@@ -438,6 +438,11 @@ class IATO_MCP_Rollback {
 				return $why;
 			}
 		}
+		// 1.21.0: page assets and preview links are written by their own tools only, which
+		// check what they store; an older post_meta receipt must not put one back.
+		if ( 'post_meta' === $type && ( 0 === stripos( $field, '_iato_mcp_page_' ) || 0 === stripos( $field, '_iato_mcp_preview_' ) ) ) {
+			return new WP_Error( 'rollback_unavailable', "This receipt would write {$field}, which only its own tool may write.", [ 'status' => 409 ] );
+		}
 		if ( 'post_meta' === $type && ! empty( $receipt['post_id'] ) ) {
 			$key_check = IATO_MCP_Meta_Policy::check_stored_key( (int) $receipt['post_id'], $field );
 			if ( is_wp_error( $key_check ) ) {

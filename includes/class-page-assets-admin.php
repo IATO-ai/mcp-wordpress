@@ -241,7 +241,11 @@ final class IATO_MCP_Page_Assets_Admin {
 		$count   = isset( $actions['deactivate'] ) ? self::count() : 0;
 		if ( $count > 0 ) {
 			$message               = self::warning( $count ) . ' ' . __( 'Deactivate anyway?', 'iato-mcp' );
-			$actions['deactivate'] = preg_replace( '/^<a /', '<a data-iato-mcp-assets="' . (int) $count . '" onclick="return confirm(' . esc_attr( wp_json_encode( $message ) ) . ');" ', (string) $actions['deactivate'], 1 );
+			$link = (string) $actions['deactivate'];
+			if ( str_starts_with( $link, '<a ' ) ) {
+				// Spliced, not preg_replace(): a translation holding $1 or a backslash would be read as a back-reference.
+				$actions['deactivate'] = '<a data-iato-mcp-assets="' . (int) $count . '" onclick="return confirm(' . esc_attr( (string) wp_json_encode( $message ) ) . ');" ' . substr( $link, 3 );
+			}
 		}
 		return $actions;
 	}
