@@ -8,7 +8,7 @@ byte; the call log records the credential. Driven by rollback-actor-live.sh
 (env: BASE, KEY, KEY_OWNER, PW_ADMIN, PW_EDITOR, PW_AUTHOR, OAUTH_TOKEN,
 OAUTH_CLIENT, PREFIX, *_ID, fixtures). Exit 1 on any failure.
 """
-import base64, hashlib, json, os, secrets, subprocess, sys, urllib.error, urllib.request
+import base64, hashlib, json, os, re, secrets, subprocess, sys, urllib.error, urllib.request
 
 BASE = os.environ.get('BASE', 'http://localhost:8888').rstrip('/')
 MSG = BASE + '/wp-json/iato-mcp/v1/message'
@@ -548,9 +548,21 @@ if kit.isdigit():
 orphans = wp('db', 'query', f"SELECT COUNT(*) FROM {PREFIX}posts p JOIN {PREFIX}postmeta d ON d.post_id = p.ID AND d.meta_key = '_elementor_data' AND d.meta_value NOT IN ('', '[]') LEFT JOIN {PREFIX}postmeta e ON e.post_id = p.ID AND e.meta_key = '_elementor_edit_mode' WHERE e.meta_id IS NULL AND p.post_type NOT IN ('revision', 'elementor_library', 'e-floating-buttons') AND p.post_status NOT IN ('auto-draft', 'trash') AND p.post_title NOT LIKE 'rollback-live%'", '--skip-column-names').splitlines()[-1]
 print(f'  info  other pages on this site the refusal would catch: {orphans}')
 
-if int(wp('plugin', 'get', 'elementor', '--field=version').split('.')[0]) >= 4:
+ELEMENTOR = tuple(int(x) for x in re.findall(r'\d+', wp('plugin', 'get', 'elementor', '--field=version'))[:2])
+atomic_tree = json.dumps([{'id': 'a116box', 'elType': 'e-flexbox', 'settings': {}, 'elements': [{'id': 'a116h', 'elType': 'widget', 'widgetType': 'e-heading', 'settings': {'tag': {'$$type': 'string', 'value': 'h1'}, 'title': {'$$type': 'escaped-html', 'value': 'Atomic heading'}}, 'elements': [], 'version': '0.0'}]}])
+if (4, 0) <= ELEMENTOR < (4, 3):
+    # The atomic writer needs Elementor 4.3.0 (its settings resolver); before that, a plain
+    # value for an atomic element is refused and names the version.
+    print('# an atomic element before Elementor 4.3.0')
+    AT = new_off_page(tree_text=atomic_tree)
+    wp('post', 'meta', 'update', str(AT), '_elementor_edit_mode', 'builder')
+    kept = wp('post', 'meta', 'get', str(AT), '_elementor_data')
+    w = call('key', 'set_heading_level', {'id': AT, 'widget_id': 'a116h', 'level': 'h3'})
+    record('a plain level is refused and names Elementor 4.3.0', 'atomic_write_unavailable' in json.dumps(w) and '4.3.0' in json.dumps(w), w)
+    record('...and nothing is written', wp('post', 'meta', 'get', str(AT), '_elementor_data') == kept)
+    wp('post', 'delete', str(AT), '--force')
+if ELEMENTOR >= (4, 3):
     print('# an atomic element on a page that was then turned off')
-    atomic_tree = json.dumps([{'id': 'a116box', 'elType': 'e-flexbox', 'settings': {}, 'elements': [{'id': 'a116h', 'elType': 'widget', 'widgetType': 'e-heading', 'settings': {'tag': {'$$type': 'string', 'value': 'h1'}, 'title': {'$$type': 'escaped-html', 'value': 'Atomic heading'}}, 'elements': [], 'version': '0.0'}]}])
     AT = new_off_page(tree_text=atomic_tree)
     wp('post', 'meta', 'update', str(AT), '_elementor_edit_mode', 'builder')
     w = call('key', 'set_heading_level', {'id': AT, 'widget_id': 'a116h', 'level': 'h3'})

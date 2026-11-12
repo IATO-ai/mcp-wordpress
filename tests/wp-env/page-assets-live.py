@@ -168,7 +168,7 @@ def page_css(p1, p2):
         r = call('set_page_css', {'id': p1, 'css': '.a{}'})
         record('a site key with no owner may not', r.get('isError') and 'not assigned to a WordPress user' in r.get('_text', ''), r)
     finally:
-        wp('option', 'update', 'iato_mcp_key_owner', os.environ.get('OWNER', '1') or '1')
+        wp('option', 'update', 'iato_mcp_key_owner', os.environ['ADMIN_ID'])
 
     print('B. checked again when printed, and out of reach of the meta tools')
     wp('post', 'meta', 'update', str(p2), '_iato_mcp_page_css', '.page-assets-live-forged{background:url(https://evil.example/f.png)}')
@@ -241,8 +241,13 @@ def preview_links(p1, p2, p3):
         record('LiteSpeed is told not to cache it', 'preview' in (headers.get('X-Iato-Test-Litespeed-Nocache') or '').lower() and listening == '1', {'probe': headers.get('X-Iato-Test-Litespeed-Nocache'), 'litespeed_listens': listening})
     status, _, _ = fetch(f'/?page_id={p3}&iato_preview={token}')
     record('the token opens only its own post', status == 404, status)
-    status, _, _ = fetch(f'/?page_id={p1}&iato_preview={token[:-1]}x')
-    record('a wrong token is a 404', status == 404, status)
+    # Swap a character for a different one: appending a fixed letter left the token valid
+    # whenever it already ended in that letter (one run in 62).
+    def other(c):
+        return 'y' if c == 'x' else 'x'
+    wrong = [token[:-1] + other(token[-1]), other(token[0]) + token[1:]]
+    statuses = [fetch(f'/?page_id={p1}&iato_preview={w}')[0] for w in wrong]
+    record('a wrong token is a 404', statuses == [404, 404] and all(w != token for w in wrong), statuses)
     r = call('create_preview_link', {'id': p2})
     record('a published post needs no link', refused(r, 'preview_not_needed'), r)
     r = call('create_preview_link', {'id': p1, 'ttl_seconds': 4000})

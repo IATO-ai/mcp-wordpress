@@ -2,7 +2,8 @@
 /**
  * 1.21.0 must not narrow the markup rule: whatever 1.20.0 kept, it keeps. Run by
  * sanitizer-compat-live.sh through `wp eval-file`, which first writes 1.20.0's
- * sanitizer, with its classes renamed, into tests/wp-env/.compat-1.20.0/ (gitignored).
+ * sanitizer, with its classes renamed, into a folder of its own under
+ * tests/wp-env/.compat-1.20.0/ (gitignored) and passes its name as the argument.
  *
  * Every fixture goes through both versions, three ways:
  *   plain   the markup rule, as for a value with the inline setting off;
@@ -16,7 +17,14 @@
 
 defined( 'ABSPATH' ) || exit;
 
-$old_dir = WP_PLUGIN_DIR . '/mcp-wordpress/tests/wp-env/.compat-1.20.0';
+// The folder the shell script made for this run, so runs on several sites at once do not
+// share (and delete) one copy.
+$run = isset( $args[0] ) && 1 === preg_match( '/^run-[0-9]+-[0-9]+$/', (string) $args[0] ) ? (string) $args[0] : '';
+if ( '' === $run ) {
+	echo "Run this through sanitizer-compat-live.sh.\n";
+	exit( 1 );
+}
+$old_dir = WP_PLUGIN_DIR . '/mcp-wordpress/tests/wp-env/.compat-1.20.0/' . $run;
 require_once $old_dir . '/class-inline-markup.php';
 require_once $old_dir . '/class-elementor-sanitizer.php';
 

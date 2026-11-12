@@ -62,7 +62,10 @@ W cp "$SRC/mu-page-assets-probe.php" "$MU"
 W cp "$SRC/mu-cache-spy.php" "$SPY"
 W wp eval 'add_option("iato_test_page_assets_backup",["iato_mcp_tools"=>get_option("iato_mcp_tools",null),"show_on_front"=>get_option("show_on_front",null),"page_on_front"=>get_option("page_on_front",null),"page_for_posts"=>get_option("page_for_posts",null),"iato_mcp_key_owner"=>get_option("iato_mcp_key_owner",null),"elementor_local_google_fonts"=>get_option("elementor_local_google_fonts",null),"_elementor_local_google_fonts"=>get_option("_elementor_local_google_fonts",null),"iato_mcp_page_scripts_enabled"=>get_option("iato_mcp_page_scripts_enabled",null)],"","no");' >/dev/null
 export KEY=$(W wp option get iato_mcp_key)
-export OWNER=$(W wp option get iato_mcp_key_owner)
+# Writes need a WordPress user behind the key, so it is bound to admin for the run (some
+# sites keep it unbound); cleanup puts the owner back from the backup above.
+export ADMIN_ID=$(W wp user get admin --field=ID)
+W wp option update iato_mcp_key_owner "$ADMIN_ID" >/dev/null
 STAMP=$(date +%s)
 W wp user get assetseditor --field=ID >/dev/null 2>&1 || W wp user create assetseditor assetseditor@example.test --role=editor --user_pass=assets-pass >/dev/null
 W wp user get assetsauthor --field=ID >/dev/null 2>&1 || W wp user create assetsauthor assetsauthor@example.test --role=author --user_pass=assets-pass >/dev/null
