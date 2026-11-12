@@ -289,6 +289,52 @@ record('...and on the write', 'style on <div>: color:rgb(1,2,3)' in entry(r).get
 r = write(CONTROLS, 'author', A_PAGE, A_HTML)
 record('an author: Elementor\'s own kses still runs (a known limit), and the report says so', 'aria-pressed' not in (stored(A_PAGE, A_HTML) or 'aria-pressed') and any(x.get('source') == 'elementor' for x in r.get('sanitized_report', [])), {'stored': stored(A_PAGE, A_HTML), 'r': r})
 
+# ── 1.21.0: what was stored, and smaller responses ─────────────────────────
+print('# 1.21.0 responses')
+import hashlib
+setting(False)
+r = write('<p>clean 1.21</p>')
+op = (r.get('applied_patch') or [{}])[0]
+record('a value stored as sent: stored_matches_input true', op.get('stored_matches_input') is True and 'stored_sha256' not in op, op)
+r = write('<p>kept</p><script>alert(41)</script>')
+op = (r.get('applied_patch') or [{}])[0]
+w = call('get_elementor_widget', {'id': PAGE, 'widget_id': HTML}, 'oauth')
+kept = w.get('settings', {}).get('html', '')
+record('a value stored differently says what was stored', op.get('stored_matches_input') is False and op.get('stored_value') == kept and op.get('stored_sha256') == hashlib.sha256(kept.encode()).hexdigest(), {'op': op, 'kept': kept})
+r = write('<p>dry</p><script>x</script>', dry_run=True)
+op = (r.get('applied_patch') or [{}])[0]
+record('a dry run says it too', op.get('stored_matches_input') is False and op.get('stored_value') == '<p>dry</p>', op)
+big = '<div class="big">' + ''.join(f'<p class="row-{i}">Row {i} with some text to make it longer</p>' for i in range(420)) + '</div>'
+record('setup: the widget value is over 20 KB', len(big) > 20000, len(big))
+write(big)  # the previous value is large too
+big2 = big.replace('Row 1 ', 'Row one ')
+for label, dry in (('dry run', True), ('write', False)):
+    body = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'update_elementor_widget', 'arguments': {'id': PAGE, 'widget_id': HTML, 'settings_patch': {'html': big2 + ('' if dry else ' ')}, 'return': 'minimal', 'dry_run': dry}}}
+    req = urllib.request.Request(MSG, data=json.dumps(body).encode(), method='POST', headers={'Content-Type': 'application/json', 'Authorization': auth('oauth')})
+    raw = urllib.request.urlopen(req, timeout=120).read()
+    res = json.loads(json.loads(raw)['result']['content'][0]['text'])
+    op = (res.get('applied_patch') or [{}])[0]
+    record(f'return minimal, {label}: a 20 KB widget update under 2 KB', len(raw) < 2048 and 'value' not in op and op.get('value_bytes', 0) > 20000 and 'previous_sha256' in op, {'bytes': len(raw), 'op': op})
+r = call('update_elementor_widget', {'id': PAGE, 'widget_id': HTML, 'settings_patch': {'html': '<p>x</p>'}, 'return': 'tiny'}, 'oauth')
+record('an unknown return is refused before anything is written', r.get('isError') and 'invalid_return' in r.get('text', ''), r)
+tree = json.loads(wp('post', 'meta', 'get', str(PAGE), '_elementor_data'))
+r = call('update_elementor_data', {'id': PAGE, 'elementor_data': json.dumps(tree), 'return': 'minimal', 'dry_run': True}, 'oauth')
+record('update_elementor_data takes return too', r.get('dry_run') is True and not r.get('isError'), r)
+pointer = None
+def find_path(elements, prefix=''):
+    for i, el in enumerate(elements):
+        p = f'{prefix}/{i}'
+        if el.get('id') == HTML:
+            return p
+        found = find_path(el.get('elements', []), p + '/elements')
+        if found:
+            return found
+    return None
+pointer = find_path(tree)
+r = call('update_elementor_patch', {'id': PAGE, 'ops': [{'op': 'replace', 'path': pointer + '/settings/html', 'value': '<p>patched</p><script>y</script>'}], 'return': 'minimal'}, 'oauth')
+op = (r.get('applied_patch') or [{}])[0]
+record('update_elementor_patch: minimal, and what was stored', op.get('stored_matches_input') is False and 'value' not in op and op.get('stored_sha256') == hashlib.sha256((stored(PAGE, HTML) or '').encode()).hexdigest(), op)
+
 # Everything hostile at once, plus the good markup, for the browser check.
 setting(True)
 wid_page_html = GOOD + ''.join(HOSTILE.values())

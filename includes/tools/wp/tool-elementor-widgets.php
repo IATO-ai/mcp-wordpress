@@ -161,6 +161,7 @@ IATO_MCP_Server::register_tool(
 				'dry_run'         => [ 'type' => 'boolean', 'description' => 'Preview applied_patch without writing (default: false).' ],
 				'if_revision'     => [ 'type' => 'string',  'description' => 'Optional. Reject the write with revision_conflict if the stored revision differs.' ],
 				'idempotency_key' => [ 'type' => 'string',  'description' => 'Optional. Same key + same payload within 60s returns cached response with idempotency_replay=true; same key + different payload returns 409.' ],
+				'return'          => [ 'type' => 'string',  'enum' => [ 'full', 'minimal' ], 'description' => 'full (default): applied_patch holds the values. minimal: each value, previous_value and stored value becomes its bytes and sha256, which keeps the response small for a large widget. Applies to dry runs too.' ],
 			],
 			'required' => [ 'id', 'widget_id', 'settings_patch' ],
 		],
@@ -182,6 +183,11 @@ IATO_MCP_Server::register_tool(
 			}
 		}
 
+		$return = IATO_MCP_Elementor_Adapter::return_mode( $args );
+		if ( is_wp_error( $return ) ) {
+			return IATO_MCP_Server::refusal( $return );
+		}
+
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;
 		$key     = isset( $args['idempotency_key'] ) ? (string) $args['idempotency_key'] : null;
 
@@ -197,6 +203,7 @@ IATO_MCP_Server::register_tool(
 		if ( is_wp_error( $result ) ) {
 			return IATO_MCP_Elementor_Adapter::tool_error( $result );
 		}
+		$result = IATO_MCP_Elementor_Adapter::shape_response( $result, $return );
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'update_elementor_widget', $key, $args, $result );
 		return IATO_MCP_Server::ok( $result );
@@ -217,6 +224,7 @@ IATO_MCP_Server::register_tool(
 				'dry_run'         => [ 'type' => 'boolean', 'description' => 'Preview applied_patch without writing (default: false).' ],
 				'if_revision'     => [ 'type' => 'string',  'description' => 'Optional revision guard.' ],
 				'idempotency_key' => [ 'type' => 'string',  'description' => 'Optional 60s replay key.' ],
+				'return'          => [ 'type' => 'string',  'enum' => [ 'full', 'minimal' ], 'description' => 'full (default): applied_patch holds the values. minimal: each value, previous_value and stored value becomes its bytes and sha256. Applies to dry runs too.' ],
 			],
 			'required' => [ 'id', 'ops' ],
 		],
@@ -236,6 +244,10 @@ IATO_MCP_Server::register_tool(
 		}
 		if ( null === $ops ) {
 			return new WP_Error( 'missing_ops', 'ops must be an array of RFC 6902 operations.' );
+		}
+		$return = IATO_MCP_Elementor_Adapter::return_mode( $args );
+		if ( is_wp_error( $return ) ) {
+			return IATO_MCP_Server::refusal( $return );
 		}
 
 		if ( ! get_post( $post_id ) ) {
@@ -314,7 +326,7 @@ IATO_MCP_Server::register_tool(
 				'post_id'          => $post_id,
 				'dry_run'          => true,
 				'current_revision' => null,
-				'applied_patch'    => $applied,
+				'applied_patch'    => IATO_MCP_Elementor_Adapter::annotate_stored( $applied, IATO_MCP_Elementor_Adapter::sanitized_tree( $elements, $stored_elements ) ),
 			] + $markers + IATO_MCP_Elementor_Adapter::preview_report( $elements, $stored_elements );
 			IATO_MCP_Sanitize_Report::add_to( $preview, $atomic_check['sanitized_report'] ?? [] );
 			if ( isset( $atomic_check['pipeline_opts']['skip_save'] ) ) {
@@ -324,7 +336,7 @@ IATO_MCP_Server::register_tool(
 			if ( $echo_prev ) {
 				$preview = [ 'previous_revision' => $previous_revision ] + $preview;
 			}
-			return IATO_MCP_Server::ok( $preview );
+			return IATO_MCP_Server::ok( IATO_MCP_Elementor_Adapter::shape_response( $preview, $return ) );
 		}
 
 		// 1.16.0: on a post with no elements yet, this write replaces the content
@@ -346,7 +358,8 @@ IATO_MCP_Server::register_tool(
 		$response = [
 			'post_id'             => $post_id,
 			'current_revision'    => $pipeline['current_revision'],
-			'applied_patch'       => $applied,
+			// 1.21.0: read back, so the response says what was stored, not only what was sent.
+			'applied_patch'       => IATO_MCP_Elementor_Adapter::annotate_stored( $applied, IATO_MCP_Elementor_Adapter::stored_elements( $post_id ) ),
 			'content_updated'     => $pipeline['content_updated'],
 			'post_content_length' => $pipeline['post_content_length'],
 		] + $markers + IATO_MCP_Elementor_Adapter::pipeline_report( $pipeline );
@@ -369,6 +382,7 @@ IATO_MCP_Server::register_tool(
 			$pipeline['current_revision']
 		);
 		$response['change_receipt'] = IATO_MCP_Change_Receipt::slim( $receipt );
+		$response                   = IATO_MCP_Elementor_Adapter::shape_response( $response, $return );
 
 		IATO_MCP_Elementor_Concurrency::idempotency_store( $user_id, 'update_elementor_patch', $key, $args, $response );
 		return IATO_MCP_Server::ok( $response );
