@@ -109,6 +109,23 @@ final class SanitizeReportTest extends TestCase {
 		$this->assertSame( [ 'e1/settings/title', 'e2/settings/x' ], array_column( IATO_MCP_Sanitize_Report::merge( $a, $b ), 'path' ) );
 	}
 
+	public function test_a_later_pass_that_removed_more_is_not_lost(): void {
+		$ours      = [ [ 'path' => 'w/settings/html', 'rule' => 'html', 'removed_tags' => [], 'removed_attributes' => [] ] ];
+		$elementor = [ [ 'path' => 'w/settings/html', 'rule' => 'html', 'removed_tags' => [ 'input' ], 'removed_attributes' => [ 'aria-pressed' ], 'source' => 'elementor' ] ];
+		$merged    = IATO_MCP_Sanitize_Report::merge( $ours, $elementor );
+		$this->assertCount( 1, $merged );
+		$this->assertSame( [ 'input' ], $merged[0]['removed_tags'] );
+		$this->assertSame( [ 'aria-pressed' ], $merged[0]['removed_attributes'] );
+		$this->assertSame( 'elementor', $merged[0]['source'] );
+		$this->assertStringContainsString( "Elementor's own save removed: input, aria-pressed.", $merged[0]['note'] );
+	}
+
+	public function test_a_later_pass_that_removed_nothing_new_changes_nothing(): void {
+		$ours = [ [ 'path' => 'w/settings/html', 'rule' => 'html', 'removed_tags' => [ 'script' ], 'removed_attributes' => [] ] ];
+		$same = [ [ 'path' => 'w/settings/html/value', 'rule' => 'html', 'removed_tags' => [ 'script' ], 'removed_attributes' => [], 'source' => 'elementor' ] ];
+		$this->assertSame( $ours, IATO_MCP_Sanitize_Report::merge( $ours, $same ) );
+	}
+
 	public function test_add_to_marks_only_real_changes(): void {
 		$r = [];
 		IATO_MCP_Sanitize_Report::add_to( $r, [] );

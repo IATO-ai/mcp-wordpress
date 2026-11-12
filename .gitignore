@@ -28,3 +28,6 @@ iato-mcp-iato-mcp-php-*.md
 .wp-env.override.json
 .phpunit.result.cache
 __pycache__/
+
+# 1.20.0 sanitizer copy made by tests/wp-env/sanitizer-compat-live.sh
+tests/wp-env/.compat-1.20.0/

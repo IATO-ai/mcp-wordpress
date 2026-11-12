@@ -466,7 +466,30 @@ A receipt is an undo promise, so `record()` checks its insert and never returns 
 
 **Whole elements (1.16.0).** `IATO_MCP_Elementor_Sanitizer::clean_markup()` is the markup rule for Elementor values, `create_post` / `update_post` content and the `create_media` description: `IATO_MCP_Inline_Markup::remove_style_and_script()` cuts STYLE and SCRIPT tokens with the scanner, then `wp_kses_post` runs, always last, because cutting text out of sanitised markup can join what is left into something live. Below WordPress 6.5 the tokenizer does not exist and the value goes to kses unchanged. `write_pipeline()` step 5 renders with no inline CSS. CSS already on pages as text is not cleaned up: a tool cannot tell it from real content.
 
+**Never narrower (1.21.0).**
+
+- **The markup rule.** `clean_markup()` hands `wp_kses()` the array `IATO_MCP_Inline_Markup::markup_allowlist()`, never the `'post'` context. That array is built on every call from `wp_kses_allowed_html( 'post' )`, as other plugins filtered it, with gaps filled:
+  - every ARIA attribute (`ARIA`) and `inert` on every tag;
+  - `disabled` on button, fieldset, input and textarea, and `readonly` on input and textarea;
+  - `<input>`, only where nothing allows it yet: `type` limited to `INPUT_TYPES`, no `src` or `formaction`.
+
+  An attribute already allowed keeps its rule. Passing an array keeps WordPress from adding `<form>` because `<input>` is allowed (`kses.php`, the 5.0.1 rule); on a site where a plugin already allows `<input>`, `wp_kses_allowed_html()` has already added `<form>`, and it stays.
+- **The check.** `tests/wp-env/sanitizer-compat-live.sh` runs a fixture set through v1.20.0's sanitizer, read from `git show` with its classes renamed into the gitignored `tests/wp-env/.compat-1.20.0/`, and through the current one, with the opt-in off and on, and with a filter allowing `<input>` as some plugins do. It fails if anything 1.20.0 kept is lost, or a value 1.20.0 stored unchanged changes.
+- **The report.**
+  - `IATO_MCP_Sanitize_Report` also lists declarations kses took out of `style` attributes, in `removed_css` as `style on <div>: color:rgb(1,2,3)` (`removed_declarations()`, html rule only).
+  - `merge()` now joins a second entry for the same path rather than dropping it: Elementor's own kses for an Author removed more than the plugin's pass, and the report said nothing was removed. The joined entry gets `source: "elementor"` and a note listing what that save removed.
+
 **Opt-in.** `includes/class-inline-markup.php` (`IATO_MCP_Inline_Markup`), `includes/class-html-token-scanner.php` (loaded on demand: it extends `WP_HTML_Tag_Processor`). Setting `iato_mcp_inline_markup_enabled`, `'1'` / `'0'`, default off.
+
+- **1.21.0, SVG:**
+  - Added: `ellipse`, `text`, `tspan`, `defs`, `lineargradient`, `radialgradient`, `stop`, `marker`, `clippath` and `use`, with their geometry. Every SVG element also takes the marker, clip and text attributes and every ARIA attribute.
+  - `use` may carry `href` only as `#id` (`is_fragment()`): a kses `value_callback`, then `remove_outside_use()` before kses takes out any other `<use>` and its closer, so the report lists it, then `passes_final_check()` as the backstop.
+- **1.21.0, `@property`:** `sanitize_css( $css, $syntax_ok )` keeps a `syntax` descriptor holding `<` (`'<number>'`, or escaped as `'\3c number\3e '`).
+  - Which strings count: those the tokenizer finds right after `syntax:` directly in a `@property` block, whose decoded text matches `is_syntax_descriptor()` (`SYNTAX_TYPES`, `|`, `+`, `#`, identifiers).
+  - `blank_syntax_descriptors()` empties those spans before the plain search and `css_hazard()`, so any other `<` still drops the block. `css_final_check()` does the same.
+  - `filter()` passes `$syntax_ok` only when `styles_are_html()` says so: `WP_HTML_Processor` (6.7+) reads the whole value, every STYLE is in the HTML namespace, and it counts as many as the tokenizer. Inside `<svg>` a browser reads `<` there as a tag.
+  - `passes_final_check()` repeats that check for any kept block holding `<`.
+  - Additional CSS keeps the old rule: `refused_parts()` defaults to `false`, and `printed_differently()` refuses it anyway.
 
 - **It does not grant `unfiltered_html`.** The kses lock stays on for the request. `policy()` reads the capability inside `write_unlocked()`, requiring `unfiltered_html` and `manage_options` (an Editor holds the first; the setting says administrators). User 0 holds neither. `unfiltered_html_allowed()` is unchanged. Works on OAuth, bound key and Application Password.
 - **One value.** `IATO_MCP_Elementor_Sanitizer::walk()` knows the element and passes `$html_widget`; `diff_value()` applies `sanitize_html_setting()` only to exactly `<id>/settings/html` of `elType: widget`, `widgetType: html`. `sanitize_value()` cannot host this: it sees a sliced path, and `styles/html` looks the same. The meta policy calls `sanitize_value()` and is untouched.

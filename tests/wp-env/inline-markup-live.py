@@ -157,7 +157,8 @@ record('an author: stripped', entry(r, A_HTML).get('inline_markup') == 'stripped
 
 # ── Hostile input, one at a time, all as an administrator with the setting on ──
 print('# hostile input (stored value)')
-FORBIDDEN = re.compile(r'<script|on(error|load|click|mouseover)\s*=|javascript:|foreignobject|<use|<image|<animate|<set\b|xlink:href', re.I)
+# 1.21.0: <use> may stay, pointing at #id in the document only.
+FORBIDDEN = re.compile(r'<script|on(error|load|click|mouseover)\s*=|javascript:|foreignobject|<use\b(?![^>]*\bhref="#[a-z0-9_])|<image|<animate|<set\b|xlink:href', re.I)
 HOSTILE = {
     'attribute holding style text': '<img alt="<style>" src=x onerror=alert(1) x="</style>"><style>a{}</style>',
     'style breakout': '<style>a{}</style><script>alert(1)</script><img src=x onerror=alert(2)>',
@@ -252,6 +253,41 @@ r = write(GOOD)
 rid = r['change_receipt']['change_id']
 write('<p>replaced</p>')
 wp('option', 'delete', 'iato_mcp_inline_markup_enabled')
+
+# ── 1.21.0: more SVG, @property, ARIA and form attributes, style declarations ──
+print('# 1.21.0')
+SPEC_SVG = "<svg width='16' height='16' viewBox='0 0 16 16' role='img' aria-hidden='true'><title>t</title><defs><linearGradient id='g1'><stop offset='0' stop-color='#fff'></stop></linearGradient><marker id='m1' orient='auto' markerWidth='5' markerHeight='5'><path d='M0 0L4 2L0 4Z'></path></marker></defs><g transform='rotate(-14 8 8)'><path d='M3 8h10' fill='none' stroke='currentColor' stroke-width='1.75' marker-end='url(#m1)'></path><circle cx='8' cy='8' r='5'></circle><rect x='1' y='5' width='8' height='6'></rect><ellipse cx='8' cy='8' rx='6' ry='4'></ellipse><line x1='0' y1='0' x2='16' y2='16'></line><text x='2' y='12' text-anchor='middle' font-size='8'>A</text><use href='#g1'></use></g></svg>"
+CONTROLS = "<button type='button' aria-pressed='true' disabled='disabled'>B</button><input type='text' value='x' readonly='readonly' aria-hidden='true'>"
+SPEC_STYLE = "<style>\n@property --p{syntax:'<number>';inherits:true;initial-value:84}\n.a>b{color:red}\n#x:checked~.y [for=x]{content:'x'}\n@media (min-width:1440px){.z{display:block}}\n@keyframes k{from{opacity:0}to{opacity:1}}\n</style>"
+setting(True)
+for label, dry in (('dry run', True), ('write', False)):
+    r = write(SPEC_SVG + CONTROLS, dry_run=dry)
+    e = entry(r)
+    record(f'spec SVG and controls, setting on, {label}: nothing removed', e.get('removed_tags', []) == [] and e.get('removed_attributes', []) == [] and 'defs' in e.get('kept_tags', []), e)
+s = stored(PAGE, HTML)
+record('...and stored with every element', all(has_real_tag(s, t) for t in ('defs', 'lineargradient', 'stop', 'marker', 'ellipse', 'text', 'use', 'input', 'button')) and 'marker-end="url(#m1)"' in s and 'aria-pressed' in s and 'readonly' in s, s)
+r = write(SPEC_SVG.replace("<use href='#g1'></use>", '<use href="https://example.com/x.svg#a"></use>'))
+e = entry(r); s = stored(PAGE, HTML)
+record('an outside <use> loses that element and nothing else', not has_real_tag(s, 'use') and has_real_tag(s, 'ellipse') and e.get('removed_tags') == ['use'] and e.get('inline_markup') == 'kept', e)
+r = write(SPEC_STYLE)
+e = entry(r); s = stored(PAGE, HTML)
+record('the spec style block is stored unchanged', "syntax:'<number>'" in s and e.get('removed_css', []) == [] and e.get('inline_markup') == 'kept', e)
+html = urllib.request.urlopen(wp('post', 'url', str(PAGE)), timeout=60).read().decode()
+record('...and printed as it is', "@property --p{syntax:'<number>';inherits:true;initial-value:84}" in html, html[:300])
+r = write("<svg><style>@property --p{syntax:'<number>'}</style></svg>")
+record('inside <svg> a descriptor still drops the block', '<number>' not in (stored(PAGE, HTML) or ''), stored(PAGE, HTML))
+r = write("<style>@property --p{syntax:'</style><script>alert(31)</script>'}</style>")
+record('a breakout in a descriptor keeps nothing live', not re.search(r'<script', re.sub(r'&lt;.*?&gt;', '', stored(PAGE, HTML) or ''), re.I), stored(PAGE, HTML))
+setting(False)
+r = write(CONTROLS)
+e = entry(r); s = stored(PAGE, HTML)
+record('setting off: aria-pressed, disabled, readonly and <input> are kept', 'aria-pressed="true"' in s and 'disabled' in s and has_real_tag(s, 'input') and 'readonly' in s and not e.get('removed_attributes') and not e.get('removed_tags'), {'stored': s, 'entry': e})
+r = write('<div style="color:rgb(1,2,3);margin:0">x</div>', dry_run=True)
+record('a dropped style declaration is named, on a dry run too', 'style on <div>: color:rgb(1,2,3)' in entry(r).get('removed_css', []), r)
+r = write('<div style="color:rgb(1,2,3);margin:0">x</div>')
+record('...and on the write', 'style on <div>: color:rgb(1,2,3)' in entry(r).get('removed_css', []), r)
+r = write(CONTROLS, 'author', A_PAGE, A_HTML)
+record('an author: Elementor\'s own kses still runs (a known limit), and the report says so', 'aria-pressed' not in (stored(A_PAGE, A_HTML) or 'aria-pressed') and any(x.get('source') == 'elementor' for x in r.get('sanitized_report', [])), {'stored': stored(A_PAGE, A_HTML), 'r': r})
 
 # Everything hostile at once, plus the good markup, for the browser check.
 setting(True)

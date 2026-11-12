@@ -35,30 +35,77 @@ class IATO_MCP_Inline_Markup {
 
 	/**
 	 * The SVG elements allowed, and for each the attributes. Lowercase: wp_kses
-	 * compares lowercased names, so a `viewBox` key would strip the attribute.
-	 * Never here: href, xlink:href (kses does not URL-check it, so it would pass
-	 * javascript:), use, image, animate, set, foreignObject, feImage, event
-	 * handlers.
+	 * compares lowercased names, so a `viewBox` key would strip the attribute, and
+	 * browsers restore the case (`lineargradient`, `markerwidth`) through the HTML
+	 * parser's SVG adjustment tables.
+	 * Never here: xlink:href (kses does not URL-check it, so it would pass
+	 * javascript:), image, animate, set, foreignObject, feImage, event handlers.
+	 * `use` may carry href only as `#id` (1.21.0): svg_allowlist() gives it a kses
+	 * value_callback, filter() removes any other `use` before kses, and
+	 * passes_final_check() is the backstop.
 	 */
 	private const SVG_ELEMENTS = [
-		'svg'      => [ 'xmlns', 'viewbox', 'width', 'height', 'x', 'y', 'preserveaspectratio', 'version' ],
-		'g'        => [],
-		'path'     => [ 'd', 'pathlength' ],
-		'rect'     => [ 'x', 'y', 'width', 'height', 'rx', 'ry' ],
-		'circle'   => [ 'cx', 'cy', 'r' ],
-		'line'     => [ 'x1', 'y1', 'x2', 'y2' ],
-		'polyline' => [ 'points' ],
-		'polygon'  => [ 'points' ],
-		'title'    => [],
+		'svg'            => [ 'xmlns', 'viewbox', 'width', 'height', 'x', 'y', 'preserveaspectratio', 'version' ],
+		'g'              => [],
+		'path'           => [ 'd', 'pathlength' ],
+		'rect'           => [ 'x', 'y', 'width', 'height', 'rx', 'ry' ],
+		'circle'         => [ 'cx', 'cy', 'r' ],
+		'ellipse'        => [ 'cx', 'cy', 'rx', 'ry' ],
+		'line'           => [ 'x1', 'y1', 'x2', 'y2' ],
+		'polyline'       => [ 'points' ],
+		'polygon'        => [ 'points' ],
+		'title'          => [],
+		'text'           => [ 'x', 'y', 'dx', 'dy', 'rotate', 'textlength', 'lengthadjust' ],
+		'tspan'          => [ 'x', 'y', 'dx', 'dy', 'rotate', 'textlength', 'lengthadjust' ],
+		'defs'           => [],
+		'lineargradient' => [ 'x1', 'y1', 'x2', 'y2', 'gradientunits', 'gradienttransform', 'spreadmethod' ],
+		'radialgradient' => [ 'cx', 'cy', 'r', 'fx', 'fy', 'fr', 'gradientunits', 'gradienttransform', 'spreadmethod' ],
+		'stop'           => [ 'offset', 'stop-color', 'stop-opacity' ],
+		'marker'         => [ 'viewbox', 'preserveaspectratio', 'refx', 'refy', 'markerunits', 'markerwidth', 'markerheight', 'orient' ],
+		'clippath'       => [ 'clippathunits' ],
+		'use'            => [ 'href', 'x', 'y', 'width', 'height' ],
 	];
 
-	/** Presentational attributes every SVG element may carry. */
+	/** Presentational attributes every SVG element may carry. The ARIA ones are added from ARIA. */
 	private const SVG_COMMON = [
-		'class', 'id', 'style', 'role', 'aria-hidden', 'aria-label', 'aria-labelledby', 'focusable',
-		'fill', 'fill-opacity', 'fill-rule', 'clip-rule',
+		'class', 'id', 'style', 'role', 'focusable', 'tabindex',
+		'fill', 'fill-opacity', 'fill-rule', 'clip-rule', 'clip-path',
 		'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray', 'stroke-dashoffset', 'stroke-miterlimit', 'stroke-opacity',
+		'marker-start', 'marker-mid', 'marker-end',
 		'opacity', 'transform', 'transform-origin', 'color', 'display', 'visibility', 'vector-effect', 'shape-rendering',
+		'text-anchor', 'dominant-baseline', 'font-family', 'font-size', 'font-weight', 'font-style', 'letter-spacing', 'word-spacing', 'text-decoration',
 	];
+
+	/**
+	 * Every ARIA state and property (ARIA 1.2, and the 1.3 additions browsers already
+	 * read). They hold text or element IDs, never a URL, so any tag may carry them.
+	 */
+	public const ARIA = [
+		'aria-activedescendant', 'aria-atomic', 'aria-autocomplete', 'aria-braillelabel', 'aria-brailleroledescription',
+		'aria-busy', 'aria-checked', 'aria-colcount', 'aria-colindex', 'aria-colindextext', 'aria-colspan',
+		'aria-controls', 'aria-current', 'aria-describedby', 'aria-description', 'aria-details', 'aria-disabled',
+		'aria-dropeffect', 'aria-errormessage', 'aria-expanded', 'aria-flowto', 'aria-grabbed', 'aria-haspopup',
+		'aria-hidden', 'aria-invalid', 'aria-keyshortcuts', 'aria-label', 'aria-labelledby', 'aria-level',
+		'aria-live', 'aria-modal', 'aria-multiline', 'aria-multiselectable', 'aria-orientation', 'aria-owns',
+		'aria-placeholder', 'aria-posinset', 'aria-pressed', 'aria-readonly', 'aria-relevant', 'aria-required',
+		'aria-roledescription', 'aria-rowcount', 'aria-rowindex', 'aria-rowindextext', 'aria-rowspan',
+		'aria-selected', 'aria-setsize', 'aria-sort', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext',
+	];
+
+	/**
+	 * `<input>`, when nothing on the site allows it already (1.21.0). WordPress has
+	 * not allowed it since 5.0.1. No `<form>`: an input outside a form submits
+	 * nothing. No password, file, image, hidden or submit types, and no attribute
+	 * that loads or sends anything (src, formaction).
+	 */
+	private const INPUT_TYPES = [ 'text', 'search', 'email', 'url', 'tel', 'number', 'range', 'checkbox', 'radio', 'color', 'date', 'time', 'datetime-local', 'month', 'week', 'button', 'reset' ];
+	private const INPUT_ATTRIBUTES = [ 'name', 'value', 'placeholder', 'checked', 'min', 'max', 'step', 'size', 'minlength', 'maxlength', 'pattern', 'list', 'autocomplete', 'inputmode', 'readonly', 'disabled', 'required', 'multiple' ];
+
+	/** A `use` element's href: only a reference inside the document. */
+	private const FRAGMENT = '/^#[A-Za-z0-9_][A-Za-z0-9_.:\-]*$/D';
+
+	/** CSS data type names a @property syntax descriptor may hold (CSS Properties and Values API). */
+	private const SYNTAX_TYPES = 'length|number|percentage|length-percentage|color|image|url|integer|angle|time|resolution|transform-function|transform-list|custom-ident|string';
 
 	public static function is_enabled(): bool {
 		$value = get_option( self::OPTION, '0' );
@@ -87,18 +134,61 @@ class IATO_MCP_Inline_Markup {
 		return isset( $tags['style'] ) || isset( $tags['svg'] );
 	}
 
-	/** @return array<string,array<string,bool>> */
+	/** @return array<string,array<string,mixed>> */
 	public static function svg_allowlist(): array {
 		$out = [];
 		foreach ( self::SVG_ELEMENTS as $element => $attributes ) {
-			$out[ $element ] = array_fill_keys( array_merge( $attributes, self::SVG_COMMON ), true );
+			$out[ $element ] = array_fill_keys( array_merge( $attributes, self::SVG_COMMON, self::ARIA ), true );
 		}
+		$out['use']['href'] = [ 'value_callback' => [ self::class, 'is_fragment' ] ];
 		return $out;
 	}
 
-	/** @return array<string,array<string,mixed>> Post tags plus the SVG subset. Not <style>: it never reaches kses. */
+	/** Is this a reference to an element in the same document, `#id`? */
+	public static function is_fragment( mixed $value ): bool {
+		return is_string( $value ) && 1 === preg_match( self::FRAGMENT, trim( $value ) );
+	}
+
+	/**
+	 * What the markup rule allows (1.21.0): WordPress's post list, as other plugins
+	 * have filtered it, with gaps filled. Nothing is taken away and no rule already
+	 * there changes, so whatever passed before still passes:
+	 *   - every ARIA attribute and `inert` on every tag;
+	 *   - `disabled` on button, fieldset, input and textarea, `readonly` on input and
+	 *     textarea;
+	 *   - `<input>` with a narrow list, only where nothing allows it yet. An array is
+	 *     handed to wp_kses() rather than the 'post' context, so WordPress does not
+	 *     add `<form>` because `<input>` is now allowed (kses.php, the 5.0.1 rule).
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	public static function markup_allowlist(): array {
+		$tags  = (array) wp_kses_allowed_html( 'post' );
+		$extra = array_fill_keys( self::ARIA, true ) + [ 'inert' => true ];
+		if ( ! isset( $tags['input'] ) ) {
+			$input = array_fill_keys( self::INPUT_ATTRIBUTES, true ) + [ 'type' => [ 'values' => self::INPUT_TYPES ] ];
+			// The global attributes WordPress gives every tag in its own list.
+			$tags['input'] = function_exists( '_wp_add_global_attributes' ) ? _wp_add_global_attributes( $input ) : $input + array_fill_keys( [ 'class', 'id', 'style', 'title', 'role', 'hidden', 'lang', 'dir', 'tabindex', 'data-*' ], true );
+		}
+		foreach ( $tags as $tag => $attributes ) {
+			$tags[ $tag ] = ( is_array( $attributes ) ? $attributes : [] ) + $extra;
+		}
+		foreach ( [ 'button', 'fieldset', 'input', 'textarea' ] as $tag ) {
+			if ( isset( $tags[ $tag ] ) ) {
+				$tags[ $tag ] += [ 'disabled' => true ];
+			}
+		}
+		foreach ( [ 'input', 'textarea' ] as $tag ) {
+			if ( isset( $tags[ $tag ] ) ) {
+				$tags[ $tag ] += [ 'readonly' => true ];
+			}
+		}
+		return $tags;
+	}
+
+	/** @return array<string,array<string,mixed>> The markup rule's tags plus the SVG subset. Not <style>: it never reaches kses. */
 	private static function allowed_html(): array {
-		return self::svg_allowlist() + (array) wp_kses_allowed_html( 'post' );
+		return self::svg_allowlist() + self::markup_allowlist();
 	}
 
 	/**
@@ -153,7 +243,10 @@ class IATO_MCP_Inline_Markup {
 		$fail = [ 'ok' => false, 'html' => '', 'kept_tags' => [], 'removed_css' => [] ];
 
 		require_once __DIR__ . '/class-html-token-scanner.php';
-		$scanner = new IATO_MCP_Html_Token_Scanner( $html );
+		// 1.21.0: a @property syntax descriptor may hold `<`, but only in style elements
+		// a browser reads as text, which every one of them must be.
+		$syntax_ok = false !== stripos( $html, '<style' ) && self::styles_are_html( $html, self::count_style_tokens( $html ) );
+		$scanner   = new IATO_MCP_Html_Token_Scanner( $html );
 		$nonce   = bin2hex( random_bytes( 8 ) );
 		$rest    = '';
 		$at      = 0;
@@ -173,7 +266,7 @@ class IATO_MCP_Inline_Markup {
 				$at    = $span[0] + $span[1];
 				continue;
 			}
-			$css     = self::sanitize_css( $scanner->get_modifiable_text() );
+			$css     = self::sanitize_css( $scanner->get_modifiable_text(), $syntax_ok );
 			$removed = array_merge( $removed, $css['removed'] );
 			$rest   .= substr( $html, $at, $span[0] - $at );
 			$at      = $span[0] + $span[1];
@@ -184,6 +277,10 @@ class IATO_MCP_Inline_Markup {
 			}
 		}
 		$rest .= substr( $html, $at );
+		$rest  = self::remove_outside_use( $rest );
+		if ( null === $rest ) {
+			return $fail;
+		}
 
 		$out = (string) wp_kses( $rest, self::allowed_html() );
 		foreach ( $blocks as $token => $block ) {
@@ -198,6 +295,96 @@ class IATO_MCP_Inline_Markup {
 
 		$kept = array_values( array_intersect( array_keys( IATO_MCP_Sanitize_Report::inventory( $out )['tags'] ), array_merge( [ 'style' ], array_keys( self::SVG_ELEMENTS ) ) ) );
 		return [ 'ok' => true, 'html' => $out, 'kept_tags' => array_map( 'strval', $kept ), 'removed_css' => $removed ];
+	}
+
+	/**
+	 * Take out every `<use>` that points anywhere but `#id` in this document (1.21.0),
+	 * with its closing tag. Before kses, so the element goes, not just its href, and the
+	 * report lists it. Null when the markup cannot be read.
+	 */
+	private static function remove_outside_use( string $html ): ?string {
+		if ( false === stripos( $html, '<use' ) ) {
+			return $html;
+		}
+		$scanner = new IATO_MCP_Html_Token_Scanner( $html );
+		$cut     = [];
+		$open    = 0;
+		while ( $scanner->next_token() ) {
+			if ( '#tag' !== $scanner->get_token_type() || 'USE' !== $scanner->get_tag() ) {
+				continue;
+			}
+			if ( $scanner->is_tag_closer() ) {
+				if ( $open > 0 ) {
+					--$open;
+					$cut[] = $scanner->token_span();
+				}
+				continue;
+			}
+			$href  = $scanner->get_attribute( 'href' );
+			$xlink = $scanner->get_attribute( 'xlink:href' );
+			if ( ( null === $href || self::is_fragment( $href ) ) && null === $xlink ) {
+				continue;
+			}
+			$cut[] = $scanner->token_span();
+			if ( ! $scanner->has_self_closing_flag() ) {
+				++$open;
+			}
+		}
+		if ( $scanner->paused_at_incomplete_token() ) {
+			return null;
+		}
+		foreach ( array_reverse( $cut ) as $span ) {
+			if ( null === $span ) {
+				return null;
+			}
+			$html = substr_replace( $html, '', $span[0], $span[1] );
+		}
+		return $html;
+	}
+
+	/** How many STYLE elements WordPress' tokenizer finds. */
+	private static function count_style_tokens( string $html ): int {
+		$scanner = new IATO_MCP_Html_Token_Scanner( $html );
+		$count   = 0;
+		while ( $scanner->next_token() ) {
+			if ( '#tag' === $scanner->get_token_type() && ! $scanner->is_tag_closer() && 'STYLE' === $scanner->get_tag() ) {
+				++$count;
+			}
+		}
+		return $count;
+	}
+
+	/**
+	 * Is every style element in this markup one a browser reads as text (1.21.0)?
+	 * Inside <svg> or <math> it is not: `<` there starts an element. Only the full
+	 * HTML parser knows (WordPress 6.7+); the tokenizer used elsewhere here treats
+	 * every STYLE as text. So it must read the whole value without giving up, find
+	 * every STYLE in the HTML namespace, and count as many as the tokenizer does.
+	 * Anything else, and the old rule stands: no `<` in a style block.
+	 */
+	private static function styles_are_html( string $html, int $expected ): bool {
+		if ( $expected < 1 || ! class_exists( 'WP_HTML_Processor' ) || ! method_exists( 'WP_HTML_Processor', 'get_namespace' ) ) {
+			return false;
+		}
+		try {
+			$parser = WP_HTML_Processor::create_fragment( $html );
+			if ( null === $parser ) {
+				return false;
+			}
+			$count = 0;
+			while ( $parser->next_token() ) {
+				if ( '#tag' !== $parser->get_token_type() || 'STYLE' !== $parser->get_tag() || $parser->is_tag_closer() ) {
+					continue;
+				}
+				if ( 'html' !== $parser->get_namespace() ) {
+					return false;
+				}
+				++$count;
+			}
+			return null === $parser->get_last_error() && ! $parser->paused_at_incomplete_token() && $count === $expected;
+		} catch ( Throwable $e ) {
+			return false;
+		}
 	}
 
 	/** @param mixed $media The opening tag's media attribute. */
@@ -220,6 +407,7 @@ class IATO_MCP_Inline_Markup {
 		$svg     = self::svg_allowlist();
 		$walker  = new WP_HTML_Tag_Processor( $html );
 		$styles  = 0;
+		$angle   = false;
 		while ( $walker->next_token() ) {
 			$type = $walker->get_token_type();
 			if ( '#tag' !== $type ) {
@@ -238,7 +426,15 @@ class IATO_MCP_Inline_Markup {
 				if ( array_diff( $names, [ 'media' ] ) ) {
 					return false;
 				}
+				$text  = (string) $walker->get_modifiable_text();
+				$angle = $angle || str_contains( $text, '<' ) || str_contains( self::decode_escapes( $text ), '<' );
 				continue;
+			}
+			if ( 'use' === $tag ) {
+				$href = $walker->get_attribute( 'href' );
+				if ( ( null !== $href && ! self::is_fragment( $href ) ) || null !== $walker->get_attribute( 'xlink:href' ) ) {
+					return false;
+				}
 			}
 			if ( ! isset( $allowed[ $tag ] ) ) {
 				return false;
@@ -262,7 +458,11 @@ class IATO_MCP_Inline_Markup {
 				}
 			}
 		}
-		return ! $walker->paused_at_incomplete_token() && $styles === $style_blocks;
+		if ( $walker->paused_at_incomplete_token() || $styles !== $style_blocks ) {
+			return false;
+		}
+		// A kept block holding `<` (a syntax descriptor) must be one a browser reads as text.
+		return ! $angle || self::styles_are_html( $html, $styles );
 	}
 
 	/**
@@ -278,9 +478,15 @@ class IATO_MCP_Inline_Markup {
 	 * that could break out of the element, run script in an old browser, or use a
 	 * character reference, which a browser decodes in a style element inside <svg>.
 	 *
+	 * $syntax_ok (1.21.0): the block is printed where a browser reads it as text, so a
+	 * @property `syntax` descriptor may hold `<`, as in syntax: '<number>'. Only
+	 * strings the tokenizer finds right after `syntax:` in a @property block, whose
+	 * decoded text is a descriptor, and nothing else: every other `<` still drops the
+	 * block. Inside <svg> it is not text, which is why callers decide.
+	 *
 	 * @return array{css:?string,removed:string[]}
 	 */
-	public static function sanitize_css( string $css ): array {
+	public static function sanitize_css( string $css, bool $syntax_ok = false ): array {
 		$drop = fn( string $why ) => [ 'css' => null, 'removed' => [ "whole <style> block: {$why}" ] ];
 
 		// Invalid UTF-8 and control characters: tokenizers disagree on them.
@@ -291,7 +497,9 @@ class IATO_MCP_Inline_Markup {
 		if ( null === $tokens ) {
 			return $drop( 'it could not be read (an unterminated string, url() or comment)' );
 		}
-		$raw_scan = preg_replace( '#/\*.*?\*/#s', '', $css );
+		// The plain search below reads the text with each descriptor emptied: whatever `<`
+		// is left was not in one.
+		$raw_scan = preg_replace( '#/\*.*?\*/#s', '', $syntax_ok ? self::blank_syntax_descriptors( $css, $tokens ) : $css );
 		if ( ! is_string( $raw_scan ) ) {
 			return $drop( 'it could not be read' );
 		}
@@ -318,11 +526,84 @@ class IATO_MCP_Inline_Markup {
 		if ( '' === $out ) {
 			return [ 'css' => null, 'removed' => $removed ];
 		}
-		$why = self::css_final_check( $out );
+		$why = self::css_final_check( $out, $syntax_ok );
 		if ( null !== $why ) {
 			return [ 'css' => null, 'removed' => array_merge( $removed, [ "whole <style> block: {$why}" ] ) ];
 		}
 		return [ 'css' => $out, 'removed' => $removed ];
+	}
+
+	/** Is this the decoded text of a @property syntax descriptor that holds `<`? */
+	public static function is_syntax_descriptor( string $value ): bool {
+		$component = '(?:<(?:' . self::SYNTAX_TYPES . ')>[+#]?|[a-zA-Z_][a-zA-Z0-9_\-]*)';
+		return 1 === preg_match( '/^[ \t]*' . $component . '(?:[ \t]*\|[ \t]*' . $component . ')*[ \t]*$/D', $value );
+	}
+
+	/**
+	 * The CSS with every syntax descriptor that holds `<` emptied ('<number>' becomes
+	 * ''), found by the tokenizer: a string after `syntax` and `:` directly inside a
+	 * @property block, whose decoded text is a descriptor. A string that only looks
+	 * like one stays, and its `<` drops the block.
+	 *
+	 * @param array<int,array{t:string,raw:string,v:string,at?:int}> $tokens
+	 */
+	private static function blank_syntax_descriptors( string $css, array $tokens ): string {
+		$spans    = [];
+		$depth    = 0;
+		$property = -1; // the depth of the @property block we are in, or -1
+		$pending  = false;
+		$count    = count( $tokens );
+		$skip     = static fn( array $t ): bool => 'ws' === $t['t'] || ( 'delim' === $t['t'] && '' === trim( $t['raw'] ) );
+		for ( $i = 0; $i < $count; $i++ ) {
+			$token = $tokens[ $i ];
+			if ( 'at' === $token['t'] ) {
+				$pending = 'property' === $token['v'];
+				continue;
+			}
+			if ( '{' === $token['raw'] ) {
+				++$depth;
+				if ( $pending ) {
+					$property = $depth;
+					$pending  = false;
+				}
+				continue;
+			}
+			if ( '}' === $token['raw'] ) {
+				if ( $depth === $property ) {
+					$property = -1;
+				}
+				$depth = max( 0, $depth - 1 );
+				continue;
+			}
+			if ( ';' === $token['raw'] ) {
+				$pending = false;
+				continue;
+			}
+			if ( $depth !== $property || 'ident' !== $token['t'] || 'syntax' !== $token['v'] ) {
+				continue;
+			}
+			$j = $i + 1;
+			while ( $j < $count && $skip( $tokens[ $j ] ) ) {
+				++$j;
+			}
+			if ( ':' !== ( $tokens[ $j ]['raw'] ?? '' ) ) {
+				continue;
+			}
+			++$j;
+			while ( $j < $count && $skip( $tokens[ $j ] ) ) {
+				++$j;
+			}
+			$string = $tokens[ $j ] ?? null;
+			if ( null === $string || 'string' !== $string['t'] || ! isset( $string['at'] ) || ! str_contains( $string['v'], '<' ) || ! self::is_syntax_descriptor( $string['v'] ) ) {
+				continue;
+			}
+			$spans[] = [ (int) $string['at'], strlen( $string['raw'] ), $string['raw'][0] ];
+			$i       = $j;
+		}
+		foreach ( array_reverse( $spans ) as [ $at, $length, $quote ] ) {
+			$css = substr_replace( $css, $quote . $quote, $at, $length );
+		}
+		return $css;
 	}
 
 	/** Does this CSS end outside any comment, string or url(), so that what follows it starts afresh? */
@@ -354,16 +635,17 @@ class IATO_MCP_Inline_Markup {
 	 * Read the result again. The tokens and a plain text search of the decoded CSS
 	 * have to agree, so a block fooling this tokenizer has to fool the search too.
 	 */
-	private static function css_final_check( string $css ): ?string {
+	private static function css_final_check( string $css, bool $syntax_ok = false ): ?string {
 		$tokens = self::css_tokens( $css );
 		if ( null === $tokens ) {
 			return 'it could not be read after filtering';
 		}
-		$hazard = self::css_hazard( $css );
+		$read   = $syntax_ok ? self::blank_syntax_descriptors( $css, $tokens ) : $css;
+		$hazard = self::css_hazard( $read );
 		if ( null !== $hazard ) {
 			return "it contains {$hazard}";
 		}
-		$scan = strtolower( self::decode_escapes( $css ) );
+		$scan = strtolower( self::decode_escapes( $read ) );
 		if ( str_contains( $scan, '@import' ) ) {
 			return 'it would still hold @import';
 		}
@@ -684,7 +966,7 @@ class IATO_MCP_Inline_Markup {
 			$c = $css[ $i ];
 			if ( $c === $quote ) {
 				++$i;
-				return [ 't' => 'string', 'raw' => substr( $css, $from, $i - $from ), 'v' => $value ];
+				return [ 't' => 'string', 'raw' => substr( $css, $from, $i - $from ), 'v' => $value, 'at' => $from ];
 			}
 			if ( "\n" === $c || "\r" === $c || "\f" === $c ) {
 				return null;

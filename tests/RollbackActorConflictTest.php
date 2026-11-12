@@ -19,6 +19,17 @@ if ( ! function_exists( 'wp_kses_post' ) ) {
 		return strip_tags( $html, '<p><h2><a><b>' );
 	}
 }
+// 1.21.0: the markup rule hands wp_kses() the post list with gaps filled.
+if ( ! function_exists( 'wp_kses' ) ) {
+	function wp_kses( string $html, mixed $allowed ): string {
+		return wp_kses_post( $html );
+	}
+}
+if ( ! function_exists( 'wp_kses_allowed_html' ) ) {
+	function wp_kses_allowed_html( string $context = '' ): array {
+		return [ 'p' => [], 'h2' => [], 'a' => [ 'href' => true ], 'b' => [] ];
+	}
+}
 
 /**
  * Part 3 (1.13.0): receipts record who made each change; only that user or an
