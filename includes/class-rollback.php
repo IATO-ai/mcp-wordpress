@@ -252,6 +252,9 @@ class IATO_MCP_Rollback {
 		if ( IATO_MCP_Page_CSS::RECEIPT === $receipt['target_type'] ) {
 			$restore = [ 'restored_value' => IATO_MCP_Page_CSS::restore_view( $before ) ];
 		}
+		if ( IATO_MCP_Page_Script::RECEIPT === $receipt['target_type'] ) {
+			$restore = [ 'restored_value' => IATO_MCP_Page_Script::restore_view( $before ) ];
+		}
 		if ( $is_atomic ) {
 			// 1.14.0: one atomic element's settings, shown in plain form.
 			$restore = [ 'restored_value' => IATO_MCP_Elementor_Atomic_Writer::restore_view( $receipt ) ];
@@ -292,7 +295,7 @@ class IATO_MCP_Rollback {
 		if ( $dry_run ) {
 			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
 				+ $base
-				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic || in_array( $receipt['target_type'], [ IATO_MCP_Custom_CSS::RECEIPT, IATO_MCP_Page_CSS::RECEIPT ], true ) ? $restore['restored_value'] : $before ] )
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic || in_array( $receipt['target_type'], [ IATO_MCP_Custom_CSS::RECEIPT, IATO_MCP_Page_CSS::RECEIPT, IATO_MCP_Page_Script::RECEIPT ], true ) ? $restore['restored_value'] : $before ] )
 				+ ( $is_tree ? self::content_refresh_preview( $post_id, $before ) : [] )
 				+ [ 'conflict_check' => $report ];
 		}
@@ -349,6 +352,9 @@ class IATO_MCP_Rollback {
 
 		// The stored copy was removed by the retention cleanup. Checked first: an
 		// emptied before value must never be read as "there was nothing before".
+		if ( ! empty( $receipt['pruned_at'] ) && IATO_MCP_Page_Script::RECEIPT === $type ) {
+			return new WP_Error( 'rollback_unavailable', sprintf( 'The copy of the script this change replaced was removed on %s, when the receipt became older than the retention period. Send it again with set_page_script.', (string) $receipt['pruned_at'] ), [ 'status' => 409, 'pruned_at' => (string) $receipt['pruned_at'] ] );
+		}
 		if ( ! empty( $receipt['pruned_at'] ) ) {
 			return new WP_Error(
 				'rollback_unavailable',
@@ -413,6 +419,12 @@ class IATO_MCP_Rollback {
 		}
 		if ( IATO_MCP_Page_CSS::RECEIPT === $type ) {
 			$why = IATO_MCP_Page_CSS::rollback_unavailable( (int) ( $receipt['post_id'] ?? 0 ) );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
+		if ( IATO_MCP_Page_Script::RECEIPT === $type ) {
+			$why = IATO_MCP_Page_Script::rollback_unavailable( (int) ( $receipt['post_id'] ?? 0 ) );
 			if ( null !== $why ) {
 				return $why;
 			}
@@ -506,6 +518,8 @@ class IATO_MCP_Rollback {
 				return IATO_MCP_Page_CSS::restore( (int) $post_id, $before_value );
 			case IATO_MCP_Page_Fonts::RECEIPT:
 				return IATO_MCP_Page_Fonts::restore( (int) $post_id, $before_value );
+			case IATO_MCP_Page_Script::RECEIPT:
+				return IATO_MCP_Page_Script::restore( (int) $post_id, $before_value );
 			case IATO_MCP_Preview_Link::RECEIPT:
 				// Rolling a link back revokes it; one already expired or revoked counts as gone.
 				return IATO_MCP_Preview_Link::revoke( (int) $post_id, (string) ( IATO_MCP_Rollback_Conflict::json_array( $receipt['after_value'] ?? null )['link_id'] ?? '' ) );

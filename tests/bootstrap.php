@@ -158,6 +158,7 @@ require_once IATO_MCP_DIR . 'includes/class-page-css.php';
 require_once IATO_MCP_DIR . 'includes/class-page-fonts.php';
 require_once IATO_MCP_DIR . 'includes/class-preview-link.php';
 require_once IATO_MCP_DIR . 'includes/class-page-assets-admin.php';
+require_once IATO_MCP_DIR . 'includes/class-page-script.php';
 require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-element-cache-guard.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';

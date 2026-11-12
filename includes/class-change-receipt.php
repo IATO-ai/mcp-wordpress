@@ -275,6 +275,7 @@ class IATO_MCP_Change_Receipt {
 			'page_css'         => 'edit_posts',
 			'page_fonts'       => 'edit_posts',
 			'preview_link'     => 'edit_posts',
+			'page_script'      => 'manage_options',
 		];
 
 		// Fail closed: unknown target_types are gated at manage_options
@@ -383,6 +384,7 @@ class IATO_MCP_Change_Receipt {
 			case 'page_css':
 			case 'page_fonts':
 			case 'preview_link':
+			case 'page_script':
 			case 'post_meta':
 			case 'elementor_widget':
 			case 'elementor_atomic':

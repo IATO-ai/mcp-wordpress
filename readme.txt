@@ -26,7 +26,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-**Without an IATO account (62 WordPress tools):**
+**Without an IATO account (64 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -37,7 +37,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Set and clear the featured image on any post
 * Read and write arbitrary post meta with a credential-key denylist and a known-safe theme/builder/SEO allowlist (force=true required outside the allowlist)
 * Set per-post theme + builder page settings (hide title, sidebar layout, content layout, etc.) on Astra, Kadence, GeneratePress, and Elementor in one call
-* Give one page its own CSS and fonts, and make expiring preview links for drafts (switched off until an administrator turns them on)
+* Give one page its own CSS, fonts and scripts, and make expiring preview links for drafts (switched off until an administrator turns them on; a script runs only after an administrator approves it)
 * Read and edit navigation menus, create menus and assign them to theme locations
 * Nest pages under a parent and change the permalink structure, with 301 redirects from the old URLs and one-step undo
 * Manage categories, tags, and taxonomy terms
@@ -189,7 +189,8 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * New: `set_page_css` and `get_page_css` give one page its own CSS, printed in that page's head only. They follow the same rules as Additional CSS: nothing loaded from another site, at most 200 KB, and anything that would close the style element removed. The CSS is checked again when it is printed. Needs a WordPress user who may edit CSS (administrators and editors) and `edit_post` on the page.
 * New: `set_page_fonts` and `get_page_fonts` load Elementor font families on one page only, through Elementor's own font loader, so "Load Google Fonts Locally" is respected. Families Elementor does not know are refused.
 * New: `create_preview_link` makes an expiring URL (15 minutes by default, an hour at most) that shows a draft, pending or scheduled post without a login, so an AI client can check its work. Responses to it are not cached and carry noindex and no-referrer. Rolling back its receipt revokes it, and publishing or trashing the post ends it. Needs permission to publish the post.
-* New: These five tools ship switched off. An administrator turns them on in Settings > IATO MCP > Tools. A new "Page assets" tab lists every page with page CSS or fonts and every live preview link, with buttons to remove or revoke them. The Plugins screen warns before the plugin is deactivated, since those pages lose their CSS and fonts while it is off. Uninstalling keeps page CSS and fonts.
+* New: `set_page_script` and `get_page_script` store inline JavaScript for one page. It runs only after an administrator reads it and approves it in wp-admin with their password, and any change waits for approval again. It needs the new "Allow page scripts" setting, off by default, and an administrator who may post unfiltered HTML. `<script`, `</script`, `<!--` and invisible or direction-changing characters are refused, and the approval screen marks every character outside plain ASCII. Turning the setting or the tool off, or deactivating the plugin, stops every page script and purges those pages, even with cache purging off.
+* New: These seven tools ship switched off. An administrator turns them on in Settings > IATO MCP > Tools. A new "Page assets" tab lists every page with page CSS or fonts and every live preview link, with buttons to remove or revoke them. The Plugins screen warns before the plugin is deactivated, since those pages lose their CSS and fonts while it is off. Uninstalling keeps page CSS and fonts.
 * New: HTML in Elementor widgets keeps every `aria-*` attribute, `inert`, `disabled` and `readonly` where HTML has them, and `<input>` with ordinary types (not password, file, image, hidden or submit). Nothing that passed before is removed now: a live check runs a fixture set through 1.20.0's filter and this one.
 * New: With "Allow inline SVG and style blocks" on, HTML widgets also keep `ellipse`, `text`, `tspan`, `defs`, gradients, `stop`, `marker`, `clipPath`, and `use` pointing at `#id` in the same SVG. A `@property` `syntax` descriptor such as `syntax:'<number>'` is kept in style blocks outside an `<svg>` (WordPress 6.7 or later).
 * New: Elementor write responses say for each change whether the stored value is what was sent (`stored_matches_input`). When it is not, they say what was stored. `update_elementor_widget`, `update_elementor_patch` and `update_elementor_data` take `return: "minimal"`, which returns sizes and hashes instead of whole values.
@@ -575,7 +576,7 @@ Only images, and only when the calling user has the `upload_files` capability. T
 == Upgrade Notice ==
 
 = 1.21.0 =
-Adds page CSS, page fonts and draft preview links (switched off until you turn them on), keeps ARIA, form attributes and more SVG in Elementor HTML, and lets Elementor responses say what was stored.
+Adds page CSS, fonts, approved page scripts and draft preview links (all switched off until you turn them on), keeps ARIA, form attributes and more SVG in Elementor HTML, and says what Elementor stored.
 
 = 1.20.0 =
 Adds page parents and permalink settings, with 301 redirects from the old URLs and a one-step rollback, and stops update_post refusing a page slug that a menu item uses.

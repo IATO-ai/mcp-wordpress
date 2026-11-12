@@ -248,6 +248,11 @@ class IATO_MCP_Sanitize_Report {
 				? 'To give this page its own CSS, send it to set_page_css instead of a <style> block.'
 				: 'set_page_css gives one page its own CSS, outside the widget. It is switched off on this site: an administrator turns it on under Settings > IATO MCP > Tools (Page assets).';
 		}
+		// Page scripts are the riskiest feature: named only where an administrator has
+		// already turned both the tool and the setting on.
+		if ( 'html' === $rule && in_array( 'script', $removed['removed_tags'], true ) && class_exists( 'IATO_MCP_Page_Script' ) && IATO_MCP_Page_Script::active() ) {
+			$notes[] = 'Scripts never run inside a widget. set_page_script stores one for the page, which runs only after an administrator approves it in wp-admin.';
+		}
 		if ( [] !== $notes ) {
 			$entry['note'] = implode( ' ', $notes );
 		}

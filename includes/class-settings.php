@@ -94,6 +94,8 @@ class IATO_MCP_Settings {
 		'get_page_fonts',
 		'set_page_fonts',
 		'create_preview_link',
+		'get_page_script',
+		'set_page_script',
 		// IATO bridge (require API key).
 		'get_iato_sitemap',
 		'get_iato_nav_audit',
@@ -209,6 +211,8 @@ class IATO_MCP_Settings {
 		'get_page_fonts',
 		'set_page_fonts',
 		'create_preview_link',
+		'get_page_script',
+		'set_page_script',
 	];
 
 	/** Tools that require the IATO API key before they'll be registered. */
@@ -302,6 +306,8 @@ class IATO_MCP_Settings {
 		'get_page_fonts'           => 'Read the fonts loaded on one page',
 		'set_page_fonts'           => 'Load Elementor font families on one page only (needs Elementor)',
 		'create_preview_link'      => 'Make an expiring link that shows a draft without a login, so an AI client can check its work',
+		'get_page_script'          => 'Read whether one page\'s script is waiting for approval or running',
+		'set_page_script'          => 'Store JavaScript for one page; it runs only after an administrator approves it in wp-admin (also needs "Allow page scripts")',
 	];
 
 	/** Tool groupings for UI categories. */
@@ -320,7 +326,7 @@ class IATO_MCP_Settings {
 		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates', 'create_elementor_template', 'set_elementor_template_conditions' ],
 		'IATO Platform' => [ 'get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report' ],
 		'Crawl Management' => [ 'start_iato_crawl', 'get_iato_crawl_status', 'list_iato_crawls' ],
-		'Page assets'   => [ 'get_page_css', 'set_page_css', 'get_page_fonts', 'set_page_fonts', 'create_preview_link' ],
+		'Page assets'   => [ 'get_page_css', 'set_page_css', 'get_page_fonts', 'set_page_fonts', 'create_preview_link', 'get_page_script', 'set_page_script' ],
 	];
 
 	/** Page hook suffix returned by add_options_page(). */
@@ -408,6 +414,12 @@ class IATO_MCP_Settings {
 			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_inline_markup_enabled'] ) )
 			: false;
 		update_option( 'iato_mcp_inline_markup_enabled', self::sanitize_bool_flag( $inline_markup_enabled ) );
+		// Page scripts (1.21.0): off unless the box is ticked. Changing it purges every
+		// page with a script (IATO_MCP_Page_Script::setting_changed()).
+		$page_scripts_enabled = isset( $_POST['iato_mcp_page_scripts_enabled'] )
+			? rest_sanitize_boolean( wp_unslash( $_POST['iato_mcp_page_scripts_enabled'] ) )
+			: false;
+		update_option( 'iato_mcp_page_scripts_enabled', self::sanitize_bool_flag( $page_scripts_enabled ) );
 
 		// Media uploads — URL source toggle. The render emits a hidden value=0
 		// sibling so the key is always present in $_POST regardless of checkbox
@@ -447,6 +459,7 @@ class IATO_MCP_Settings {
 				'abilities_enabled'   => $abilities_enabled,
 				'cache_purge_enabled' => $cache_purge_enabled,
 				'inline_markup_enabled' => $inline_markup_enabled,
+				'page_scripts_enabled' => $page_scripts_enabled,
 				'media_url_enabled'   => $media_url_enabled,
 				'media_hosts_count'   => count( $host_list ),
 				'media_max_bytes'     => $max_bytes,
@@ -588,6 +601,11 @@ class IATO_MCP_Settings {
 			'default'           => '1',
 		] );
 		register_setting( self::OPTION_GROUP, 'iato_mcp_inline_markup_enabled', [
+			'type'              => 'string',
+			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
+			'default'           => '0',
+		] );
+		register_setting( self::OPTION_GROUP, 'iato_mcp_page_scripts_enabled', [
 			'type'              => 'string',
 			'sanitize_callback' => [ self::class, 'sanitize_bool_flag' ],
 			'default'           => '0',
@@ -1227,6 +1245,18 @@ class IATO_MCP_Settings {
 								<span><?php esc_html_e( 'Allow inline SVG and style blocks in HTML widgets for administrators', 'iato-mcp' ); ?></span>
 							</label>
 							<p class="iato-hint"><?php esc_html_e( 'Applies to the Elementor HTML widget only, and only when the connection\'s WordPress user holds both unfiltered_html and manage_options. Scripts, event attributes, javascript: URLs, foreignObject, @import and off-site url() are still removed. Needs WordPress 6.5 or later.', 'iato-mcp' ); ?></p>
+						</div>
+					</div>
+
+					<div class="iato-field-row">
+						<label class="iato-label" for="iato_mcp_page_scripts_enabled"><?php esc_html_e( 'Page scripts', 'iato-mcp' ); ?></label>
+						<div class="iato-field-value">
+							<input type="hidden" name="iato_mcp_page_scripts_enabled" value="0" />
+							<label style="display:inline-flex;align-items:center;gap:8px;">
+								<input type="checkbox" name="iato_mcp_page_scripts_enabled" id="iato_mcp_page_scripts_enabled" value="1" <?php checked( IATO_MCP_Page_Script::setting_on() ); ?> />
+								<span><?php esc_html_e( 'Allow page scripts (each one approved in wp-admin before it runs)', 'iato-mcp' ); ?></span>
+							</label>
+							<p class="iato-hint"><?php esc_html_e( 'Lets an administrator\'s AI client store JavaScript for one page with set_page_script, which also has to be switched on under Tools. Nothing runs until an administrator reads the script and approves it, with their password, under Page assets; any change waits for approval again. Turning this off stops every page script.', 'iato-mcp' ); ?></p>
 						</div>
 					</div>
 				</div>

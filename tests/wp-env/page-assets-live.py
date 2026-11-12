@@ -365,6 +365,149 @@ def report_pointer():
     record('a removed script names no page script tool while that is off', 'set_page_script' not in note, note)
 
 
+# ── H. Page scripts ────────────────────────────────────────────────────────────
+
+SCRIPT = "document.documentElement.setAttribute('data-iato-live', 'ran');"
+
+
+def purged(post_id):
+    log = php('echo wp_json_encode( get_option( "iato_mcp_test_purges", [] ) );')
+    try:
+        entries = json.loads(log or '[]')
+    except ValueError:
+        entries = []
+    return [e for e in entries if e.get('post_id') == post_id or e.get('scope') == 'all']
+
+
+def clear_purges():
+    php('delete_option("iato_mcp_test_purges");')
+
+
+def page_scripts(p2, opener):
+    print('H. Page scripts')
+    record('the script tools ship switched off', not ({'get_page_script', 'set_page_script'} & tools_listed()))
+    php('$t=get_option("iato_mcp_tools"); update_option("iato_mcp_tools", array_values(array_unique(array_merge($t, array("get_page_script","set_page_script")))));')
+    wp('option', 'update', 'iato_mcp_page_scripts_enabled', '0')
+    r = call('set_page_script', {'id': p2, 'script': SCRIPT})
+    record('with the setting off, set_page_script refuses', refused(r, 'page_scripts_disabled'), r)
+    wp('option', 'update', 'iato_mcp_page_scripts_enabled', '1')
+    r = call('set_page_script', {'id': p2, 'script': "x = '</script><img src=x onerror=alert(1)>';"})
+    record('a closing script tag is refused', refused(r, 'script_not_allowed'), r)
+    r = call('set_page_script', {'id': p2, 'script': 'if (mode != "view\u202e \u2066// admins\u2069 \u2066") { x(); }'})
+    record('a direction-changing character is refused (what is read must be what runs)', refused(r, 'script_not_allowed') and 'U+202E' in r.get('_text', ''), r)
+    record('an editor may not', call('set_page_script', {'id': p2, 'script': SCRIPT}, 'assetseditor').get('isError'))
+    r = call('set_page_script', {'id': p2, 'script': SCRIPT})
+    record('stored, pending, and the response says it needs approval', r.get('status') == 'pending' and 'approve' in r.get('note', '') and receipt_of(r), r)
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('a pending script does not print', 'iato-mcp-page-script' not in html and SCRIPT not in html, status)
+
+    status, _, tab = fetch('/wp-admin/options-general.php?page=iato-mcp&tab=assets', opener)
+    record('the tab shows the whole script', SCRIPT.replace("'", '&#039;') in tab or SCRIPT in tab, status)
+    form = None
+    m = re.search(r'<form method="post" action="[^"]*admin-post\.php">\s*<input type="hidden" name="action" value="iato_mcp_approve_page_script">(.*?)</form>', tab, re.S)
+    if m:
+        form = dict(re.findall(r'<input type="hidden" (?:id="[^"]*" )?name="([^"]+)" value="([^"]*)"', m.group(1)))
+        form['action'] = 'iato_mcp_approve_page_script'
+    record('...with an Approve form asking for the password', form and form.get('sha256') == hashlib.sha256(SCRIPT.encode()).hexdigest() and 'name="iato_password"' in tab, form)
+    if not form:
+        return
+    status, headers, _ = fetch('/wp-admin/admin-post.php', opener, urllib.parse.urlencode(dict(form, iato_password='wrong-password')).encode())
+    record('a wrong password approves nothing', 'iato_script_error=password' in (headers.get('Location') or '') and call('get_page_script', {'id': p2}).get('status') == 'pending', headers.get('Location'))
+    status, headers, _ = fetch('/wp-admin/admin-post.php', opener, urllib.parse.urlencode(dict(form, iato_password=os.environ.get('ADMIN_PASS', 'password'))).encode())
+    g = call('get_page_script', {'id': p2})
+    display = php('echo get_userdata(1)->display_name;')
+    record('the right password approves it', g.get('status') == 'approved' and g.get('approved_by') == display, g)
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('an approved script prints in the footer of its page', f'id="iato-mcp-page-script-{p2}"' in html and SCRIPT in html, status)
+    status, _, html = fetch(BASE + '/')  # the Canvas front page from section E
+    record('...and on no other page', SCRIPT not in html, status)
+    count = php('echo IATO_MCP_Page_Assets_Admin::count();')
+    status, _, plugins = fetch('/wp-admin/plugins.php', opener)
+    record('the deactivation warning counts it', f'data-iato-mcp-assets="{count}"' in plugins, count)
+
+    r = call('set_page_script', {'id': p2, 'script': SCRIPT + ' /* changed */'})
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('a change waits for approval again', r.get('status') == 'pending' and SCRIPT not in html, r.get('status'))
+    rb = call('rollback', {'change_id': receipt_of(r)})
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('rolling back to the approved text runs it again', rb.get('success') and SCRIPT in html, rb)
+
+    replay = form.copy()
+    replay['iato_password'] = os.environ.get('ADMIN_PASS', 'password')
+    call('set_page_script', {'id': p2, 'script': 'var other = 1;'})
+    status, headers, _ = fetch('/wp-admin/admin-post.php', opener, urllib.parse.urlencode(replay).encode())
+    record('an approval for one text cannot approve another', 'iato_script_error=changed' in (headers.get('Location') or '') and call('get_page_script', {'id': p2}).get('status') == 'pending', headers.get('Location'))
+    call('set_page_script', {'id': p2, 'script': SCRIPT})  # back to the approved text
+
+    print('H. switches and caches')
+    clear_purges()
+    wp('option', 'update', 'iato_mcp_page_scripts_enabled', '0')
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('turning the setting off stops it and purges its page', SCRIPT not in html and purged(p2), purged(p2))
+    if PLUGINS:
+        record('...through LiteSpeed Cache', any('litespeed' in json.dumps(e.get('results', {})).lower() for e in purged(p2)), purged(p2))
+    wp('option', 'update', 'iato_mcp_page_scripts_enabled', '1')
+    clear_purges()
+    php('$t=get_option("iato_mcp_tools"); update_option("iato_mcp_tools", array_values(array_diff($t, array("set_page_script"))));')
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('switching the tool off stops it and purges its page', SCRIPT not in html and purged(p2), purged(p2))
+    php('$t=get_option("iato_mcp_tools"); update_option("iato_mcp_tools", array_values(array_unique(array_merge($t, array("set_page_script")))));')
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('switching it back on runs it again', SCRIPT in html, status)
+    clear_purges()
+    wp('plugin', 'deactivate', 'mcp-wordpress')
+    record('deactivating the plugin purges its page', purged(p2), purged(p2))
+    wp('plugin', 'activate', 'mcp-wordpress')
+
+    tree = [{'id': 'pal0201', 'elType': 'container', 'settings': {}, 'elements': [{'id': 'pal0202', 'elType': 'widget', 'widgetType': 'html', 'settings': {'html': '<p>x</p>'}, 'elements': []}]}]
+    pid = page('script report')['id']
+    call('update_elementor_data', {'id': pid, 'elementor_data': json.dumps(tree)})
+    r = call('set_widget_setting', {'id': pid, 'widget_id': 'pal0202', 'key': 'html', 'value': '<script>x()</script><p>z</p>'})
+    note = (r.get('sanitized_report') or [{}])[0].get('note', '')
+    record('with both on, a removed script names set_page_script', 'set_page_script' in note, note)
+
+    status, _, tab = fetch('/wp-admin/options-general.php?page=iato-mcp&tab=assets', opener)
+    revoke = next((f for f in forms(tab) if f.get('action') == 'iato_mcp_revoke_page_script' and f.get('post_id') == str(p2)), None)
+    if revoke:
+        fetch('/wp-admin/admin-post.php', opener, urllib.parse.urlencode(revoke).encode())
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    record('revoking the approval stops it', revoke and SCRIPT not in html and call('get_page_script', {'id': p2}).get('status') == 'pending', status)
+
+
+# ── I. Pages for the browser check (KEEP=1 only) ───────────────────────────────
+
+SPEC_SVG = "<svg width='160' height='160' viewBox='0 0 16 16' role='img' aria-hidden='true' class='pal-svg'><title>t</title><defs><linearGradient id='g1'><stop offset='0' stop-color='#fff'></stop></linearGradient><marker id='m1' orient='auto' markerWidth='5' markerHeight='5'><path d='M0 0L4 2L0 4Z'></path></marker></defs><g transform='rotate(-14 8 8)'><path d='M3 8h10' fill='none' stroke='currentColor' stroke-width='1.75' marker-end='url(#m1)'></path><circle cx='8' cy='8' r='5'></circle><rect x='1' y='5' width='8' height='6'></rect><ellipse class='pal-ellipse' cx='8' cy='8' rx='6' ry='4'></ellipse><line x1='0' y1='0' x2='16' y2='16'></line><text x='2' y='12' text-anchor='middle' font-size='8'>A</text><use href='#g1'></use></g></svg>"
+SPEC_STYLE = "<style>@property --p{syntax:'<number>';inherits:true;initial-value:84}.pal-prop{width:calc(var(--p) * 1px)}</style><div class='pal-prop'>p</div>"
+
+
+def for_browser(opener):
+    print('I. Pages for the browser check')
+    wp('option', 'update', 'iato_mcp_inline_markup_enabled', '1')
+    tree = [{'id': 'pal0301', 'elType': 'container', 'settings': {}, 'elements': [{'id': 'pal0302', 'elType': 'widget', 'widgetType': 'html', 'settings': {'html': SPEC_SVG + SPEC_STYLE}, 'elements': []}]}]
+    svg_page = page('browser svg', 'publish')['id']
+    call('update_elementor_data', {'id': svg_page, 'elementor_data': json.dumps(tree)})
+    wp('option', 'update', 'iato_mcp_inline_markup_enabled', '0')
+    run_page = page('browser approved script', 'publish')['id']
+    pending_page = page('browser pending script', 'publish')['id']
+    script = "document.documentElement.setAttribute('data-iato-live', 'ran');"
+    call('set_page_script', {'id': run_page, 'script': script})
+    call('set_page_script', {'id': pending_page, 'script': script})
+    status, _, tab = fetch('/wp-admin/options-general.php?page=iato-mcp&tab=assets', opener)
+    for m in re.finditer(r'<form method="post" action="[^"]*admin-post\.php">\s*<input type="hidden" name="action" value="iato_mcp_approve_page_script">(.*?)</form>', tab, re.S):
+        form = dict(re.findall(r'<input type="hidden" (?:id="[^"]*" )?name="([^"]+)" value="([^"]*)"', m.group(1)))
+        if form.get('post_id') == str(run_page):
+            form['action'] = 'iato_mcp_approve_page_script'
+            fetch('/wp-admin/admin-post.php', opener, urllib.parse.urlencode(dict(form, iato_password=os.environ.get('ADMIN_PASS', 'password'))).encode())
+    draft = page('browser draft')['id']
+    call('set_page_css', {'id': draft, 'css': '.page-assets-live-preview-mark{color:rgb(4, 5, 6)}'})
+    link = call('create_preview_link', {'id': draft})
+    record('browser pages are ready', call('get_page_script', {'id': run_page}).get('status') == 'approved' and link.get('url'))
+    print('BROWSER_SVG_URL=' + wp('post', 'url', str(svg_page)))
+    print('BROWSER_SCRIPT_URL=' + wp('post', 'url', str(run_page)))
+    print('BROWSER_PENDING_URL=' + wp('post', 'url', str(pending_page)))
+    print('BROWSER_PREVIEW_URL=' + link.get('url', ''))
+
+
 def with_litespeed(body):
     wp('plugin', 'install', 'litespeed-cache', '--activate')
     wp('option', 'update', 'iato_test_page_assets_installed_litespeed-cache', '1')
@@ -391,6 +534,19 @@ def main():
     front_page_canvas()
     admin_side(p1)
     report_pointer()
+    if php('echo class_exists("IATO_MCP_Page_Script") ? 1 : 0;') == '1':
+        opener, _ = admin_session()
+        if PLUGINS:
+            with_litespeed(lambda: page_scripts(p2, opener))
+        else:
+            page_scripts(p2, opener)
+    else:
+        print('H. skipped: this build has no page scripts')
+    if os.environ.get('KEEP') == '1' and php('echo class_exists("IATO_MCP_Page_Script") ? 1 : 0;') == '1':
+        php('$t=get_option("iato_mcp_tools"); update_option("iato_mcp_tools", array_values(array_unique(array_merge($t, array("get_page_script","set_page_script")))));')
+        wp('option', 'update', 'iato_mcp_page_scripts_enabled', '1')
+        opener, _ = admin_session()
+        for_browser(opener)
     failed = [name for name, ok in results if not ok]
     print(f'# {len(results) - len(failed)} passed, {len(failed)} failed')
     if failed:

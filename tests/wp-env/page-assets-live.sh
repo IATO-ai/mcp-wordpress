@@ -18,6 +18,7 @@ cd "${WPENV_DIR:-$REPO}"
 export WPENV_SVC="${WPENV_SVC:-cli}"
 W() { npx @wordpress/env run "$WPENV_SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
 MU=wp-content/mu-plugins/iato-mcp-test-page-assets-probe.php
+SPY=wp-content/mu-plugins/iato-mcp-test-page-assets-spy.php
 SRC=wp-content/plugins/mcp-wordpress/tests/wp-env
 
 cleanup() {
@@ -32,7 +33,9 @@ cleanup() {
 		W wp user application-password list "$who" --fields=uuid,name --format=csv 2>/dev/null | tail -n +2 | while IFS=, read -r uuid name; do case "$name" in live-assets-*) W wp user application-password delete "$who" "$uuid" >/dev/null ;; esac; done
 	done
 	for who in assetseditor assetsauthor assetscontrib; do W wp user delete "$who" --yes >/dev/null 2>&1; done
-	W rm -f "$MU"
+	W rm -f "$MU" "$SPY"
+	W wp option delete iato_mcp_test_purges >/dev/null
+	W wp plugin activate mcp-wordpress >/dev/null
 }
 if [ "${1:-}" = "--cleanup" ]; then
 	cleanup
@@ -56,6 +59,7 @@ fi
 W wp plugin activate elementor >/dev/null
 W mkdir -p wp-content/mu-plugins
 W cp "$SRC/mu-page-assets-probe.php" "$MU"
+W cp "$SRC/mu-cache-spy.php" "$SPY"
 W wp eval 'add_option("iato_test_page_assets_backup",["iato_mcp_tools"=>get_option("iato_mcp_tools",null),"show_on_front"=>get_option("show_on_front",null),"page_on_front"=>get_option("page_on_front",null),"page_for_posts"=>get_option("page_for_posts",null),"iato_mcp_key_owner"=>get_option("iato_mcp_key_owner",null),"elementor_local_google_fonts"=>get_option("elementor_local_google_fonts",null),"_elementor_local_google_fonts"=>get_option("_elementor_local_google_fonts",null),"iato_mcp_page_scripts_enabled"=>get_option("iato_mcp_page_scripts_enabled",null)],"","no");' >/dev/null
 export KEY=$(W wp option get iato_mcp_key)
 export OWNER=$(W wp option get iato_mcp_key_owner)

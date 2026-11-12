@@ -89,6 +89,7 @@ require_once IATO_MCP_DIR . 'includes/class-page-css.php';
 require_once IATO_MCP_DIR . 'includes/class-page-fonts.php';
 require_once IATO_MCP_DIR . 'includes/class-preview-link.php';
 require_once IATO_MCP_DIR . 'includes/class-page-assets-admin.php';
+require_once IATO_MCP_DIR . 'includes/class-page-script.php';
 require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 require_once IATO_MCP_DIR . 'includes/class-media-chunks.php';
@@ -119,6 +120,7 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-settings.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-featured-image.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media-upload.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-assets.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-script.php';
 
 // Phase 2 — IATO bridge tools. Exposed on the MCP endpoint only when an IATO
 // API key is configured (unchanged). When the key is absent but WordPress
@@ -163,6 +165,7 @@ function iato_mcp_init() {
 	IATO_MCP_Page_Fonts::init();
 	IATO_MCP_Preview_Link::init();
 	IATO_MCP_Page_Assets_Admin::init();
+	IATO_MCP_Page_Script::init();
 	iato_mcp_maybe_run_migrations();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
@@ -356,6 +359,11 @@ END_UNIVERSAL;
 		$asset_lines[] = "create_preview_link gives an expiring URL that shows a draft without a\n"
 			. "login: fetch it to check your work before telling the user it is done. Do\n"
 			. 'not post it anywhere public.';
+	}
+	if ( $asset_tool( 'set_page_script' ) && class_exists( 'IATO_MCP_Page_Script' ) && IATO_MCP_Page_Script::setting_on() ) {
+		$asset_lines[] = "set_page_script stores JavaScript for one page. It does not run until an\n"
+			. "administrator reads it and approves it in wp-admin, and any change waits for\n"
+			. 'approval again. Tell the user when a script needs their approval.';
 	}
 	if ( [] !== $asset_lines ) {
 		$instructions .= "\n\nPAGE ASSETS:\n" . implode( "\n", $asset_lines )
@@ -627,5 +635,7 @@ function iato_mcp_deactivate() {
 	IATO_MCP_Receipt_Retention::unschedule();
 	IATO_MCP_Media_Chunks::unschedule();
 	IATO_MCP_Element_Cache_Guard::unschedule();
+	// 1.21.0: page scripts stop with the plugin; cached pages must not keep them.
+	IATO_MCP_Page_Script::purge_all();
 }
 register_deactivation_hook( __FILE__, 'iato_mcp_deactivate' );

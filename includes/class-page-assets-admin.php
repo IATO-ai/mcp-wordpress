@@ -52,7 +52,8 @@ final class IATO_MCP_Page_Assets_Admin {
 
 	/** How many posts lose something when the plugin is deactivated. */
 	public static function count(): int {
-		return (int) apply_filters( 'iato_mcp_page_assets_count', count( self::asset_post_ids() ) );
+		$ids = self::asset_post_ids();
+		return (int) apply_filters( 'iato_mcp_page_assets_count', count( $ids ), $ids );
 	}
 
 	/** Who last changed this through a receipt, for the list. */
@@ -149,6 +150,8 @@ final class IATO_MCP_Page_Assets_Admin {
 			'fonts_removed' => __( 'The page fonts were removed. Their receipt can roll it back.', 'iato-mcp' ),
 			'link_revoked'  => __( 'The preview link was revoked.', 'iato-mcp' ),
 			'links_revoked' => __( 'Every preview link was revoked.', 'iato-mcp' ),
+			'script_approved' => __( 'The script was approved and now runs on its page.', 'iato-mcp' ),
+			'script_revoked'  => __( 'The approval was revoked; the script no longer runs.', 'iato-mcp' ),
 		][ $done ] ?? __( 'Done.', 'iato-mcp' );
 	}
 

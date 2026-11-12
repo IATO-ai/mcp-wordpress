@@ -81,6 +81,7 @@ class IATO_MCP_Cache {
 		'set_page_css',
 		'set_page_fonts',
 		'create_preview_link',
+		'set_page_script',
 	];
 
 	/** Receipt types whose change shows on every page. */

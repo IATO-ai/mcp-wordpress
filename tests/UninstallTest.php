@@ -57,4 +57,14 @@ final class UninstallTest extends TestCase {
 		$this->assertStringNotContainsString( '_iato_mcp_page_fonts', $sql, 'page fonts are page content' );
 		$this->assertStringContainsString( '_transient_iato_mcp_page_css_ok_%', $sql, 'the cache of checked CSS goes' );
 	}
+
+	public function test_page_scripts_go_with_their_approvals_and_setting(): void {
+		// The bootstrap's delete_option() removes from this table.
+		IATO_Test_Abilities_State::$options['iato_mcp_page_script_approvals'] = [ 5 => [ 'sha256' => 'x' ] ];
+		IATO_Test_Abilities_State::$options['iato_mcp_page_scripts_enabled'] = '1';
+		$sql = $this->run_uninstall();
+		$this->assertStringContainsString( "meta_key = '_iato_mcp_page_script'", $sql );
+		$this->assertArrayNotHasKey( 'iato_mcp_page_script_approvals', IATO_Test_Abilities_State::$options );
+		$this->assertArrayNotHasKey( 'iato_mcp_page_scripts_enabled', IATO_Test_Abilities_State::$options );
+	}
 }

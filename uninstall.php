@@ -88,5 +88,10 @@ $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_iato_mcp_structu
 // 1.21.0: preview links go. Page CSS and fonts stay: they are page content, and
 // reinstalling the plugin brings them back.
 $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_iato_mcp_preview_links'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+// 1.21.0: page scripts only work while the plugin runs and approves them; they go,
+// with their approvals and the setting.
+delete_option( 'iato_mcp_page_scripts_enabled' );
+delete_option( 'iato_mcp_page_script_approvals' );
+$wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_iato_mcp_page_script'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 // The cache of page CSS that passed the check when printed.
 $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_iato_mcp_page_css_ok_%' OR option_name LIKE '_transient_timeout_iato_mcp_page_css_ok_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching

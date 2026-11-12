@@ -57,7 +57,7 @@ final class ReceiptRetentionTest extends TestCase {
 		[ $sql, $args ] = $updates[0];
 		$this->assertStringContainsString( 'SET before_value = NULL, pruned_at = %s', $sql );
 		$this->assertStringContainsString( 'pruned_at IS NULL AND before_value IS NOT NULL AND applied_at < %s LIMIT %d', $sql );
-		$this->assertSame( [ 'wp_iato_change_receipts', gmdate( 'Y-m-d H:i:s', self::NOW ), 'elementor_widget', 'custom_css', 'page_css', $r['cutoff'], 200 ], $args, 'only receipts holding a whole copy (page CSS since 1.21.0); the receipt rows themselves stay' );
+		$this->assertSame( [ 'wp_iato_change_receipts', gmdate( 'Y-m-d H:i:s', self::NOW ), 'elementor_widget', 'custom_css', 'page_css', 'page_script', $r['cutoff'], 200 ], $args, 'only receipts holding a whole copy (page CSS since 1.21.0); the receipt rows themselves stay' );
 		$last = IATO_MCP_Receipt_Retention::last_run();
 		$this->assertSame( [ 407, $r['cutoff'], 90 ], [ $last['pruned'], $last['cutoff'], $last['days'] ] );
 	}
