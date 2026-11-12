@@ -215,12 +215,12 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'update_elementor_patch',
 	[
-		'description' => 'Apply an RFC 6902 JSON Patch to the entire Elementor document. Use this for surgical array entry edits (repeater rows, indexed inserts) where update_elementor_widget\'s replace-only array semantics are too coarse. Each op may include op, path, value, from. Supports dry_run, if_revision, idempotency_key. Requires edit_posts. Plain values set on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later) are converted and validated with Elementor\'s own code; elsewhere atomic elements accept only $$type envelope values.',
+		'description' => 'Apply an RFC 6902 JSON Patch to the entire Elementor document. Use this for surgical array entry edits (repeater rows, indexed inserts) where update_elementor_widget\'s replace-only array semantics are too coarse. Each op may include op, path, value, from. add at a list index inserts before the item there (RFC 6902); replace overwrites it; /- appends. Each op on a list item returns list (count_before, count_after, ids_after) so a dry run shows where it lands. Supports dry_run, if_revision, idempotency_key. Requires edit_posts. Plain values set on Elementor Atomic Editor (V4) elements (Elementor 4.3.0 or later) are converted and validated with Elementor\'s own code; elsewhere atomic elements accept only $$type envelope values.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
 				'id'              => [ 'type' => 'integer', 'description' => 'WordPress post/page ID (required).' ],
-				'ops'             => [ 'type' => 'array',   'description' => 'RFC 6902 op array (required). Supports add, remove, replace, move, copy, test.' ],
+				'ops'             => [ 'type' => 'array',   'description' => 'RFC 6902 op array (required). Supports add, remove, replace, move, copy, test. add, copy and move insert at a list index; an index past the end is refused.' ],
 				'dry_run'         => [ 'type' => 'boolean', 'description' => 'Preview applied_patch without writing (default: false).' ],
 				'if_revision'     => [ 'type' => 'string',  'description' => 'Optional revision guard.' ],
 				'idempotency_key' => [ 'type' => 'string',  'description' => 'Optional 60s replay key.' ],

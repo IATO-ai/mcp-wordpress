@@ -389,12 +389,17 @@ class IATO_MCP_Settings {
 		// submit keep their previous state (see includes/tools-selection.php).
 		// $bridge_gated reflects the key as it was when the form was rendered,
 		// i.e. before this request saved it.
-		$tools = iato_mcp_merge_gated_tools(
+		$tools_before = array_values( array_filter( self::TOOL_NAMES, [ self::class, 'is_tool_enabled' ] ) );
+		$tools        = iato_mcp_merge_gated_tools(
 			self::sanitize_tools( $tools_raw, false ),
 			get_option( 'iato_mcp_tools', [] ),
 			'' === $api_key_before
 		);
 		update_option( 'iato_mcp_tools', $tools );
+		// 1.21.1: clients read the tool list when they connect, and this server has
+		// no stream on which to tell them it changed (notifications/tools/list_changed).
+		$tools_after   = array_values( array_filter( self::TOOL_NAMES, [ self::class, 'is_tool_enabled' ] ) );
+		$tools_changed = $tools_before !== $tools_after;
 
 		// WordPress Abilities exposure toggle (hidden value=0 sibling pattern,
 		// see the media URL toggle below for why rest_sanitize_boolean suffices).
@@ -451,11 +456,14 @@ class IATO_MCP_Settings {
 		update_option( 'iato_mcp_media_upload_rate_limit', $rate_limit );
 
 		wp_send_json_success( [
-			'message' => __( 'Settings saved.', 'iato-mcp' ),
+			'message' => $tools_changed
+				? __( 'Settings saved. AI clients read the tool list when they connect: reconnect the connector in your AI client to see the tools you turned on or off.', 'iato-mcp' )
+				: __( 'Settings saved.', 'iato-mcp' ),
 			'values'  => [
 				'api_key_length'      => strlen( $api_key ),
 				'crawl_id'            => $crawl_id,
 				'tools_enabled'       => count( $tools ),
+				'tools_changed'       => $tools_changed,
 				'abilities_enabled'   => $abilities_enabled,
 				'cache_purge_enabled' => $cache_purge_enabled,
 				'inline_markup_enabled' => $inline_markup_enabled,
@@ -1071,7 +1079,7 @@ class IATO_MCP_Settings {
 							?>
 						</span>
 					</div>
-					<p class="iato-card-desc"><?php esc_html_e( 'Choose which MCP tools are available to AI clients.', 'iato-mcp' ); ?></p>
+					<p class="iato-card-desc"><?php esc_html_e( 'Choose which MCP tools are available to AI clients. AI clients read this list when they connect: after a change, reconnect the connector in your AI client to see it.', 'iato-mcp' ); ?></p>
 
 					<?php foreach ( self::TOOL_CATEGORIES as $category => $tools ) :
 						$is_iato_category = in_array( $category, [ 'IATO Platform', 'Crawl Management' ], true );

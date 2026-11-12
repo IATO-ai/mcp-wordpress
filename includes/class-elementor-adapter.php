@@ -422,6 +422,14 @@ class IATO_MCP_Elementor_Adapter {
 	 *
 	 * Implements: add, remove, replace, move, copy, test.
 	 * Strict path semantics: replace/remove/move/copy fail on missing paths.
+	 * add, copy and move insert into a list at an index, as RFC 6902 says (1.21.1:
+	 * they replaced the element there until then), and each op on a list item
+	 * reports the list as it is afterwards (`list`, `from_list`).
+	 *
+	 * Each op that sets a value also carries `_stored_at`, where annotate_stored()
+	 * finds it in the stored tree: its element's id and the path inside it, so a
+	 * later op that shifts the list does not send it to another element.
+	 * annotate_stored() removes the key.
 	 *
 	 * @return array|WP_Error Applied ops on success.
 	 */
@@ -435,6 +443,10 @@ class IATO_MCP_Elementor_Adapter {
 			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
+			if ( in_array( $result['op'], [ 'add', 'replace' ], true ) ) {
+				$result['_stored_at'] = self::stored_at( $elements, $result['_resolved_path'] ?? $result['path'] );
+			}
+			unset( $result['_resolved_path'] );
 			$applied[] = $result;
 		}
 		return $applied;
@@ -448,11 +460,11 @@ class IATO_MCP_Elementor_Adapter {
 				if ( ! array_key_exists( 'value', $op ) ) {
 					return new WP_Error( 'invalid_patch', "add op missing 'value' at {$path}" );
 				}
-				$err = self::pointer_set( $elements, $path, $op['value'], true );
-				if ( is_wp_error( $err ) ) {
-					return $err;
+				$added = self::pointer_add( $elements, $path, $op['value'] );
+				if ( is_wp_error( $added ) ) {
+					return $added;
 				}
-				return [ 'op' => 'add', 'path' => $path, 'value' => $op['value'] ];
+				return self::with_list( [ 'op' => 'add', 'path' => $path, 'value' => $op['value'] ], $elements, $path, $added );
 
 			case 'replace':
 				if ( ! array_key_exists( 'value', $op ) ) {
@@ -478,30 +490,48 @@ class IATO_MCP_Elementor_Adapter {
 				if ( is_wp_error( $prev ) ) {
 					return $prev;
 				}
-				$err = self::pointer_remove( $elements, $path );
+				$removed = self::list_position( $elements, $path );
+				$err     = self::pointer_remove( $elements, $path );
 				if ( is_wp_error( $err ) ) {
 					return $err;
 				}
-				return [ 'op' => 'remove', 'path' => $path, 'previous_value' => $prev ];
+				$out = [ 'op' => 'remove', 'path' => $path, 'previous_value' => $prev ];
+				if ( null !== $removed ) {
+					$out['list'] = self::list_report( $elements, self::parent_pointer( $path ), $removed['index'], $removed['count_before'] );
+				}
+				return $out;
 
 			case 'move':
 				$from = (string) ( $op['from'] ?? '' );
 				if ( '' === $from ) {
 					return new WP_Error( 'invalid_patch', "move op missing 'from' at {$path}" );
 				}
+				// RFC 6902 4.4: an element cannot move into its own children.
+				if ( str_starts_with( $path, $from . '/' ) ) {
+					return new WP_Error( 'invalid_patch', "move op cannot move {$from} into itself ({$path})." );
+				}
 				$value = self::pointer_get( $elements, $from );
 				if ( is_wp_error( $value ) ) {
 					return $value;
 				}
-				$err = self::pointer_remove( $elements, $from );
+				$taken = self::list_position( $elements, $from );
+				$err   = self::pointer_remove( $elements, $from );
 				if ( is_wp_error( $err ) ) {
 					return $err;
 				}
-				$err = self::pointer_set( $elements, $path, $value, true );
-				if ( is_wp_error( $err ) ) {
-					return $err;
+				$added = self::pointer_add( $elements, $path, $value );
+				if ( is_wp_error( $added ) ) {
+					return $added;
 				}
-				return [ 'op' => 'move', 'from' => $from, 'path' => $path, 'value' => $value ];
+				$out         = [ 'op' => 'move', 'from' => $from, 'path' => $path, 'value' => $value ];
+				$same_parent = self::parent_pointer( $from ) === self::parent_pointer( $path );
+				if ( $same_parent && null !== $taken && null !== $added['index'] ) {
+					// One list: its length before the move, not between the two halves of it.
+					$added['count_before'] = $taken['count_before'];
+				} elseif ( null !== $taken ) {
+					$out['from_list'] = self::list_report( $elements, self::parent_pointer( $from ), $taken['index'], $taken['count_before'] );
+				}
+				return self::with_list( $out, $elements, $path, $added );
 
 			case 'copy':
 				$from = (string) ( $op['from'] ?? '' );
@@ -512,11 +542,11 @@ class IATO_MCP_Elementor_Adapter {
 				if ( is_wp_error( $value ) ) {
 					return $value;
 				}
-				$err = self::pointer_set( $elements, $path, $value, true );
-				if ( is_wp_error( $err ) ) {
-					return $err;
+				$added = self::pointer_add( $elements, $path, $value );
+				if ( is_wp_error( $added ) ) {
+					return $added;
 				}
-				return [ 'op' => 'copy', 'from' => $from, 'path' => $path, 'value' => $value ];
+				return self::with_list( [ 'op' => 'copy', 'from' => $from, 'path' => $path, 'value' => $value ], $elements, $path, $added );
 
 			case 'test':
 				$actual = self::pointer_get( $elements, $path );
@@ -654,12 +684,168 @@ class IATO_MCP_Elementor_Adapter {
 		if ( ! is_array( $node ) || ! array_key_exists( $key, $node ) ) {
 			return new WP_Error( 'invalid_patch_path', "Path not found: {$path}" );
 		}
+		// Asked before the unset (1.21.1): afterwards a list missing its middle item
+		// has keys 0 and 2, was never re-indexed, and was stored as a JSON object.
+		$was_list = self::is_list( $node );
 		unset( $node[ $key ] );
-		// Re-index numeric arrays so subsequent path resolution doesn't break.
-		if ( array_keys( $node ) === range( 0, count( $node ) - 1 ) ) {
+		// Re-index lists so subsequent path resolution doesn't break.
+		if ( $was_list ) {
 			$node = array_values( $node );
 		}
 		return null;
+	}
+
+	/**
+	 * RFC 6902 add: insert into a list at an index (`-` or the list's length
+	 * appends), set a member of an object. Mutates by reference.
+	 *
+	 * A list is an array keyed 0..n-1, or empty. Anything else is an object,
+	 * including a stored page whose elements have gaps in their numbering, which
+	 * keeps the behaviour it had: the key is set, and `-` appends.
+	 *
+	 * @return array|WP_Error `index` and `count_before` for a list insert, both null otherwise.
+	 */
+	public static function pointer_add( array &$root, string $path, mixed $value ): array|WP_Error {
+		if ( '' === $path ) {
+			return new WP_Error( 'invalid_patch_path', 'Cannot replace root document.' );
+		}
+		$segs = self::pointer_segments( $path );
+		$last = array_pop( $segs );
+		$node = &$root;
+		foreach ( $segs as $seg ) {
+			if ( ! is_array( $node ) ) {
+				return new WP_Error( 'invalid_patch_path', "Cannot traverse non-array at {$path}" );
+			}
+			if ( array_key_exists( $seg, $node ) ) {
+				$node = &$node[ $seg ];
+				continue;
+			}
+			if ( ctype_digit( $seg ) && array_key_exists( (int) $seg, $node ) ) {
+				$node = &$node[ (int) $seg ];
+				continue;
+			}
+			return new WP_Error( 'invalid_patch_path', "Path not found: {$path}" );
+		}
+		if ( ! is_array( $node ) ) {
+			return new WP_Error( 'invalid_patch_path', "Cannot set on non-array at {$path}" );
+		}
+		if ( self::is_list( $node ) && ( '-' === $last || ctype_digit( $last ) ) ) {
+			$count = count( $node );
+			if ( '-' === $last ) {
+				$index = $count;
+			} else {
+				if ( strlen( $last ) > 1 && '0' === $last[0] ) {
+					return new WP_Error( 'invalid_patch_path', "Index {$last} has a leading zero at {$path}." );
+				}
+				$index = (int) $last;
+				if ( $index > $count ) {
+					return new WP_Error( 'invalid_patch_path', "Index {$index} is past the end of a list of {$count} at {$path}. Use {$count} or - to append." );
+				}
+			}
+			array_splice( $node, $index, 0, [ $value ] );
+			return [ 'index' => $index, 'count_before' => $count ];
+		}
+		if ( '-' === $last ) {
+			$node[] = $value;
+		} else {
+			$node[ ctype_digit( $last ) ? (int) $last : $last ] = $value;
+		}
+		return [ 'index' => null, 'count_before' => null ];
+	}
+
+	/** Keyed 0..n-1, or empty: a JSON array. (array_is_list() needs PHP 8.1.) */
+	private static function is_list( array $value ): bool {
+		return [] === $value || array_keys( $value ) === range( 0, count( $value ) - 1 );
+	}
+
+	/** The pointer of the array that holds $path's target ('' for the root). */
+	private static function parent_pointer( string $path ): string {
+		$at = strrpos( $path, '/' );
+		return false === $at ? '' : substr( $path, 0, $at );
+	}
+
+	/** Where $path's target sits in its list, or null when its parent is not a list. */
+	private static function list_position( array $root, string $path ): ?array {
+		$parent = self::pointer_get( $root, self::parent_pointer( $path ) );
+		$last   = (string) substr( (string) strrchr( $path, '/' ), 1 );
+		if ( ! is_array( $parent ) || ! self::is_list( $parent ) || ! ctype_digit( $last ) ) {
+			return null;
+		}
+		return [ 'index' => (int) $last, 'count_before' => count( $parent ) ];
+	}
+
+	/** At most this many ids in a `list` report. */
+	private const LIST_IDS_MAX = 100;
+
+	/**
+	 * The list at $parent after an op: where the op acted, its length before and
+	 * after, and each item's `id` (elements) or `_id` (repeater rows), null for
+	 * an item with neither. Shows a misplaced insert before it is written.
+	 */
+	private static function list_report( array $root, string $parent, int $index, int $count_before ): array {
+		$out  = [ 'path' => $parent, 'index' => $index, 'count_before' => $count_before ];
+		$list = self::pointer_get( $root, $parent );
+		if ( ! is_array( $list ) ) {
+			return $out;
+		}
+		$items              = array_values( $list );
+		$out['count_after'] = count( $items );
+		$ids                = [];
+		foreach ( array_slice( $items, 0, self::LIST_IDS_MAX ) as $item ) {
+			$id    = is_array( $item ) ? ( $item['id'] ?? $item['_id'] ?? null ) : null;
+			$ids[] = is_scalar( $id ) ? (string) $id : null;
+		}
+		$out['ids_after'] = $ids;
+		if ( count( $items ) > self::LIST_IDS_MAX ) {
+			$out['ids_truncated'] = true;
+		}
+		return $out;
+	}
+
+	/** Add an insert's `list` report to its op, and the index `-` stood for. */
+	private static function with_list( array $op, array $root, string $path, array $added ): array {
+		if ( null === $added['index'] ) {
+			return $op;
+		}
+		$parent              = self::parent_pointer( $path );
+		$op['list']          = self::list_report( $root, $parent, $added['index'], $added['count_before'] );
+		$op['_resolved_path'] = $parent . '/' . $added['index'];
+		return $op;
+	}
+
+	/**
+	 * Where annotate_stored() finds an op's value: the deepest element (an object
+	 * with `id` and `elType`) on its path, by id, and the path inside it. The whole
+	 * path when no element lies on it.
+	 */
+	private static function stored_at( array $root, string $path ): array {
+		$segs   = self::pointer_segments( $path );
+		$node   = $root;
+		$anchor = null;
+		foreach ( $segs as $i => $seg ) {
+			if ( ! is_array( $node ) ) {
+				break;
+			}
+			if ( array_key_exists( $seg, $node ) ) {
+				$node = $node[ $seg ];
+			} elseif ( ctype_digit( $seg ) && array_key_exists( (int) $seg, $node ) ) {
+				$node = $node[ (int) $seg ];
+			} else {
+				break;
+			}
+			if ( is_array( $node ) && isset( $node['elType'] ) && isset( $node['id'] ) && is_scalar( $node['id'] ) && '' !== (string) $node['id'] ) {
+				$anchor = [ 'id' => (string) $node['id'], 'rest' => $i + 1 ];
+			}
+		}
+		if ( null === $anchor ) {
+			return [ 'path' => $path ];
+		}
+		$rest = array_slice( $segs, $anchor['rest'] );
+		return [
+			'id'   => $anchor['id'],
+			'rest' => [] === $rest ? '' : '/' . implode( '/', array_map( fn( $seg ) => self::escape_pointer_segment( (string) $seg ), $rest ) ),
+			'path' => $path,
+		];
 	}
 
 	// ── find_by_filter ────────────────────────────────────────────────────
@@ -2196,31 +2382,146 @@ class IATO_MCP_Elementor_Adapter {
 		return [ 'bytes' => strlen( $text ), 'sha256' => hash( 'sha256', $text ) ];
 	}
 
-	/** The same value, read the same way get_elementor_widget would return it? */
+	/**
+	 * The same data? Strings byte for byte, objects whatever the order of their
+	 * keys (1.21.1: Elementor's save writes an element's keys in its own order, so
+	 * a real write read back as different where the dry run did not), lists in order.
+	 */
 	private static function same_stored_value( mixed $a, mixed $b ): bool {
-		return $a === $b || ( ! is_string( $a ) && ! is_string( $b ) && wp_json_encode( $a ) === wp_json_encode( $b ) );
+		if ( $a === $b ) {
+			return true;
+		}
+		if ( is_string( $a ) || is_string( $b ) ) {
+			return false;
+		}
+		return wp_json_encode( self::canonical( $a ) ) === wp_json_encode( self::canonical( $b ) );
+	}
+
+	/** Objects with their keys sorted, recursively; lists keep their order. */
+	private static function canonical( mixed $value ): mixed {
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+		$out = [];
+		foreach ( $value as $key => $item ) {
+			$out[ $key ] = self::canonical( $item );
+		}
+		if ( ! self::is_list( $out ) ) {
+			ksort( $out, SORT_STRING );
+		}
+		return $out;
+	}
+
+	/** At most this many paths in `added_paths` and in `removed_paths`. */
+	private const ADDED_PATHS_MAX = 20;
+
+	/**
+	 * Why a stored value differs from the one sent, as `stored_difference`:
+	 * - `markup_normalized`: a string holds the same HTML written differently
+	 *   (quotes, character references, attribute order or case). Needs WordPress
+	 *   6.5; below it such a string is `changed`.
+	 * - `keys_added`: the save added keys, listed in `added_paths`.
+	 * - `keys_removed`: the save dropped keys that were sent, listed in
+	 *   `removed_paths` (Elementor's save drops `isInner` from a widget).
+	 * - `changed`: a value differs otherwise; sanitized_report names what the
+	 *   filters removed.
+	 *
+	 * @param array $kinds   Set of the kinds found, by reference.
+	 * @param array $added   Paths of added keys, by reference.
+	 * @param array $removed Paths of dropped keys, by reference.
+	 */
+	private static function stored_difference( mixed $sent, mixed $stored, string $path, array &$kinds, array &$added, array &$removed ): void {
+		if ( self::same_stored_value( $sent, $stored ) ) {
+			return;
+		}
+		if ( is_string( $sent ) && is_string( $stored ) ) {
+			$kinds[ true === IATO_MCP_Sanitize_Report::same_markup( $sent, $stored ) ? 'markup_normalized' : 'changed' ] = true;
+			return;
+		}
+		if ( ! is_array( $sent ) || ! is_array( $stored ) ) {
+			$kinds['changed'] = true;
+			return;
+		}
+		$lists = self::is_list( $sent ) && self::is_list( $stored ) && [] !== $sent && [] !== $stored;
+		if ( $lists && count( $sent ) !== count( $stored ) ) {
+			$kinds['changed'] = true;
+			return;
+		}
+		foreach ( $sent as $key => $item ) {
+			$at = $path . '/' . self::escape_pointer_segment( (string) $key );
+			if ( ! array_key_exists( $key, $stored ) ) {
+				$kinds[ $lists ? 'changed' : 'keys_removed' ] = true;
+				$removed[] = $at;
+				continue;
+			}
+			self::stored_difference( $item, $stored[ $key ], $at, $kinds, $added, $removed );
+		}
+		foreach ( array_diff_key( $stored, $sent ) as $key => $unused ) {
+			$kinds[ $lists ? 'changed' : 'keys_added' ] = true;
+			$added[] = $path . '/' . self::escape_pointer_segment( (string) $key );
+		}
+	}
+
+	/** Every element's pointer, by id: [id => [pointer, ...]]. */
+	private static function element_paths( array $nodes, string $prefix, array &$out ): void {
+		foreach ( $nodes as $key => $node ) {
+			if ( ! is_array( $node ) ) {
+				continue;
+			}
+			$pointer = $prefix . '/' . self::escape_pointer_segment( (string) $key );
+			if ( isset( $node['id'], $node['elType'] ) && is_scalar( $node['id'] ) ) {
+				$out[ (string) $node['id'] ][] = $pointer;
+			}
+			if ( isset( $node['elements'] ) && is_array( $node['elements'] ) ) {
+				self::element_paths( $node['elements'], $pointer . '/elements', $out );
+			}
+		}
+	}
+
+	/**
+	 * Where an op's value is stored: through its element's id when apply_rfc6902()
+	 * noted one (exactly one element with that id), else at its path.
+	 *
+	 * @return string|null The pointer, or null when it cannot be found.
+	 */
+	private static function stored_pointer( array $tree, array $op, ?array $at, ?array &$ids ): ?string {
+		if ( is_array( $at ) && isset( $at['id'] ) ) {
+			if ( null === $ids ) {
+				$ids = [];
+				self::element_paths( $tree, '', $ids );
+			}
+			$paths = $ids[ $at['id'] ] ?? [];
+			return 1 === count( $paths ) ? $paths[0] . (string) ( $at['rest'] ?? '' ) : null;
+		}
+		return (string) ( $at['path'] ?? $op['path'] ?? '' );
 	}
 
 	/**
 	 * Say for each op that set a value whether the tree as stored holds what was
 	 * sent (`stored_matches_input`), and when it does not, what it holds instead:
-	 * `stored_bytes`, `stored_sha256` and `stored_value`. The sanitising pass, or
+	 * `stored_bytes`, `stored_sha256` and `stored_value`, and why it differs
+	 * (`stored_difference`, see stored_difference()). The sanitising pass, or
 	 * Elementor's own save, can change a value on the way in, and `value` is what
 	 * the client sent. An op whose target cannot be read back is left as it is.
+	 * Removes apply_rfc6902()'s `_stored_at` from every op.
 	 *
 	 * @param array      $applied The ops, each with a JSON pointer `path` into the tree.
 	 * @param array|null $tree    The tree as stored (or, for a dry run, as it would be).
 	 */
 	public static function annotate_stored( array $applied, ?array $tree ): array {
-		if ( null === $tree ) {
-			return $applied;
-		}
+		$ids = null;
 		foreach ( $applied as $i => $op ) {
-			if ( ! is_array( $op ) || ! array_key_exists( 'value', $op ) || ! in_array( $op['op'] ?? '', [ 'add', 'replace' ], true ) ) {
+			if ( ! is_array( $op ) ) {
 				continue;
 			}
-			$stored = self::pointer_get( $tree, (string) ( $op['path'] ?? '' ) );
-			if ( is_wp_error( $stored ) ) {
+			$at = isset( $op['_stored_at'] ) && is_array( $op['_stored_at'] ) ? $op['_stored_at'] : null;
+			unset( $applied[ $i ]['_stored_at'] );
+			if ( null === $tree || ! array_key_exists( 'value', $op ) || ! in_array( $op['op'] ?? '', [ 'add', 'replace' ], true ) ) {
+				continue;
+			}
+			$pointer = self::stored_pointer( $tree, $op, $at, $ids );
+			$stored  = null === $pointer ? null : self::pointer_get( $tree, $pointer );
+			if ( null === $pointer || is_wp_error( $stored ) ) {
 				continue;
 			}
 			$matches                              = self::same_stored_value( $op['value'], $stored );
@@ -2229,10 +2530,30 @@ class IATO_MCP_Elementor_Adapter {
 				$digest                         = self::value_digest( $stored );
 				$applied[ $i ]['stored_bytes']  = $digest['bytes'];
 				$applied[ $i ]['stored_sha256'] = $digest['sha256'];
+				$applied[ $i ]                  = self::with_difference( $applied[ $i ], $op['value'], $stored, $pointer );
 				$applied[ $i ]['stored_value']  = $stored;
 			}
 		}
 		return $applied;
+	}
+
+	/** Add `stored_difference` (and `added_paths`) to an op whose stored value differs. */
+	private static function with_difference( array $op, mixed $sent, mixed $stored, string $path ): array {
+		$kinds   = [];
+		$added   = [];
+		$removed = [];
+		self::stored_difference( $sent, $stored, $path, $kinds, $added, $removed );
+		if ( [] === $kinds ) {
+			$kinds['changed'] = true; // differs, and no part of it says how
+		}
+		$op['stored_difference'] = array_values( array_intersect( [ 'changed', 'keys_added', 'keys_removed', 'markup_normalized' ], array_keys( $kinds ) ) );
+		if ( isset( $kinds['keys_added'] ) ) {
+			$op['added_paths'] = array_slice( $added, 0, self::ADDED_PATHS_MAX );
+		}
+		if ( isset( $kinds['keys_removed'] ) ) {
+			$op['removed_paths'] = array_slice( $removed, 0, self::ADDED_PATHS_MAX );
+		}
+		return $op;
 	}
 
 	/**
@@ -2255,6 +2576,7 @@ class IATO_MCP_Elementor_Adapter {
 				$digest                         = self::value_digest( $op['value'] );
 				$applied[ $i ]['stored_bytes']  = $digest['bytes'];
 				$applied[ $i ]['stored_sha256'] = $digest['sha256'];
+				// No stored_difference: the difference here is Elementor's typed envelope.
 			}
 		}
 		return $applied;
