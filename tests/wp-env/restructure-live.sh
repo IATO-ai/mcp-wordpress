@@ -17,6 +17,8 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${WPENV_DIR:-$REPO}"
 export WPENV_SVC="${WPENV_SVC:-cli}"
 W() { npx @wordpress/env run "$WPENV_SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
+# W's exit status is grep's (1.21.1: the install guard below never fired); this one is the command's.
+Q() { npx @wordpress/env run "$WPENV_SVC" "$@" >/dev/null 2>&1 </dev/null; }
 
 MU=wp-content/mu-plugins/iato-mcp-test-rewrite-probe.php
 SRC=wp-content/plugins/mcp-wordpress/tests/wp-env
@@ -55,7 +57,7 @@ for arg in "$@"; do
 done
 if [ "$PLUGINS" = "1" ]; then
 	for plugin in redirection safe-redirect-manager litespeed-cache; do
-		if W wp plugin is-installed "$plugin"; then
+		if Q wp plugin is-installed "$plugin"; then
 			echo "$plugin is already installed on this site; --plugins installs and removes it, so it will not run here."
 			exit 2
 		fi

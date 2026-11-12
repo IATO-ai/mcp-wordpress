@@ -6,7 +6,8 @@
  * Sanitising functions report nothing about what they removed, so the input and
  * the output are compared: each is reduced to an inventory of tags and
  * attributes, and whatever the output has fewer of was removed. Pure PHP, no
- * WordPress calls.
+ * WordPress calls, except same_markup(), which uses WordPress's tokenizer when
+ * there is one.
  *
  * @package IATO_MCP
  */
@@ -27,6 +28,54 @@ class IATO_MCP_Sanitize_Report {
 		'stripped_wp_version'    => 'Inline SVG and style blocks were removed: keeping them needs WordPress 6.5 or later.',
 		'stripped_unsafe'        => 'Inline SVG and style blocks were removed: the markup did not pass the safety check.',
 	];
+
+	/** HTML's void elements: a self-closing slash on one changes nothing. */
+	private const VOID = [ 'AREA', 'BASE', 'BR', 'COL', 'EMBED', 'HR', 'IMG', 'INPUT', 'LINK', 'META', 'SOURCE', 'TRACK', 'WBR' ];
+
+	/**
+	 * The same HTML written differently? Same tags in the same order, the same
+	 * attributes with the same decoded values, the same decoded text; quotes,
+	 * character references, attribute order and case may differ (kses rewrites
+	 * single-quoted attributes with double quotes). Null when it cannot tell:
+	 * WordPress below 6.5 (no WP_HTML_Tag_Processor::next_token()), or markup
+	 * the tokenizer stops in. 1.21.1, for `stored_difference`.
+	 */
+	public static function same_markup( string $a, string $b ): ?bool {
+		$left = self::markup_tokens( $a );
+		if ( null === $left ) {
+			return null;
+		}
+		$right = self::markup_tokens( $b );
+		return null === $right ? null : $left === $right;
+	}
+
+	/** @return array|null Each token as data, or null (see same_markup()). */
+	private static function markup_tokens( string $html ): ?array {
+		if ( ! class_exists( 'WP_HTML_Tag_Processor' ) || ! method_exists( 'WP_HTML_Tag_Processor', 'next_token' ) ) {
+			return null;
+		}
+		$processor = new WP_HTML_Tag_Processor( $html );
+		$tokens    = [];
+		while ( $processor->next_token() ) {
+			$type = $processor->get_token_type();
+			if ( '#tag' !== $type ) {
+				$tokens[] = [ $type, $processor->get_modifiable_text() ];
+				continue;
+			}
+			$tag        = (string) $processor->get_tag();
+			$attributes = [];
+			foreach ( (array) $processor->get_attribute_names_with_prefix( '' ) as $name ) {
+				$attributes[ $name ] = $processor->get_attribute( $name );
+			}
+			ksort( $attributes, SORT_STRING );
+			$self_closing = in_array( $tag, self::VOID, true ) ? false : $processor->has_self_closing_flag();
+			$tokens[]     = [ '#tag', $tag, $processor->is_tag_closer(), $attributes, $self_closing ];
+		}
+		if ( method_exists( $processor, 'paused_at_incomplete_token' ) && $processor->paused_at_incomplete_token() ) {
+			return null;
+		}
+		return $tokens;
+	}
 
 	/**
 	 * Tags and attributes in an HTML string, names lowercased. A tag named in
@@ -238,6 +287,13 @@ class IATO_MCP_Sanitize_Report {
 		}
 		if ( isset( self::POLICY_NOTES[ $policy ] ) ) {
 			$notes[] = self::POLICY_NOTES[ $policy ];
+		}
+		// 1.21.1: a value kses rewrote without removing anything (single quotes become
+		// double quotes) was reported with nothing in it.
+		if ( 'html' === $rule && '' === $policy && [] === $removed['removed_tags'] && [] === $removed['removed_attributes'] && empty( $entry['removed_css'] ) ) {
+			$notes[] = true === self::same_markup( $before, $after )
+				? 'Nothing was removed: WordPress wrote the same HTML differently (attribute quotes, character references, attribute order or case).'
+				: 'No tag or attribute was removed: WordPress rewrote part of the value, such as an attribute value or character references.';
 		}
 		// 1.21.0: where a page's CSS can go instead. set_page_css ships switched off, so
 		// a client cannot see it in tools/list until an administrator turns it on.

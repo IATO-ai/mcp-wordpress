@@ -130,6 +130,35 @@ final class PageAssetsTest extends TestCase {
 		$this->assertSame( [ 'fonts' => [], 'types' => [] ], IATO_MCP_Page_Fonts::plan( [] ), '[] clears them' );
 	}
 
+	/**
+	 * 1.21.1: Elementor serves a local copy it holds whatever "Load Google Fonts
+	 * Locally" says; the field report's site had copies and the setting off.
+	 */
+	public function test_where_each_google_font_is_served_from(): void {
+		$types = [ 'JetBrains Mono' => 'googlefonts', 'Inter' => 'googlefonts', 'Arial' => 'system' ];
+		$copies = static fn(): array => [ 'jetbrainsmono' => [ 'url' => 'https://site.test/wp-content/uploads/elementor/google-fonts/css/jetbrainsmono.css', 'version' => 1 ] ];
+		try {
+			IATO_MCP_Page_Fonts::set_font_sources( static fn(): bool => false, $copies );
+			$off = IATO_MCP_Page_Fonts::source_report( $types );
+			$this->assertEquals( (object) [ 'JetBrains Mono' => 'local', 'Inter' => 'google' ], $off['served_from'], 'no entry for a system font' );
+			$this->assertFalse( $off['google_fonts_local'], 'Inter comes from Google' );
+			$this->assertFalse( $off['local_google_fonts_setting'] );
+			$this->assertTrue( IATO_MCP_Page_Fonts::source_report( [ 'JetBrains Mono' => 'googlefonts' ] )['google_fonts_local'], 'the report: a copy and the setting off is local' );
+
+			IATO_MCP_Page_Fonts::set_font_sources( static fn(): bool => true, $copies );
+			$on = IATO_MCP_Page_Fonts::source_report( $types );
+			$this->assertEquals( (object) [ 'JetBrains Mono' => 'local', 'Inter' => 'local_after_first_view' ], $on['served_from'] );
+			$this->assertTrue( $on['google_fonts_local'] );
+
+			IATO_MCP_Page_Fonts::set_font_sources( static fn(): bool => true, static fn(): array => [ 'inter' => [ 'url' => '' ] ] );
+			$this->assertSame( 'local_after_first_view', IATO_MCP_Page_Fonts::served_from( 'Inter', 'earlyaccess' ), 'an entry with no url is no copy' );
+			$this->assertNull( IATO_MCP_Page_Fonts::served_from( 'Brand Sans', 'custom' ) );
+			$this->assertTrue( IATO_MCP_Page_Fonts::source_report( [ 'Arial' => 'system' ] )['google_fonts_local'], 'with no Google font, the setting' );
+		} finally {
+			IATO_MCP_Page_Fonts::set_font_sources( null, null );
+		}
+	}
+
 	public function test_fonts_write_and_restore(): void {
 		IATO_MCP_Page_Fonts::write( self::POST, [ 'Arial' ] );
 		$this->assertSame( [ 'Arial' ], IATO_MCP_Page_Fonts::stored( self::POST ) );

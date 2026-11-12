@@ -213,6 +213,26 @@ def page_fonts(p2, other):
     links = re.findall(r'<link[^>]+(?:jetbrains|JetBrains)[^>]*>', html)
     record('with Google fonts loaded locally, the browser asks this site, not Google', links and all('fonts.googleapis.com' not in l for l in links) and any('google-fonts' in l for l in links), links)
     wp('option', 'update', 'elementor_local_google_fonts', '0')
+    # 1.21.1: the field report's site had local copies and the setting off, and was told
+    # google_fonts_local: false.
+    try:
+        copies = json.loads(wp('option', 'get', '_elementor_local_google_fonts', '--format=json') or '{}')
+    except ValueError:
+        copies = {}
+    copies = copies if isinstance(copies, dict) else {}
+    g = call('get_page_fonts', {'id': p2})
+    has_copy = bool((copies.get('jetbrainsmono') or {}).get('url'))
+    record('a local copy and the setting off: served_from local, google_fonts_local true', has_copy and (g.get('served_from') or {}).get('JetBrains Mono') == 'local' and g.get('google_fonts_local') is True and g.get('local_google_fonts_setting') is False, [has_copy, g])
+    status, _, html = fetch(wp('post', 'url', str(p2)))
+    links = re.findall(r'<link[^>]+(?:jetbrains|JetBrains)[^>]*>', html)
+    record('...which is what the page does', links and all('fonts.googleapis.com' not in l for l in links), links)
+    copy = bool((copies.get('inconsolata') or {}).get('url'))
+    d = call('set_page_fonts', {'id': p2, 'fonts': ['Inconsolata'], 'dry_run': True})
+    record('no copy and the setting off: google', (d.get('served_from') or {}).get('Inconsolata') == ('local' if copy else 'google') and d.get('google_fonts_local') is copy, [copy, d])
+    wp('option', 'update', 'elementor_local_google_fonts', '1')
+    d = call('set_page_fonts', {'id': p2, 'fonts': ['Inconsolata'], 'dry_run': True})
+    record('no copy and the setting on: local_after_first_view', (d.get('served_from') or {}).get('Inconsolata') == ('local' if copy else 'local_after_first_view') and d.get('local_google_fonts_setting') is True, [copy, d])
+    wp('option', 'update', 'elementor_local_google_fonts', '0')
     g = call('get_page_fonts', {'id': p2})
     record('get_page_fonts reads them back', g.get('fonts') == ['JetBrains Mono'], g)
     r = call('set_page_fonts', {'id': p2, 'fonts': []})

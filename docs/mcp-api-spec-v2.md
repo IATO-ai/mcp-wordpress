@@ -286,10 +286,28 @@ Power-user escape hatch — apply RFC 6902 JSON Patch ops to the full Elementor 
 | `dry_run` | boolean | No | |
 | `if_revision` | string | No | |
 | `idempotency_key` | string | No | |
+| `return` | string | No | `full` (default) or `minimal` (1.21.0): values become their bytes and sha256 |
+
+**Lists (1.21.1).** A list is a JSON array: in PHP, an array keyed 0..n-1, or empty.
+- `add` at a list index inserts before the item there. An index equal to the length appends, as does `-`. An index past the end, or one with a leading zero, is `invalid_patch_path`. Until 1.21.1 `add` replaced the item at the index.
+- `copy` and `move` insert the same way. `move` is evaluated as RFC 6902 says: the removal first, then the insert at `path`. `move` into the moved element's own children is `invalid_patch`.
+- `remove` re-indexes the list. Until 1.21.1, removing a middle item left a gap, so a later op could not find the next item, and the list could be stored as a JSON object.
+- An object's member is set by `add` (replacing an existing one, as RFC 6902 says). A stored page whose elements have gaps in their numbering is not a list, and keeps the old behaviour.
+
+Each `add`, `copy`, `move` and `remove` on a list item carries `list`: `{path, index, count_before, count_after, ids_after}`. `ids_after` holds each item's `id` (elements) or `_id` (repeater rows), null for an item with neither, at most 100, with `ids_truncated` past that. A `move` between two lists also carries `from_list`. Dry runs carry the same, and `return: "minimal"` keeps it.
+
+**What was stored (1.21.0, 1.21.1).** Each `add` and `replace` op carries `stored_matches_input`, read back from the stored tree after the write (on a dry run, from the tree the sanitising pass would store; Elementor's own save is not simulated).
+- **How it is found:** the op's element, by its id, and the path inside it. A `/-` path, or a position a later op in the same patch shifted, is read where the value went. Without an element on its path, the op's path is read. An op whose value cannot be found carries no `stored_matches_input`.
+- **What counts as the same:** objects whatever their key order, lists in order, strings byte for byte.
+- **When it is false:** `stored_bytes`, `stored_sha256`, `stored_value` (not with `minimal`) and `stored_difference`, a list of:
+  - `markup_normalized`: a string holds the same HTML written differently. Same tags, same attributes with the same decoded values, same decoded text; quotes, character references, attribute order or case differ. Needs WordPress 6.5.
+  - `keys_added` / `keys_removed`: the save added or dropped keys (`added_paths` / `removed_paths`, at most 20 each).
+  - `changed`: anything else.
+- **`sanitized_report`:** an entry for a value WordPress rewrote without removing a tag or attribute carries a note saying so.
 
 **Response:** same shape as `update_elementor_widget`, but `applied_patch` reflects the full set of ops applied.
 
-**Errors:** as `update_elementor_widget`, plus `invalid_patch_path` if any op references a path that doesn't exist post-patch.
+**Errors:** as `update_elementor_widget`, plus `invalid_patch_path` if any op references a path that doesn't exist post-patch, or an index past the end of a list.
 
 ### Tier 2 — Batch
 

@@ -30,6 +30,15 @@ final class IATO_MCP_Page_Fonts {
 	/** @var callable|null Test seam: fn(): bool, are Google fonts on in Elementor? */
 	private static $google_on = null;
 
+	/** @var callable|null Test seam: fn(): bool, Elementor's "Load Google Fonts Locally". */
+	private static $local_setting = null;
+
+	/** @var callable|null Test seam: fn(): array, the local copies Elementor holds (_elementor_local_google_fonts). */
+	private static $local_copies = null;
+
+	/** Elementor's font types that Google_Font serves, from Google or from a local copy. */
+	private const GOOGLE_TYPES = [ 'googlefonts', 'earlyaccess' ];
+
 	public static function init(): void {
 		// wp_enqueue_scripts runs inside wp_head at priority 1; Elementor prints the
 		// queued fonts at priority 7, so they reach the head.
@@ -63,8 +72,64 @@ final class IATO_MCP_Page_Fonts {
 		return class_exists( '\Elementor\Fonts' ) && method_exists( '\Elementor\Fonts', 'is_google_fonts_enabled' ) ? (bool) \Elementor\Fonts::is_google_fonts_enabled() : true;
 	}
 
-	public static function local_google_fonts(): bool {
+	/** Replace where Google fonts come from, for unit tests; nulls restore it. */
+	public static function set_font_sources( ?callable $local_setting, ?callable $local_copies ): void {
+		self::$local_setting = $local_setting;
+		self::$local_copies  = $local_copies;
+	}
+
+	/** Elementor's "Load Google Fonts Locally" setting, read as Google_Font::enqueue() reads it. */
+	public static function local_google_fonts_setting(): bool {
+		if ( null !== self::$local_setting ) {
+			return (bool) ( self::$local_setting )();
+		}
 		return (bool) get_option( 'elementor_local_google_fonts', '0' );
+	}
+
+	/**
+	 * Where Elementor serves a family from (1.21.1), or null for one that is not a
+	 * Google font. Google_Font::enqueue() first serves a local copy it already holds,
+	 * whatever the setting says (turning the setting off does not delete them), and
+	 * only then reads the setting: on, it downloads a copy on the first page view
+	 * and uses Google's when that fails; off, Google's. The same in Elementor 4.2.2
+	 * and 4.3.4. Until 1.21.1 the plugin read only the setting.
+	 *
+	 * @return string|null 'local', 'local_after_first_view' or 'google'.
+	 */
+	public static function served_from( string $family, ?string $type ): ?string {
+		if ( ! in_array( $type, self::GOOGLE_TYPES, true ) ) {
+			return null;
+		}
+		$copies = null !== self::$local_copies ? ( self::$local_copies )() : get_option( '_elementor_local_google_fonts', [] );
+		$copy   = is_array( $copies ) ? ( $copies[ sanitize_key( $family ) ] ?? null ) : null;
+		if ( is_array( $copy ) && ! empty( $copy['url'] ) ) {
+			return 'local';
+		}
+		return self::local_google_fonts_setting() ? 'local_after_first_view' : 'google';
+	}
+
+	/**
+	 * The fields get_page_fonts and set_page_fonts report about where fonts come from:
+	 * `served_from` for each Google family, `google_fonts_local` (true when every
+	 * Google family on the page is served from this site; with none, the setting, as
+	 * before 1.21.1) and `local_google_fonts_setting`.
+	 *
+	 * @param array<string,string|null> $types Family => Elementor's type.
+	 */
+	public static function source_report( array $types ): array {
+		$served = [];
+		foreach ( $types as $family => $type ) {
+			$from = self::served_from( (string) $family, $type );
+			if ( null !== $from ) {
+				$served[ (string) $family ] = $from;
+			}
+		}
+		$setting = self::local_google_fonts_setting();
+		return [
+			'served_from'                => (object) $served,
+			'google_fonts_local'         => [] === $served ? $setting : ! in_array( 'google', $served, true ),
+			'local_google_fonts_setting' => $setting,
+		];
 	}
 
 	/** @return string[] */

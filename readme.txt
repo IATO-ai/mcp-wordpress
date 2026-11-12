@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.21.0
+Stable tag: 1.21.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -184,6 +184,16 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.21.1 =
+* Fix: `update_elementor_patch`: `add` at a list index now inserts before the item there, as RFC 6902 says and the tool's description promised. Since 1.3.0 it replaced the item, so a widget added at an index deleted the widget that stood there. `copy` to an index overwrote the item there and `move` to an index deleted one; both now insert. An index past the end of a list is refused instead of leaving a gap, and an element cannot be moved into its own children. Use `replace` to overwrite. A page that lost an element this way can be put back by rolling back that write's receipt within 90 days, or from Elementor's revisions.
+* Fix: `update_elementor_patch`: `remove` of an item in the middle of a list left a gap in its numbering, so a later op in the same patch could not find the next item, and the list could be stored as a JSON object.
+* New: each `update_elementor_patch` op on a list item returns `list` (where it acted, the list's length before and after, and its items' ids afterwards), on dry runs too, so a misplaced insert shows before it is written.
+* Fix: `stored_matches_input` no longer reads a different key order as a different value. Elementor's save writes an element's keys in its own order, so a real write said false where its dry run said true.
+* Fix: an `add` to `/-`, and an op whose position a later op in the same patch shifted, now get `stored_matches_input`. They used to get nothing, or be compared with whatever stood at the old position.
+* New: when the stored value differs, `stored_difference` says how: `markup_normalized` (the same HTML written differently, such as single quotes rewritten as double quotes), `keys_added` or `keys_removed` (with `added_paths` and `removed_paths`; Elementor's save drops `isInner` from a widget), or `changed`. A `sanitized_report` entry for a value WordPress rewrote without removing anything now says so; it used to be empty.
+* Fix: `get_page_fonts` and `set_page_fonts` report where each Google font is served from (`served_from`: `local`, `local_after_first_view` or `google`). Elementor serves a local copy it already holds even with "Load Google Fonts Locally" off, so `google_fonts_local` was false on sites that served fonts locally. It now means every Google font on the page comes from this site; `local_google_fonts_setting` gives the setting itself.
+* New: Settings > IATO MCP > Tools says that AI clients read the tool list when they connect, and saving a change to the tools says to reconnect the connector. This server cannot tell a connected client that the list changed.
 
 = 1.21.0 =
 * New: `set_page_css` and `get_page_css` give one page its own CSS, printed in that page's head only. They follow the same rules as Additional CSS: nothing loaded from another site, at most 200 KB, and anything that would close the style element removed. The CSS is checked again when it is printed. Needs a WordPress user who may edit CSS (administrators and editors) and `edit_post` on the page.
@@ -575,6 +585,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.21.1 =
+Fixes update_elementor_patch: add at an index now inserts, as RFC 6902 says, instead of replacing (deleting) the element there. Use replace to overwrite. Also clearer stored-value and font-source reports.
 
 = 1.21.0 =
 Adds page CSS, fonts, approved page scripts and draft preview links (all switched off until you turn them on), keeps ARIA, form attributes and more SVG in Elementor HTML, and says what Elementor stored.

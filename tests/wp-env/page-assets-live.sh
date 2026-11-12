@@ -17,6 +17,8 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${WPENV_DIR:-$REPO}"
 export WPENV_SVC="${WPENV_SVC:-cli}"
 W() { npx @wordpress/env run "$WPENV_SVC" "$@" 2>/dev/null </dev/null | grep -v '^ℹ' | grep -v '^✔' | grep -v '^$'; }
+# W's exit status is grep's (1.21.1: the install guard below never fired); this one is the command's.
+Q() { npx @wordpress/env run "$WPENV_SVC" "$@" >/dev/null 2>&1 </dev/null; }
 MU=wp-content/mu-plugins/iato-mcp-test-page-assets-probe.php
 SPY=wp-content/mu-plugins/iato-mcp-test-page-assets-spy.php
 SRC=wp-content/plugins/mcp-wordpress/tests/wp-env
@@ -51,7 +53,7 @@ for arg in "$@"; do
 		http*) BASE="$arg" ;;
 	esac
 done
-if [ "$PLUGINS" = "1" ] && W wp plugin is-installed litespeed-cache; then
+if [ "$PLUGINS" = "1" ] && Q wp plugin is-installed litespeed-cache; then
 	echo "litespeed-cache is already installed on this site; --plugins installs and removes it, so it will not run here."
 	exit 2
 fi

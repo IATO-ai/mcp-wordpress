@@ -114,7 +114,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_page_fonts',
 	[
-		'description' => 'Returns the font families set_page_fonts loads on one post, each with Elementor\'s type for it, and whether Elementor loads Google fonts from this site. Requires edit_post on the post.',
+		'description' => 'Returns the font families set_page_fonts loads on one post, each with Elementor\'s type for it, and for each Google font where Elementor serves it from (served_from: local, local_after_first_view or google). Requires edit_post on the post.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -133,14 +133,14 @@ IATO_MCP_Server::register_tool(
 		foreach ( $fonts as $font ) {
 			$types[ $font ] = IATO_MCP_Page_Fonts::type_of( $font );
 		}
-		return IATO_MCP_Server::ok( [ 'id' => $post->ID, 'fonts' => $fonts, 'types' => (object) $types, 'google_fonts_local' => IATO_MCP_Page_Fonts::local_google_fonts() ] );
+		return IATO_MCP_Server::ok( [ 'id' => $post->ID, 'fonts' => $fonts, 'types' => (object) $types ] + IATO_MCP_Page_Fonts::source_report( $types ) );
 	}
 );
 
 IATO_MCP_Server::register_tool(
 	'set_page_fonts',
 	[
-		'description' => 'Loads font families on one post or page only, through Elementor\'s own font loader, so a page\'s CSS can use a font the site does not load elsewhere. Each family must be one Elementor knows (its Google fonts, system fonts, or Elementor Pro custom and Adobe fonts), spelled as Elementor lists it: unknown_font otherwise. With Elementor\'s "Load Google Fonts Locally" on, visitors fetch them from this site, not Google. Elementor loads every weight of a family, so there is no weights option. fonts replaces the list (at most 10; [] removes it). This plugin loads them, so the page loses them while the plugin is deactivated. Accepts dry_run. Returns the list with each family\'s type, a change_receipt and a cache object (that page is purged). Requires Elementor and edit_post on the post.',
+		'description' => 'Loads font families on one post or page only, through Elementor\'s own font loader, so a page\'s CSS can use a font the site does not load elsewhere. Each family must be one Elementor knows (its Google fonts, system fonts, or Elementor Pro custom and Adobe fonts), spelled as Elementor lists it: unknown_font otherwise. Elementor serves a Google font from this site when it already holds a copy, or when its "Load Google Fonts Locally" is on; served_from says which for each. Elementor loads every weight of a family, so there is no weights option. fonts replaces the list (at most 10; [] removes it). This plugin loads them, so the page loses them while the plugin is deactivated. Accepts dry_run. Returns the list with each family\'s type and served_from, a change_receipt and a cache object (that page is purged). Requires Elementor and edit_post on the post.',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -164,7 +164,7 @@ IATO_MCP_Server::register_tool(
 			return IATO_MCP_Server::refusal( $plan );
 		}
 		$stored = IATO_MCP_Page_Fonts::stored( $post->ID );
-		$data   = [ 'id' => $post->ID, 'fonts' => $plan['fonts'], 'types' => (object) $plan['types'], 'google_fonts_local' => IATO_MCP_Page_Fonts::local_google_fonts() ];
+		$data   = [ 'id' => $post->ID, 'fonts' => $plan['fonts'], 'types' => (object) $plan['types'] ] + IATO_MCP_Page_Fonts::source_report( $plan['types'] );
 		$notes  = [];
 		foreach ( $plan['types'] as $font => $type ) {
 			if ( 'system' === $type ) {

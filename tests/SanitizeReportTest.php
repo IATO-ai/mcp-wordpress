@@ -77,6 +77,18 @@ final class SanitizeReportTest extends TestCase {
 		$this->assertSame( [ 'script' ], IATO_MCP_Sanitize_Report::for_value( 'c', 'html', '<script>x</script>', 'x' )['removed_tags'] );
 	}
 
+	/** 1.21.1: kses rewrote single quotes and the entry said nothing. */
+	public function test_an_entry_that_removed_nothing_says_so(): void {
+		$entry = IATO_MCP_Sanitize_Report::entry( 'w1/settings/html', 'html', "<p class='q'>x</p>", '<p class="q">x</p>' );
+		$this->assertSame( [], $entry['removed_tags'] );
+		$this->assertStringContainsString( 'No tag or attribute was removed', $entry['note'], 'without the tokenizer; live, "Nothing was removed: ... the same HTML"' );
+		$kept = IATO_MCP_Sanitize_Report::entry( 'w1/settings/html', 'html', "<svg x='1'></svg>", '<svg x="1"></svg>', [ 'inline_markup' => 'kept' ] );
+		$this->assertArrayNotHasKey( 'note', $kept, 'an inline markup report keeps its own meaning' );
+		$removed = IATO_MCP_Sanitize_Report::entry( 'w1/settings/html', 'html', '<p>x</p><script>y</script>', '<p>x</p>' );
+		$this->assertSame( [ 'script' ], $removed['removed_tags'] );
+		$this->assertStringNotContainsString( 'No tag or attribute', $removed['note'] ?? '', 'a real removal gets no such note' );
+	}
+
 	public function test_the_note_warns_only_when_style_text_really_stays_visible(): void {
 		$note = IATO_MCP_Sanitize_Report::entry( 'p', 'html', '<style>a{}</style>', 'a{}' )['note'];
 		$this->assertStringContainsString( 'visible text', $note );

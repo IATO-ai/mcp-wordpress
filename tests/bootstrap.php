@@ -129,6 +129,10 @@ if ( ! function_exists( 'get_post_meta' ) ) {
 		return $single ? '' : [];
 	}
 }
+if ( ! function_exists( 'sanitize_key' ) ) {
+	// As in stubs-readtools.php; here so any test can reach it (1.21.1, page fonts).
+	function sanitize_key( string $key ): string { return preg_replace( '/[^a-z0-9_\-]/', '', strtolower( $key ) ); }
+}
 if ( ! function_exists( 'get_theme_mod' ) ) {
 	function get_theme_mod( string $name, mixed $default = false ): mixed {
 		return class_exists( 'IATO_Test_Menus', false ) ? ( IATO_Test_Menus::$mods[ IATO_Test_Menus::$stylesheet ][ $name ] ?? $default ) : $default;

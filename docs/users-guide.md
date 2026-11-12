@@ -172,6 +172,8 @@ Every tool can be individually enabled or disabled. Tools are organized by categ
 
 Disabled tools will not appear in the AI client's tool list.
 
+AI clients read the tool list when they connect. After you turn tools on or off, reconnect the connector in your AI client to see the change; the save message reminds you. The plugin has no way to tell a connected client that the list changed.
+
 The **Page assets** tools (1.21.0) ship switched off, on new installs and on upgrades. Turn on the ones you want. Switching one off later only hides the tool: CSS and fonts it stored keep showing on their pages.
 
 ---
@@ -599,7 +601,7 @@ These seven tools ship switched off. An administrator turns them on in **Setting
 
 - **`fonts`:** the list (at most 10; `[]` removes them).
 - **Which families:** each must be one Elementor knows (Google fonts, system fonts, and Elementor Pro custom or Adobe fonts), spelled as Elementor lists it, or the call is refused with `unknown_font`.
-- **Local hosting:** with Elementor's **Load Google Fonts Locally** on, visitors load them from your site, not Google.
+- **Local hosting:** Elementor serves a Google font from your site when it already holds a copy, even with **Load Google Fonts Locally** off, and otherwise downloads one on the first page view when that setting is on. `served_from` says which for each family: `local`, `local_after_first_view` or `google`. `google_fonts_local` is true when every Google font on the page comes from your site, and `local_google_fonts_setting` is the setting itself (1.21.1).
 - **Weights:** Elementor loads every weight of a family, so there is no weights option.
 
 **Capability:** `edit_post` on the page. Needs Elementor.
@@ -642,7 +644,13 @@ Page CSS and page fonts are printed by this plugin when the page renders.
 
 #### Elementor write responses
 
-- **What was stored:** in the responses of `update_elementor_widget` and `update_elementor_patch`, each change in `applied_patch` says `stored_matches_input`. When the stored value differs from what was sent, it also gives `stored_bytes`, `stored_sha256` and `stored_value`.
+- **What was stored:** in the responses of `update_elementor_widget` and `update_elementor_patch`, each change in `applied_patch` says `stored_matches_input`. When the stored value differs from what was sent, it also gives `stored_bytes`, `stored_sha256` and `stored_value`, and `stored_difference` says how (1.21.1):
+  - `markup_normalized`: the same HTML written differently, for example single quotes rewritten as double quotes. Nothing was removed.
+  - `keys_added` / `keys_removed`: the save added or dropped keys, listed in `added_paths` / `removed_paths`. Elementor's save drops `isInner` from a widget.
+  - `changed`: a value differs otherwise. `sanitized_report` says what was removed.
+
+  Key order does not count: Elementor writes an element's keys in its own order.
+- **Patch ops on lists (1.21.1):** in `update_elementor_patch`, `add` at a list index inserts before the item there, `replace` overwrites it, and `/-` appends. `copy` and `move` insert the same way, and an index past the end is refused. Each op on a list item returns `list`, with the list's item ids afterwards, so a dry run shows where an insert lands. Before 1.21.1, `add` at an index replaced the item there.
 - **Smaller responses:** pass `return: "minimal"` to those two tools and to `update_elementor_data`, on writes and dry runs, to get each value's size and hash instead of the value. That keeps a large widget's response small.
 
 ---
@@ -934,6 +942,7 @@ You'll see this error when using bridge or sync tools without an IATO API key. G
 - Confirm the plugin is activated in WordPress.
 - Check **Settings → IATO MCP** — disabled tools won't appear in the tool list.
 - Bridge/sync tools only load when an IATO API key is configured.
+- After turning a tool on, reconnect the connector in your AI client: clients read the tool list when they connect.
 
 ### SEO updates not working
 
