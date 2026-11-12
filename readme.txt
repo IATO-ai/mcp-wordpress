@@ -4,7 +4,7 @@ Tags: mcp, ai, seo, sitemap, claude
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.20.0
+Stable tag: 1.21.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-**Without an IATO account (57 WordPress tools):**
+**Without an IATO account (62 WordPress tools):**
 
 * Read and edit posts, pages, and media
 * Create new posts and pages with excerpt support
@@ -37,6 +37,7 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 * Set and clear the featured image on any post
 * Read and write arbitrary post meta with a credential-key denylist and a known-safe theme/builder/SEO allowlist (force=true required outside the allowlist)
 * Set per-post theme + builder page settings (hide title, sidebar layout, content layout, etc.) on Astra, Kadence, GeneratePress, and Elementor in one call
+* Give one page its own CSS and fonts, and make expiring preview links for drafts (switched off until an administrator turns them on)
 * Read and edit navigation menus, create menus and assign them to theme locations
 * Nest pages under a parent and change the permalink structure, with 301 redirects from the old URLs and one-step undo
 * Manage categories, tags, and taxonomy terms
@@ -183,6 +184,17 @@ Only images, and only when the calling user has the `upload_files` capability. T
 4. OAuth authorization screen — approve AI client connections
 
 == Changelog ==
+
+= 1.21.0 =
+* New: `set_page_css` and `get_page_css` give one page its own CSS, printed in that page's head only. They follow the same rules as Additional CSS: nothing loaded from another site, at most 200 KB, and anything that would close the style element removed. The CSS is checked again when it is printed. Needs a WordPress user who may edit CSS (administrators and editors) and `edit_post` on the page.
+* New: `set_page_fonts` and `get_page_fonts` load Elementor font families on one page only, through Elementor's own font loader, so "Load Google Fonts Locally" is respected. Families Elementor does not know are refused.
+* New: `create_preview_link` makes an expiring URL (15 minutes by default, an hour at most) that shows a draft, pending or scheduled post without a login, so an AI client can check its work. Responses to it are not cached and carry noindex and no-referrer. Rolling back its receipt revokes it. Needs permission to publish the post.
+* New: These five tools ship switched off. An administrator turns them on in Settings > IATO MCP > Tools. A new "Page assets" tab lists every page with page CSS or fonts and every live preview link, with buttons to remove or revoke them. The Plugins screen warns before the plugin is deactivated, since those pages lose their CSS and fonts while it is off. Uninstalling keeps page CSS and fonts.
+* New: HTML in Elementor widgets keeps every `aria-*` attribute, `inert`, `disabled` and `readonly` where HTML has them, and `<input>` with ordinary types (not password, file, image, hidden or submit). Nothing that passed before is removed now: a live check runs a fixture set through 1.20.0's filter and this one.
+* New: With "Allow inline SVG and style blocks" on, HTML widgets also keep `ellipse`, `text`, `tspan`, `defs`, gradients, `stop`, `marker`, `clipPath`, and `use` pointing at `#id` in the same SVG. A `@property` `syntax` descriptor such as `syntax:'<number>'` is kept in style blocks outside an `<svg>` (WordPress 6.7 or later).
+* New: Elementor write responses say for each change whether the stored value is what was sent (`stored_matches_input`). When it is not, they say what was stored. `update_elementor_widget`, `update_elementor_patch` and `update_elementor_data` take `return: "minimal"`, which returns sizes and hashes instead of whole values.
+* Fix: `sanitized_report` now names style declarations WordPress removed from `style` attributes. When Elementor's own filter removed more for a user without `unfiltered_html`, that used to be left out of the report.
+* Fix: a removed `<style>` block's report names `set_page_css` and where to turn it on.
 
 = 1.20.0 =
 * New: `update_post` and `create_post` take `parent`, for pages and other hierarchical types, and `menu_order`. A page's URL becomes its parent's URL plus its slug, so /services/web-development/ can be built. `parent` is refused for posts (`parent_not_supported`). A page cannot go under itself or a page below it (`parent_cycle`). The parent must be a page of the same type that the caller can read. A parent that is not published is a warning.
@@ -561,6 +573,9 @@ Only images, and only when the calling user has the `upload_files` capability. T
 * Plugin-generated API key with Bearer token authentication
 
 == Upgrade Notice ==
+
+= 1.21.0 =
+Adds page CSS, page fonts and draft preview links (switched off until you turn them on), keeps ARIA, form attributes and more SVG in Elementor HTML, and lets Elementor responses say what was stored.
 
 = 1.20.0 =
 Adds page parents and permalink settings, with 301 redirects from the old URLs and a one-step rollback, and stops update_post refusing a page slug that a menu item uses.

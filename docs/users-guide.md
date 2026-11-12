@@ -138,7 +138,20 @@ The API key is validated against the IATO API when you save settings. A green "C
 ### Caching and HTML widgets
 
 - **Purge page caches after changes** (on by default). After each change made through MCP, IATO purges the cache plugins it finds: LiteSpeed Cache, WP Rocket, W3 Total Cache, WP Super Cache, WP Fastest Cache and SiteGround Optimizer. See [Page Caches](#page-caches).
-- **Allow inline SVG and style blocks in HTML widgets for administrators** (off by default, WordPress 6.5 or later). The `html` setting of an Elementor HTML widget keeps `<style>` and these SVG elements: `svg`, `g`, `path`, `rect`, `circle`, `line`, `polyline`, `polygon`, `title`. It applies only when the connection's WordPress user holds both `unfiltered_html` and `manage_options`, on any kind of connection. It does not grant `unfiltered_html`, and every other value stays filtered. Still removed: `<script>`, event attributes, `javascript:` URLs, `foreignObject`, `use`, `image` and animation elements, and from style blocks `@import` and anything that loads from another site. A style block that can't be read safely, for example one with an unterminated `url()`, a character reference such as `&#105;`, or text that names another site (even in a `//` comment), is dropped whole, and `removed_css` says why.
+- **Allow inline SVG and style blocks in HTML widgets for administrators** (off by default, WordPress 6.5 or later). The `html` setting of an Elementor HTML widget keeps `<style>` and these SVG elements: `svg`, `g`, `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `title`, `text`, `tspan`, `defs`, `linearGradient`, `radialGradient`, `stop`, `marker`, `clipPath` and `use`.
+  - **Who it applies to:** only a connection whose WordPress user holds both `unfiltered_html` and `manage_options`, on any kind of connection. It does not grant `unfiltered_html`, and every other value stays filtered.
+  - **`use`:** only a reference inside the same SVG (`href="#id"`). A `<use>` pointing anywhere else is removed.
+  - **`@property`:** since 1.21.0, a `syntax` descriptor such as `syntax:'<number>'` is kept, except in a style block inside an `<svg>` and below WordPress 6.7.
+  - **Still removed:** `<script>`, event attributes, `javascript:` URLs, `foreignObject`, `image` and animation elements, and from style blocks `@import` and anything that loads from another site.
+  - **Dropped whole:** a style block that can't be read safely, for example one with an unterminated `url()`, a character reference such as `&#105;`, or text that names another site (even in a `//` comment). `removed_css` says why.
+
+With the setting on or off, HTML in Elementor widgets keeps:
+- every `aria-*` attribute;
+- `inert`;
+- `disabled` and `readonly` where HTML has them;
+- `<input>` with ordinary types (text, checkbox, radio, number and the like; not password, file, image, hidden or submit). `<form>` is still removed.
+
+What another plugin already allows on your site keeps working as before. `sanitized_report` also names style declarations WordPress removed from `style` attributes, such as `style on <div>: color:rgb(1,2,3)`.
 
 ### Tool Toggles
 
@@ -154,8 +167,11 @@ Every tool can be individually enabled or disabled. Tools are organized by categ
 | Taxonomy | `get_terms`, `assign_term` |
 | Comments | `get_comments` |
 | Users | `update_user_profile` |
+| Page assets | `get_page_css`, `set_page_css`, `get_page_fonts`, `set_page_fonts`, `create_preview_link` |
 
 Disabled tools will not appear in the AI client's tool list.
+
+The **Page assets** tools (1.21.0) ship switched off, on new installs and on upgrades. Turn on the ones you want. Switching one off later only hides the tool: CSS and fonts it stored keep showing on their pages.
 
 ---
 
@@ -557,6 +573,59 @@ Changes the public fields of a profile: `display_name`, `nickname`, `first_name`
 A site key with no owner has no user of its own, so it must send `user_id`.
 
 **Capability:** `edit_user` on that user: yourself, or anyone if you hold `edit_users`.
+
+---
+
+### Page Assets Tools
+
+These five tools ship switched off. An administrator turns them on in **Settings > IATO MCP > Tools**. The **Page assets** tab of the same screen lists every page with page CSS or fonts, and every live preview link, with buttons to remove or revoke them.
+
+#### `get_page_css` / `set_page_css`
+
+`set_page_css` sets CSS for one post or page. It prints in that page's head only, after the theme's Additional CSS: on its own URL, on the front page when the page is the front page, and on preview links. Use it instead of a `<style>` block in an HTML widget.
+
+- **Arguments:** `id`, then `css` to replace it all (an empty string removes it) or `append_css` to add to the end, and `dry_run`.
+- **Same rules as Additional CSS:** at most 200 KB, nothing loaded from another site (`css_not_allowed`), and anything that would close the style element removed and reported.
+- **`@property`:** a `syntax` descriptor such as `syntax:'<number>'` is kept.
+- **Checked again when printed:** CSS that reached the page another way, such as a database edit, never prints unchecked.
+- **Response and rollback:** a receipt whose rollback restores the previous CSS. Only that page's cache is purged.
+
+**Capability:** `edit_post` on the page, and `edit_css` held by a real user (administrators and editors). A site key with no owner cannot use it.
+
+#### `get_page_fonts` / `set_page_fonts`
+
+`set_page_fonts` loads font families on one page only, through Elementor's own font loader, so the page's CSS can use a font the site does not load elsewhere.
+
+- **`fonts`:** the list (at most 10; `[]` removes them).
+- **Which families:** each must be one Elementor knows (Google fonts, system fonts, and Elementor Pro custom or Adobe fonts), spelled as Elementor lists it, or the call is refused with `unknown_font`.
+- **Local hosting:** with Elementor's **Load Google Fonts Locally** on, visitors load them from your site, not Google.
+- **Weights:** Elementor loads every weight of a family, so there is no weights option.
+
+**Capability:** `edit_post` on the page. Needs Elementor.
+
+#### `create_preview_link`
+
+Makes a URL that shows one draft, pending or scheduled post to anyone who has it, without a login, so an AI client can look at its own work before it is published.
+
+- **Lifetime:** `ttl_seconds`, 15 minutes by default and an hour at most. The link also stops working once the post is published or trashed.
+- **Revoking:** roll back the link's receipt, or use **Revoke** in the Page assets tab.
+- **Responses to it:** never cached by page caches, and marked `noindex` and `Referrer-Policy: no-referrer`.
+- **Keep it private:** the token is in the URL, so access logs and analytics on that page record it.
+
+**Capability:** `edit_post` on the post, and permission to publish it. An author can link their own drafts; a contributor cannot.
+
+#### What depends on the plugin
+
+Page CSS and page fonts are printed by this plugin when the page renders.
+
+- **Deactivated:** while the plugin is deactivated, those pages lose them. The Plugins screen warns before you deactivate it, with the number of pages affected.
+- **Uninstalled:** deleting the plugin keeps page CSS and fonts, so they come back if you install it again. It removes preview links.
+- **The alternative:** a `<style>` block in an HTML widget does not depend on the plugin. Choose it when that matters more.
+
+#### Elementor write responses
+
+- **What was stored:** in the responses of `update_elementor_widget` and `update_elementor_patch`, each change in `applied_patch` says `stored_matches_input`. When the stored value differs from what was sent, it also gives `stored_bytes`, `stored_sha256` and `stored_value`.
+- **Smaller responses:** pass `return: "minimal"` to those two tools and to `update_elementor_data`, on writes and dry runs, to get each value's size and hash instead of the value. That keeps a large widget's response small.
 
 ---
 

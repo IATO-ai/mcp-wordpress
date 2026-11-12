@@ -46,7 +46,8 @@ function iato_mcp_bridge_tool_names(): array {
  */
 function iato_mcp_tool_was_enabled( string $tool, ?array $saved ): bool {
 	if ( empty( $saved ) ) {
-		return true;
+		// 1.21.0: some tools ship switched off (IATO_MCP_Settings::DEFAULT_OFF_TOOLS).
+		return ! ( defined( 'IATO_MCP_Settings::DEFAULT_OFF_TOOLS' ) && in_array( $tool, IATO_MCP_Settings::DEFAULT_OFF_TOOLS, true ) );
 	}
 	return in_array( $tool, $saved, true );
 }

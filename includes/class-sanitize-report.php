@@ -239,10 +239,24 @@ class IATO_MCP_Sanitize_Report {
 		if ( isset( self::POLICY_NOTES[ $policy ] ) ) {
 			$notes[] = self::POLICY_NOTES[ $policy ];
 		}
+		// 1.21.0: where a page's CSS can go instead. set_page_css ships switched off, so
+		// a client cannot see it in tools/list until an administrator turns it on.
+		$style_lost = in_array( 'style', $removed['removed_tags'], true )
+			|| [] !== preg_grep( '/^whole <style> block/', (array) ( $extra['removed_css'] ?? [] ) );
+		if ( 'html' === $rule && $style_lost ) {
+			$notes[] = self::page_css_enabled()
+				? 'To give this page its own CSS, send it to set_page_css instead of a <style> block.'
+				: 'set_page_css gives one page its own CSS, outside the widget. It is switched off on this site: an administrator turns it on under Settings > IATO MCP > Tools (Page assets).';
+		}
 		if ( [] !== $notes ) {
 			$entry['note'] = implode( ' ', $notes );
 		}
 		return $entry;
+	}
+
+	/** Is set_page_css switched on? False when the settings are not loaded. */
+	private static function page_css_enabled(): bool {
+		return class_exists( 'IATO_MCP_Settings' ) && method_exists( 'IATO_MCP_Settings', 'is_tool_enabled' ) && IATO_MCP_Settings::is_tool_enabled( 'set_page_css' );
 	}
 
 	/** Does the text of a style or script element in $before still show in $after? For the note only. */

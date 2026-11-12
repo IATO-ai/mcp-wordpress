@@ -249,6 +249,9 @@ class IATO_MCP_Rollback {
 		if ( IATO_MCP_Custom_CSS::RECEIPT === $receipt['target_type'] ) {
 			$restore = [ 'restored_value' => IATO_MCP_Custom_CSS::restore_view( $before ) ];
 		}
+		if ( IATO_MCP_Page_CSS::RECEIPT === $receipt['target_type'] ) {
+			$restore = [ 'restored_value' => IATO_MCP_Page_CSS::restore_view( $before ) ];
+		}
 		if ( $is_atomic ) {
 			// 1.14.0: one atomic element's settings, shown in plain form.
 			$restore = [ 'restored_value' => IATO_MCP_Elementor_Atomic_Writer::restore_view( $receipt ) ];
@@ -289,7 +292,7 @@ class IATO_MCP_Rollback {
 		if ( $dry_run ) {
 			return [ 'dry_run' => true, 'would_roll_back' => 'conflict' !== $check['status'] || $force ]
 				+ $base
-				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic || IATO_MCP_Custom_CSS::RECEIPT === $receipt['target_type'] ? $restore['restored_value'] : $before ] )
+				+ ( $is_tree ? [ 'would_restore_revision' => $restore['restored_revision'] ] + ( isset( $restore['restored'] ) ? [ 'would_restore' => $restore['restored'] ] : [] ) : [ 'would_restore' => $is_atomic || in_array( $receipt['target_type'], [ IATO_MCP_Custom_CSS::RECEIPT, IATO_MCP_Page_CSS::RECEIPT ], true ) ? $restore['restored_value'] : $before ] )
 				+ ( $is_tree ? self::content_refresh_preview( $post_id, $before ) : [] )
 				+ [ 'conflict_check' => $report ];
 		}
@@ -350,8 +353,10 @@ class IATO_MCP_Rollback {
 			return new WP_Error(
 				'rollback_unavailable',
 				sprintf(
-					IATO_MCP_Custom_CSS::RECEIPT === $type
-						? 'The copy of the CSS this change replaced was removed on %s, when the receipt became older than the retention period. Restore it from the revisions of Additional CSS in the Customizer.'
+					IATO_MCP_Custom_CSS::RECEIPT === $type || IATO_MCP_Page_CSS::RECEIPT === $type
+						? ( IATO_MCP_Page_CSS::RECEIPT === $type
+							? 'The copy of the page CSS this change replaced was removed on %s, when the receipt became older than the retention period. Send the CSS again with set_page_css.'
+							: 'The copy of the CSS this change replaced was removed on %s, when the receipt became older than the retention period. Restore it from the revisions of Additional CSS in the Customizer.' )
 						: 'The copy of the page this change replaced was removed on %s, when the receipt became older than the retention period. Restore the page in Elementor under History > Revisions.',
 					(string) $receipt['pruned_at']
 				),
@@ -405,6 +410,15 @@ class IATO_MCP_Rollback {
 			if ( null !== $why ) {
 				return $why;
 			}
+		}
+		if ( IATO_MCP_Page_CSS::RECEIPT === $type ) {
+			$why = IATO_MCP_Page_CSS::rollback_unavailable( (int) ( $receipt['post_id'] ?? 0 ) );
+			if ( null !== $why ) {
+				return $why;
+			}
+		}
+		if ( IATO_MCP_Page_Fonts::RECEIPT === $type && ! get_post( (int) ( $receipt['post_id'] ?? 0 ) ) ) {
+			return new WP_Error( 'rollback_unavailable', 'The post these fonts belonged to no longer exists.', [ 'status' => 409 ] );
 		}
 		if ( 'site_setting' === $type ) {
 			$why = self::site_setting_unavailable( $field, $before );
@@ -483,6 +497,13 @@ class IATO_MCP_Rollback {
 				return self::rollback_site_setting( $field, $before_value );
 			case IATO_MCP_Custom_CSS::RECEIPT:
 				return IATO_MCP_Custom_CSS::restore( $before_value );
+			case IATO_MCP_Page_CSS::RECEIPT:
+				return IATO_MCP_Page_CSS::restore( (int) $post_id, $before_value );
+			case IATO_MCP_Page_Fonts::RECEIPT:
+				return IATO_MCP_Page_Fonts::restore( (int) $post_id, $before_value );
+			case IATO_MCP_Preview_Link::RECEIPT:
+				// Rolling a link back revokes it; one already expired or revoked counts as gone.
+				return IATO_MCP_Preview_Link::revoke( (int) $post_id, (string) ( IATO_MCP_Rollback_Conflict::json_array( $receipt['after_value'] ?? null )['link_id'] ?? '' ) );
 			case IATO_MCP_User_Profile::RECEIPT:
 				return IATO_MCP_User_Profile::restore( $before_value );
 			case 'post_meta':

@@ -88,6 +88,12 @@ class IATO_MCP_Settings {
 		'media_upload_start',
 		'media_upload_chunk',
 		'media_upload_finish',
+		// Page assets (v1.21.0): ship switched off, see DEFAULT_OFF_TOOLS.
+		'get_page_css',
+		'set_page_css',
+		'get_page_fonts',
+		'set_page_fonts',
+		'create_preview_link',
 		// IATO bridge (require API key).
 		'get_iato_sitemap',
 		'get_iato_nav_audit',
@@ -190,6 +196,21 @@ class IATO_MCP_Settings {
 		],
 	];
 
+	/**
+	 * Tools that ship switched off (1.21.0): on a fresh install, where the saved list is
+	 * empty and every other tool counts as on, these count as off; on an upgrade they
+	 * are not backfilled, so a saved list does not hold them. An administrator turns
+	 * them on in the Tools card. Never add one of these to TOOL_MIGRATION_BACKFILL.
+	 * Switching one off hides the tool only: what it stored keeps working.
+	 */
+	public const DEFAULT_OFF_TOOLS = [
+		'get_page_css',
+		'set_page_css',
+		'get_page_fonts',
+		'set_page_fonts',
+		'create_preview_link',
+	];
+
 	/** Tools that require the IATO API key before they'll be registered. */
 	private const IATO_BRIDGE_TOOLS = [
 		'get_iato_sitemap',
@@ -276,6 +297,11 @@ class IATO_MCP_Settings {
 		'list_elementor_templates' => 'Enumerate Theme Builder templates with their Display Conditions parsed (admin only — manage_options)',
 		'create_elementor_template' => 'Create a Theme Builder header, footer or other template (admin only; most types need Elementor Pro)',
 		'set_elementor_template_conditions' => 'Set where a Theme Builder template shows (admin only; needs Elementor Pro)',
+		'get_page_css'             => 'Read the CSS set for one page',
+		'set_page_css'             => 'Set CSS printed on one page only, without off-site loads (administrators and editors). The plugin prints it: deactivating the plugin takes it off the page',
+		'get_page_fonts'           => 'Read the fonts loaded on one page',
+		'set_page_fonts'           => 'Load Elementor font families on one page only (needs Elementor)',
+		'create_preview_link'      => 'Make an expiring link that shows a draft without a login, so an AI client can check its work',
 	];
 
 	/** Tool groupings for UI categories. */
@@ -294,6 +320,7 @@ class IATO_MCP_Settings {
 		'Elementor v2'  => [ 'list_elementor_widgets', 'get_elementor_widget', 'update_elementor_widget', 'update_elementor_patch', 'update_elementor_widgets_bulk', 'find_elementor_widgets', 'set_heading_level', 'set_widget_setting', 'resolve_url', 'list_elementor_templates', 'create_elementor_template', 'set_elementor_template_conditions' ],
 		'IATO Platform' => [ 'get_iato_sitemap', 'get_iato_nav_audit', 'get_iato_orphan_pages', 'get_iato_taxonomy', 'get_iato_seo_fixes', 'get_iato_content_gaps', 'get_iato_broken_links', 'get_iato_suggestions', 'get_iato_perf_report' ],
 		'Crawl Management' => [ 'start_iato_crawl', 'get_iato_crawl_status', 'list_iato_crawls' ],
+		'Page assets'   => [ 'get_page_css', 'set_page_css', 'get_page_fonts', 'set_page_fonts', 'create_preview_link' ],
 	];
 
 	/** Page hook suffix returned by add_options_page(). */
@@ -495,9 +522,10 @@ class IATO_MCP_Settings {
 	public static function is_tool_enabled( string $tool_name ): bool {
 		$enabled = get_option( 'iato_mcp_tools', [] );
 
-		// If option is empty (fresh install), all tools are enabled.
+		// If option is empty (fresh install), all tools are enabled, except those
+		// that ship switched off (1.21.0).
 		if ( empty( $enabled ) ) {
-			return true;
+			return ! in_array( $tool_name, self::DEFAULT_OFF_TOOLS, true );
 		}
 
 		return in_array( $tool_name, $enabled, true );
@@ -696,7 +724,7 @@ class IATO_MCP_Settings {
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only view switcher; no state mutation occurs from this parameter.
 		$active_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'general';
-		if ( ! in_array( $active_tab, [ 'general', 'diagnostics' ], true ) ) {
+		if ( ! in_array( $active_tab, [ 'general', 'diagnostics', IATO_MCP_Page_Assets_Admin::TAB ], true ) ) {
 			$active_tab = 'general';
 		}
 
@@ -709,9 +737,13 @@ class IATO_MCP_Settings {
 				'label' => __( 'Diagnostics', 'iato-mcp' ),
 				'url'   => admin_url( 'options-general.php?page=' . self::PAGE_SLUG . '&tab=diagnostics' ),
 			],
+			IATO_MCP_Page_Assets_Admin::TAB => [
+				'label' => __( 'Page assets', 'iato-mcp' ),
+				'url'   => IATO_MCP_Page_Assets_Admin::url(),
+			],
 		];
 
-		if ( 'diagnostics' === $active_tab ) {
+		if ( 'diagnostics' === $active_tab || IATO_MCP_Page_Assets_Admin::TAB === $active_tab ) {
 			?>
 			<div class="iato-wrap">
 				<div class="iato-header">
@@ -731,7 +763,13 @@ class IATO_MCP_Settings {
 				</h2>
 
 				<?php settings_errors(); ?>
-				<?php IATO_MCP_Diagnostics::render(); ?>
+				<?php
+				if ( 'diagnostics' === $active_tab ) {
+					IATO_MCP_Diagnostics::render();
+				} else {
+					IATO_MCP_Page_Assets_Admin::render();
+				}
+				?>
 			</div>
 			<?php
 			return;
@@ -784,7 +822,7 @@ class IATO_MCP_Settings {
 			],
 		], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 
-		$enabled_count = $all_on ? count( self::TOOL_NAMES ) : count( $enabled );
+		$enabled_count = $all_on ? count( self::TOOL_NAMES ) - count( self::DEFAULT_OFF_TOOLS ) : count( array_intersect( (array) $enabled, self::TOOL_NAMES ) );
 		$total_count   = count( self::TOOL_NAMES );
 
 		?>
@@ -1057,7 +1095,7 @@ class IATO_MCP_Settings {
 							<?php endif; ?>
 							<div class="iato-tool-grid">
 								<?php foreach ( $tools as $tool ) :
-									$checked = $all_on || in_array( $tool, $enabled, true );
+									$checked = $all_on ? ! in_array( $tool, self::DEFAULT_OFF_TOOLS, true ) : in_array( $tool, $enabled, true );
 									$desc    = self::TOOL_DESCRIPTIONS[ $tool ] ?? '';
 								?>
 									<?php if ( $category_gated && $checked ) : ?>

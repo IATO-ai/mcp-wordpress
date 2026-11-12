@@ -40,6 +40,10 @@ class IATO_MCP_Meta_Policy {
 		'_jwt_',
 		'_refresh_token_',
 		'_elementor_element_cache', // Elementor's cached pages and their key (IATO_MCP_Element_Cache_Guard)
+		// 1.21.0: page CSS, fonts and scripts print on a page, and preview links open a
+		// draft; only their own tools, which check what they store, may write them.
+		'_iato_mcp_page_',
+		'_iato_mcp_preview_',
 	];
 
 	/**

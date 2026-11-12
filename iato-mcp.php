@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Exposes an MCP server from any self-hosted WordPress install, enabling IATO analyze-and-fix workflows via Claude Desktop and other AI clients.
- * Version:     1.20.0
+ * Version:     1.21.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.20.0' );
+define( 'IATO_MCP_VERSION', '1.21.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -85,6 +85,10 @@ require_once IATO_MCP_DIR . 'includes/class-redirects.php';
 require_once IATO_MCP_DIR . 'includes/class-url-move.php';
 require_once IATO_MCP_DIR . 'includes/class-permalinks.php';
 require_once IATO_MCP_DIR . 'includes/class-custom-css.php';
+require_once IATO_MCP_DIR . 'includes/class-page-css.php';
+require_once IATO_MCP_DIR . 'includes/class-page-fonts.php';
+require_once IATO_MCP_DIR . 'includes/class-preview-link.php';
+require_once IATO_MCP_DIR . 'includes/class-page-assets-admin.php';
 require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-media-uploader.php';
 require_once IATO_MCP_DIR . 'includes/class-media-chunks.php';
@@ -114,6 +118,7 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-post-meta.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-settings.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-featured-image.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media-upload.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-page-assets.php';
 
 // Phase 2 — IATO bridge tools. Exposed on the MCP endpoint only when an IATO
 // API key is configured (unchanged). When the key is absent but WordPress
@@ -154,6 +159,10 @@ function iato_mcp_init() {
 	IATO_MCP_Setup_Wizard::init();
 	IATO_MCP_Diagnostics::init();
 	IATO_MCP_Abilities::init();
+	IATO_MCP_Page_CSS::init();
+	IATO_MCP_Page_Fonts::init();
+	IATO_MCP_Preview_Link::init();
+	IATO_MCP_Page_Assets_Admin::init();
 	iato_mcp_maybe_run_migrations();
 }
 add_action( 'plugins_loaded', 'iato_mcp_init' );
@@ -328,6 +337,31 @@ by default (redirect_old_urls). To restructure:
       custom menu links to the new URLs. Redirects cover visitors, but
       internal links should point at the new URLs.
 END_UNIVERSAL;
+
+	// 1.21.0: page assets, only for the tools switched on (they ship off).
+	$asset_tool = static fn( string $tool ): bool => class_exists( 'IATO_MCP_Settings' ) && IATO_MCP_Settings::is_tool_enabled( $tool );
+	$asset_lines = [];
+	if ( $asset_tool( 'set_page_css' ) ) {
+		$asset_lines[] = "set_page_css gives one page its own CSS, printed in that page's head\n"
+			. "only. Prefer it to a <style> block in an HTML widget, but tell the site owner:\n"
+			. "this plugin prints it, so the page loses it if the plugin is deactivated,\n"
+			. "while a style block does not depend on the plugin. CSS that loads anything\n"
+			. 'from another site is refused.';
+	}
+	if ( $asset_tool( 'set_page_fonts' ) ) {
+		$asset_lines[] = "set_page_fonts loads Elementor font families on one page only. Use it\n"
+			. 'instead of @import, which is refused.';
+	}
+	if ( $asset_tool( 'create_preview_link' ) ) {
+		$asset_lines[] = "create_preview_link gives an expiring URL that shows a draft without a\n"
+			. "login: fetch it to check your work before telling the user it is done. Do\n"
+			. 'not post it anywhere public.';
+	}
+	if ( [] !== $asset_lines ) {
+		$instructions .= "\n\nPAGE ASSETS:\n" . implode( "\n", $asset_lines )
+			. "\nFor a large widget, pass return: \"minimal\" to update_elementor_widget to get\n"
+			. 'sizes and hashes back instead of the whole value.';
+	}
 
 	// New-post workflow: fires whenever any non-Gutenberg builder is active.
 	// Plain HTML in post_content renders as an unstyled orphan on builder
