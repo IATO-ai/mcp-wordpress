@@ -892,7 +892,7 @@ class IATO_MCP_Elementor_Atomic_Writer {
 			];
 		}
 		$out += self::markers();
-		$out += self::page_fields( $page, [ 'elementor_save', 'stored_by', 'elementor_save_error', 'skipped_reason', 'skipped_for_elements', 'unregistered_element_types', 'invalid_elements', 'verified', 'verification_diff', 'verification', 'cache_cleared', 'css', 'render_error', 'migrated_by_elementor', 'migration_error', 'editor_autosave_pending', 'editor_autosave', 'save_check' ] );
+		$out += self::page_fields( $page, [ 'elementor_save', 'stored_by', 'elementor_save_error', 'skipped_reason', 'skipped_for_elements', 'unregistered_element_types', 'invalid_elements', 'verified', 'verification_diff', 'verification', 'cache_cleared', 'css', 'content_note', 'migrated_by_elementor', 'migration_error', 'editor_autosave_pending', 'editor_autosave', 'save_check' ] );
 		$sanitized = array_values( array_unique( array_merge( (array) ( $row['sanitized_paths'] ?? [] ), (array) ( $page['sanitized_paths'] ?? [] ) ) ) );
 		if ( $sanitized ) {
 			$out['sanitized']       = true;

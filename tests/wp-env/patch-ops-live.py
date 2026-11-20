@@ -191,6 +191,72 @@ record('minimal: the list stays, values become hashes', op.get('list', {}).get('
 record('...and a difference, when there is one, stays', op.get('stored_matches_input') is True or op.get('stored_difference'), op)
 record('the page is back to [A,B,C]', ids(pid) == [A, B, C], ids(pid))
 
+# 10. post_content (1.21.2): Elementor's text version after every write, including one
+# that changes no text, and never the front-end markup; the reported length is what is
+# stored. Until 1.21.1 a write that left the text unchanged (a widget with no text, a
+# class) stored the front-end markup, and reported its length before the style blocks
+# were taken out. Its own page, with a style-only widget and the inline setting on.
+def content_of(pid):
+    out = subprocess.run(['npx', '@wordpress/env', 'run', SVC, 'wp', 'post', 'get', str(pid), '--field=post_content'], cwd=REPO, capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+    return '\n'.join(line.strip('\r') for line in out.splitlines() if line and not line.startswith(('ℹ', '✔')))
+
+
+def text_version(c):
+    return 'data-elementor-type' not in c and 'elementor-widget-container' not in c and 'pq1css' not in c
+
+
+def stored_length(pid):
+    return int(wp('eval', f'echo strlen( get_post_field( "post_content", {int(pid)} ) );') or -1)
+
+
+def reported(r, c=None):
+    return r.get('post_content_length') == stored_length(pid2)
+
+
+inline_before = wp('option', 'get', 'iato_mcp_inline_markup_enabled')
+wp('option', 'update', 'iato_mcp_inline_markup_enabled', '1')
+try:
+    css = '<style>' + ''.join(f'.pq1css-{i} > .inner{{padding:{i}px}}' for i in range(120)) + '</style>'
+    p2 = call('create_post', {'title': f'{T} content', 'post_type': 'page', 'status': 'publish', 'content': f'<p>{T}</p>'})
+    pid2 = p2.get('id') or p2.get('post_id')
+    tree = [{'id': 'pq1c01', 'elType': 'container', 'settings': {}, 'isInner': False, 'elements': [widget('pq1t01', 'one'), widget('pq1s01', 'css', css), widget('pq1t02', 'two')]}]
+    r = call('update_elementor_data', {'id': pid2, 'elementor_data': json.dumps(tree)})
+    c0 = content_of(pid2)
+    record('content page: the style block is kept in the page data', 'pq1css-1 ' in stored_raw(pid2) and r.get('elementor_save') is True, r)
+    record("...and post_content is Elementor's text version, without the CSS", text_version(c0) and f'{T} one' in c0 and f'{T} two' in c0, c0[:300])
+    for label, ops in (
+        ('a widget with no text, at /-', [{'op': 'add', 'path': '/0/elements/-', 'value': widget('pq1n01', '', f'<div class="{T}-spacer"></div>')}]),
+        ('a widget with no text, at an index', [{'op': 'add', 'path': '/0/elements/1', 'value': widget('pq1n02', '', f'<div class="{T}-spacer"></div>')}]),
+        ('a class change', [{'op': 'replace', 'path': '/0/elements/0/settings/html', 'value': f'<p class="{T}-extra">{T} one</p>'}]),
+    ):
+        r = patch(pid2, ops, **{'return': 'minimal'})
+        c = content_of(pid2)
+        # Elementor's whitespace between widgets can change; the text and the form do not.
+        record(f"{label}: Elementor saved, post_content is still Elementor's text version", r.get('elementor_save') is True and text_version(c) and f'{T} one' in c and f'{T} two' in c and len(c) < len(c0) + 40, [r.get('elementor_save'), r.get('content_updated'), c[:300]])
+        record(f'{label}: the reported length is the stored one', reported(r, c), [r.get('post_content_length'), stored_length(pid2)])
+        x = rollback(r)
+        record(f'{label}: rollback leaves the text version', x.get('success') is True and text_version(content_of(pid2)), x)
+    r = patch(pid2, [{'op': 'add', 'path': '/0/elements/-', 'value': widget('pq1t03', 'three')}])
+    c = content_of(pid2)
+    record('a widget with text: the text version gains it', f'{T} three' in c and text_version(c) and reported(r, c), [r.get('post_content_length'), c[:300]])
+    rollback(r)
+    # Elementor refuses a key with no user (user 0); the plugin stores the page and writes
+    # the same text version itself (until 1.21.1, the front-end markup).
+    owner = wp('option', 'get', 'iato_mcp_key_owner')
+    wp('option', 'update', 'iato_mcp_key_owner', '0')
+    try:
+        r = patch(pid2, [{'op': 'add', 'path': '/0/elements/-', 'value': widget('pq1t04', 'four')}])
+    finally:
+        wp('option', 'update', 'iato_mcp_key_owner', owner)
+    c = content_of(pid2)
+    record("Elementor refused (no user): the plugin wrote Elementor's text version", r.get('elementor_save') is False and r.get('stored_by') == 'plugin' and f'{T} four' in c and text_version(c) and reported(r, c), [r.get('elementor_save'), r.get('stored_by'), r.get('post_content_length'), c[:300]])
+    rollback(r)
+finally:
+    if inline_before:
+        wp('option', 'update', 'iato_mcp_inline_markup_enabled', inline_before)
+    else:
+        wp('option', 'delete', 'iato_mcp_inline_markup_enabled')
+
 failed = [name for name, ok in results if not ok]
 print(f"# {len(results) - len(failed)} passed, {len(failed)} failed" + (': ' + '; '.join(failed) if failed else ''))
 raise SystemExit(1 if failed else 0)

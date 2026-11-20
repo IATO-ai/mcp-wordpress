@@ -4,7 +4,7 @@ Tags: mcp, ai, claude, elementor, seo
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.21.1
+Stable tag: 1.21.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -227,6 +227,11 @@ Images over about 3 KB are sent in pieces with `media_upload_start`, `media_uplo
 
 == Changelog ==
 
+= 1.21.2 =
+* Fix: a write through the Elementor tools that changed no text on the page (a widget with no text, a class or style change) replaced the page's `post_content` with Elementor's full front-end markup: wrapper divs, data attributes and classes, about four times the size. Elementor's own save had already written its text version; the plugin read the unchanged text as "Elementor did not write" and rendered the page itself. `post_content` now stays Elementor's text version, and when Elementor does not save the page (a key with no user, a save that fails), the plugin writes that same text version, as rollback does. Visitors were never affected: they see Elementor's render. A page that already holds the markup gets its text version back with the next write that changes text, or a rollback.
+* Fix: `post_content_length` is the length stored. It was measured before the plugin removed style blocks, so it could be tens of kilobytes too large.
+* Changed: `render_error` is replaced by `content_note`, which says when `post_content` could not be brought up to date. A page holding elements Elementor cannot load keeps its `post_content`, with a note, because Elementor's text version would leave those elements out.
+
 = 1.21.1 =
 * Fix: `update_elementor_patch`: `add` at a list index now inserts before the item there, as RFC 6902 says and the tool's description promised. Since 1.3.0 it replaced the item, so a widget added at an index deleted the widget that stood there. `copy` to an index overwrote the item there and `move` to an index deleted one; both now insert. An index past the end of a list is refused instead of leaving a gap, and an element cannot be moved into its own children. Use `replace` to overwrite. A page that lost an element this way can be put back by rolling back that write's receipt within 90 days, or from Elementor's revisions.
 * Fix: `update_elementor_patch`: `remove` of an item in the middle of a list left a gap in its numbering, so a later op in the same patch could not find the next item, and the list could be stored as a JSON object.
@@ -337,6 +342,9 @@ Images over about 3 KB are sent in pieces with `media_upload_start`, `media_uplo
 The changes in 1.15.1 and earlier are in [changelog.txt](https://plugins.trac.wordpress.org/browser/iato-mcp/trunk/changelog.txt).
 
 == Upgrade Notice ==
+
+= 1.21.2 =
+Fixes Elementor writes that changed no text storing the full front-end markup in post_content. It now stays Elementor's own text version, and post_content_length reports what is stored.
 
 = 1.21.1 =
 Fixes update_elementor_patch: add at an index now inserts, as RFC 6902 says, instead of replacing (deleting) the element there. Use replace to overwrite. Also clearer stored-value and font-source reports.

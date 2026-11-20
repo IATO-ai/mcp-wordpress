@@ -86,6 +86,7 @@ final class ElementorWriterAtomicTest extends TestCase {
 		\Elementor\FakeDocument::$throw_message = 'Settings validation failed. simulated';
 		\Elementor\FakeFilesManager::$cleared   = 0;
 		\Elementor\FakeFrontend::$throw        = false;
+		\Elementor\FakeDb::$mode               = 'ok';
 		IATO_Test_Actor::reset();
 		IATO_Test_Actor::$logins = [ 1 => 'admin', 7 => 'author' ];
 		IATO_MCP_Elementor_Sanitizer::set_functions( [ 'kses' => fn( string $v ) => $v, 'url' => fn( string $v ) => $v, 'css' => fn( string $v ) => $v ] );
@@ -594,25 +595,25 @@ final class ElementorWriterAtomicTest extends TestCase {
 		$this->assertSame( self::env( 'string', 'h4' ), $this->node( 'h1' )['settings']['tag'] );
 	}
 
-	public function test_a_throw_while_the_page_renders_is_reported_and_the_caches_are_still_cleared(): void {
+	public function test_a_throw_while_the_text_version_is_made_is_reported_and_the_caches_are_still_cleared(): void {
 		\Elementor\FakeDocument::$mode          = 'throw';
 		\Elementor\FakeDocument::$throw_message = 'an addon failed in its save code';
-		\Elementor\FakeFrontend::$throw         = true;
+		\Elementor\FakeDb::$mode               = 'throw'; // a widget throws while Elementor's text version is made
 		$r = $this->update( 'h1', [ 'tag' => 'h3' ] );
-		$this->assertSame( 'addon widget failed to render', $r['render_error'] );
+		$this->assertStringContainsString( 'could not be brought up to date', $r['content_note'] );
 		$this->assertTrue( $r['css']['element_cache'] );
 		$this->assertSame( 'elementor_atomic', $r['change_receipt']['target_type'] );
 		$this->assertSame( self::env( 'string', 'h3' ), $this->node( 'h1' )['settings']['tag'] );
 	}
 
-	public function test_a_throw_while_the_page_renders_does_not_leave_elementors_cache_filter_on(): void {
+	public function test_a_throw_while_the_text_version_is_made_does_not_leave_elementors_cache_filter_on(): void {
 		$hook = 'elementor/element/should_render_shortcode';
 		$GLOBALS['wp_filter'][ $hook ] = (object) [ 'callbacks' => [ 10 => [ '__return_true' => [ 'function' => '__return_true' ] ] ] ];
 		\Elementor\FakeDocument::$mode          = 'throw';
 		\Elementor\FakeDocument::$throw_message = 'an addon failed in its save code';
-		\Elementor\FakeFrontend::$throw         = true;
+		\Elementor\FakeDb::$mode               = 'throw'; // a widget throws while Elementor's text version is made
 		$r = $this->update( 'h1', [ 'tag' => 'h3' ] );
-		$this->assertSame( 'addon widget failed to render', $r['render_error'] );
+		$this->assertStringContainsString( 'could not be brought up to date', $r['content_note'] );
 		$this->assertSame( [], $GLOBALS['wp_filter'][ $hook ]->callbacks[10] );
 		unset( $GLOBALS['wp_filter'][ $hook ] );
 	}

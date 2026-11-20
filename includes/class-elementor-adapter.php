@@ -1199,7 +1199,8 @@ class IATO_MCP_Elementor_Adapter {
 	 *   1. Delete this post's CSS meta and element cache
 	 *   2. \Elementor\Plugin::$instance->documents->get($id)->save(['elements' => $decoded])
 	 *   3. Only when Elementor did not store it: the plugin writes the tree itself
-	 *   4. If post_content didn't update, force via Frontend::get_builder_content
+	 *   4. Only when Elementor did not store it: post_content brought up to date with
+	 *      Elementor's text version (refresh_post_content(), as rollback)
 	 *   5. Clear this post's Elementor caches and queue its CSS and the page purge
 	 *      (IATO_MCP_Elementor_Adapter::clear_post_css(), IATO_MCP_Cache)
 	 *   6. Verify the stored tree has the same elements
@@ -1486,46 +1487,41 @@ class IATO_MCP_Elementor_Adapter {
 		}
 
 
-		// 4. Verify post_content actually changed.
-		wp_cache_delete( $post_id, 'posts' );
-		wp_cache_delete( $post_id, 'post_meta' );
-		$new_content     = (string) get_post_field( 'post_content', $post_id );
-		$content_updated = ( $new_content !== $old_content );
-
-		// 5. Frontend fallback.
-		// Guarded (1.14.0): the render runs every widget's code, addons
-		// included, after the tree and its receipts are stored; a throw here is
-		// reported and the cache clears below still run.
-		$render_error = null;
-		if ( $regenerated && ! $content_updated && class_exists( '\Elementor\Plugin' ) ) {
+		// 4. post_content (1.21.2). Elementor's save writes its text version of
+		// the page every time it returns true, changed or not (save_elements() →
+		// Db::save_plain_text(), Elementor 3.35.9 to 4.3.6). Only when Elementor
+		// did not store the page (refused, threw, skipped) does the plugin bring
+		// post_content up to date, with that same text version, as rollback does
+		// (refresh_post_content()). Until 1.21.1 this step rendered the front-end
+		// markup whenever post_content was unchanged, which every write that
+		// changed no text (a class, a style, a widget with no text) set off even
+		// after Elementor's own save. Guarded (1.14.0): the text version runs every
+		// widget's code, addons included, after the tree and its receipts are
+		// stored; a failure is a note and the cache clears below still run.
+		$content_note = null;
+		if ( $regenerated && true !== $elementor_save && class_exists( '\Elementor\Plugin' ) ) {
 			try {
-				$frontend = \Elementor\Plugin::instance()->frontend;
-				if ( $frontend && method_exists( $frontend, 'get_builder_content' ) ) {
-					// Without inline CSS: post_content is text for search and feeds, and
-					// kses would leave a style block's CSS in it as visible text (1.16.0).
-					$rendered = $frontend->get_builder_content( $post_id, false );
-					if ( ! empty( $rendered ) && $rendered !== $old_content ) {
-						IATO_MCP_Inline_Markup::write_without_style_in_content(
-							$encoded,
-							fn() => wp_update_post( wp_slash( [ // wp_update_post() unslashes
-								'ID'           => $post_id,
-								'post_content' => $rendered,
-							] ) )
-						);
-						$new_content     = $rendered;
-						$content_updated = true;
-					}
+				if ( ! empty( $unregistered ) ) {
+					$content_note = "post_content was left as it was: Elementor's text version of this page would leave out the elements Elementor cannot load right now.";
+				} elseif ( isset( self::refresh_post_content( $post_id )['content_note'] ) ) {
+					$content_note = 'The page was saved, but its post_content could not be brought up to date. Search and feeds may show the older text until the page is next saved.';
 				}
 			} catch ( \Throwable $e ) {
-				$render_error = $e->getMessage();
+				$content_note = 'The page was saved, but its post_content could not be brought up to date. Search and feeds may show the older text until the page is next saved.';
 			} finally {
-				// Elementor adds this for the render and removes it only on success.
+				// Elementor adds this while rendering and removes it only on success.
 				// Left on, the next save would write its cache shortcode into post_content.
 				remove_filter( 'elementor/element/should_render_shortcode', '__return_true' );
 			}
 		}
 
-		// This post's caches are cleared after the frontend render above, which
+		// Read back, so the length is what is stored (style blocks already removed).
+		wp_cache_delete( $post_id, 'posts' );
+		wp_cache_delete( $post_id, 'post_meta' );
+		$new_content     = (string) get_post_field( 'post_content', $post_id );
+		$content_updated = ( $new_content !== $old_content );
+
+		// This post's caches are cleared after the text version above, which
 		// would otherwise keep CSS and element HTML rendered while some types could
 		// not be loaded. 1.15.0: after every write. The CSS file is rebuilt only
 		// when Elementor stored the page, which means it could load every element;
@@ -1568,8 +1564,8 @@ class IATO_MCP_Elementor_Adapter {
 		if ( null !== $save_error ) {
 			$result['elementor_save_error'] = $save_error;
 		}
-		if ( null !== $render_error ) {
-			$result['render_error'] = $render_error;
+		if ( null !== $content_note ) {
+			$result['content_note'] = $content_note;
 		}
 		if ( ! empty( $invalid_elsewhere ) ) {
 			$result['invalid_elements'] = $invalid_elsewhere;
@@ -2359,7 +2355,7 @@ class IATO_MCP_Elementor_Adapter {
 		}
 		// 1.13.1: Elementor's save skipped because the page holds element types
 		// Elementor cannot load right now; the plugin stored the page itself.
-		foreach ( [ 'skipped_reason', 'unregistered_element_types', 'skipped_for_elements', 'cache_cleared', 'verification', 'css', 'css_regenerated', 'css_note', 'render_error' ] as $key ) {
+		foreach ( [ 'skipped_reason', 'unregistered_element_types', 'skipped_for_elements', 'cache_cleared', 'verification', 'css', 'css_regenerated', 'css_note', 'content_note' ] as $key ) {
 			if ( isset( $pipeline[ $key ] ) ) {
 				$out[ $key ] = $pipeline[ $key ];
 			}

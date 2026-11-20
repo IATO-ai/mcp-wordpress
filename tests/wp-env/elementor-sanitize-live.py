@@ -177,6 +177,8 @@ record('dry run reports what would be sanitised', r.get('dry_run') and r.get('sa
 record('dry run wrote nothing', meta_text() == PRISTINE)
 r = call('key', 'set_widget_setting', {'id': PAGE, 'widget_id': H, 'key': 'title', 'value': PAYLOAD})
 record('fallback: elementor_save error, stored by plugin, sanitized path', r.get('elementor_save') == 'error' and r.get('stored_by') == 'plugin' and r.get('sanitized') is True and r.get('sanitized_paths') == [f'{H}/settings/title'], r)
+c = wp('post', 'get', str(PAGE), '--field=post_content')
+record("fallback: post_content is Elementor's text version, not the front-end markup (1.21.2)", 'data-elementor-type' not in c and 'elementor-widget-container' not in c and str(r.get('post_content_length')) == wp('eval', f'echo strlen( get_post_field( "post_content", {int(PAGE)} ) );'), [r.get('post_content_length'), c[:300]])
 t = setting(H, 'title') or ''
 record('fallback: script tag and event handler stripped, <b> kept', '<script' not in t and 'onclick' not in t and '<b>Hi</b>' in t, t)
 h = widget(meta(), HTML)['settings']['html']
@@ -372,10 +374,12 @@ c = wp('post', 'get', str(mid), '--field=post_content')
 record('create_media: the description keeps only the text', 'Described' in c and 'iato-m' not in c, {'content': c, 'r': m})
 wp('post', 'delete', str(mid), '--force')
 
-# The frontend fallback in step 5 writes post_content when Elementor's save left it unchanged.
+# A layout-only edit changes no text: Elementor's save writes the same text version, which
+# stays (1.21.2). Until 1.21.1 the plugin then stored the front-end markup instead.
 call('key', 'update_elementor_widget', {'id': PAGE, 'widget_id': H, 'settings_patch': {'align': 'center'}})
 c = wp('post', 'get', str(PAGE), '--field=post_content')
 record('post_content holds no inline CSS after a layout-only edit', '<style' not in c and '{' not in c.split('<p')[0] and '.elementor-' not in c, c[:300])
+record("...and is still Elementor's text version, not the front-end markup", 'data-elementor-type' not in c and 'elementor-widget-container' not in c, c[:300])
 
 print(f'\n# {passes} passed, {len(fails)} failed')
 if fails:

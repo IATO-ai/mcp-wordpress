@@ -459,7 +459,7 @@ IATO_MCP_Server::register_tool(
 
 		// The shared pipeline (IATO_MCP_Elementor_Adapter::write_pipeline): sanitise
 		// what changed, Elementor's own save first, the plugin's write only when
-		// Elementor did not store the tree, frontend fallback, persistence check.
+		// Elementor did not store the tree, Elementor's text version in post_content, persistence check.
 		$pipeline = IATO_MCP_Elementor_Adapter::write_pipeline( $post_id, $decoded, $previous_revision, $stored_elements, $atomic_check['pipeline_opts'] + ( $set_builder ? [ 'set_builder_mode' => true ] : [] ) );
 		if ( is_wp_error( $pipeline ) ) {
 			return IATO_MCP_Elementor_Adapter::tool_error( $pipeline );
