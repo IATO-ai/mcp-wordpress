@@ -4,7 +4,7 @@ Tags: mcp, ai, claude, elementor, seo
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.21.2
+Stable tag: 1.22.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -27,11 +27,12 @@ https://www.youtube.com/watch?v=gSX6Vc9Yask
 
 = What Claude can do =
 
-The plugin has 64 WordPress tools. 57 are on when you install it. The 7 page asset tools stay off until an administrator turns them on. You can switch any tool off under Settings > IATO MCP.
+The plugin has 65 WordPress tools. 58 are on when you install it. The 7 page asset tools stay off until an administrator turns them on. You can switch any tool off under Settings > IATO MCP.
 
 **Posts and pages**
 
 * Read, search, create and edit posts and pages: title, content, slug, excerpt, status, publish date and author
+* Change a sentence, a link or a paragraph in a long post without sending the whole post, with a preview of each change and a rollback
 * Schedule posts, and move pages under a parent page
 * Change the permalink structure, with 301 redirects from the old URLs
 * Read and write post meta. Keys that look like credentials are refused.
@@ -147,7 +148,7 @@ For detailed setup instructions, see the [IATO MCP documentation](https://iato.a
 
 = Do I need an IATO account? =
 
-No. The plugin's 64 WordPress tools work without one, and 57 of them are on by default. An [IATO account](https://iato.ai) adds 12 tools for administrators: starting, checking and listing crawls, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, performance reports and the sitemap. IATO's [Free plan](https://iato.ai/pricing) covers 500 pages per crawl. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
+No. The plugin's 65 WordPress tools work without one, and 58 of them are on by default. An [IATO account](https://iato.ai) adds 12 tools for administrators: starting, checking and listing crawls, SEO audit, broken links, content gaps, orphan pages, navigation audit, taxonomy analysis, AI suggestions, performance reports and the sitemap. IATO's [Free plan](https://iato.ai/pricing) covers 500 pages per crawl. If you manage several client sites, give each site its own IATO API key: a key can read every crawl in its account.
 
 = Which WordPress version is required? =
 
@@ -226,6 +227,13 @@ Images over about 3 KB are sent in pieces with `media_upload_start`, `media_uplo
 6. Page assets: page CSS and fonts, live preview links and page scripts, with buttons to remove or revoke them
 
 == Changelog ==
+
+= 1.22.0 =
+* New: `update_post_content_patch` edits part of a post's content: `replace` a passage, `insert_before` or `insert_after` one, or `append`. The operations apply in order, all or nothing. Each `find` or `anchor` must match exactly once in the content as `get_post` returns it; no match or several matches refuse the whole patch, with the count and where the matches are. The response holds the content's hash and size before and after and each changed span with about 80 characters of context, never the content itself, so a one-sentence edit to a long post no longer sends the article back and forth. It supports `dry_run`, `if_revision` and `idempotency_key`, and its change receipt keeps the full content for `rollback`. Content is sanitised as `update_post` sanitises it. If the post already holds markup that sanitising removes, such as an iframe added in wp-admin, the patch is refused and lists it, unless `allow_markup_removal` is true, because any write would remove it. Posts built with Elementor (use the Elementor tools) or Beaver Builder are refused. Divi and WPBakery text can be patched; their layout is still edited in WP admin.
+* New: `update_post` takes `return: "minimal"`, which leaves `before_value` and `after_value` out of its change receipts and gives a dry run's content, title and excerpt as their size and sha256. The receipts keep the full values for rollback. A call with `content` now returns `content_hash_before`, `content_hash_after`, `bytes_before` and `bytes_after` either way.
+* New: `get_post` returns `content_hash` and `content_bytes`. `content_hash` is what `update_post_content_patch` takes as `if_revision`.
+* Changed: `update_post`'s dry run shows the content as WordPress would store it, after its save filters, so `would_change` and `sanitized_report` match the real write.
+* Changed: Server instructions add an "Editing part of a post" section, and on Divi and WPBakery sites say that text inside a post's shortcodes can be changed with `update_post_content_patch`.
 
 = 1.21.2 =
 * Fix: a write through the Elementor tools that changed no text on the page (a widget with no text, a class or style change) replaced the page's `post_content` with Elementor's full front-end markup: wrapper divs, data attributes and classes, about four times the size. Elementor's own save had already written its text version; the plugin read the unchanged text as "Elementor did not write" and rendered the page itself. `post_content` now stays Elementor's text version, and when Elementor does not save the page (a key with no user, a save that fails), the plugin writes that same text version, as rollback does. Visitors were never affected: they see Elementor's render. A page that already holds the markup gets its text version back with the next write that changes text, or a rollback.
@@ -342,6 +350,9 @@ Images over about 3 KB are sent in pieces with `media_upload_start`, `media_uplo
 The changes in 1.15.1 and earlier are in [changelog.txt](https://plugins.trac.wordpress.org/browser/iato-mcp/trunk/changelog.txt).
 
 == Upgrade Notice ==
+
+= 1.22.0 =
+Adds update_post_content_patch, which changes part of a post's content and returns only hashes, sizes and the changed spans, and return: "minimal" for update_post. Reconnect the AI client to see the new tool.
 
 = 1.21.2 =
 Fixes Elementor writes that changed no text storing the full front-end markup in post_content. It now stays Elementor's own text version, and post_content_length reports what is stored.

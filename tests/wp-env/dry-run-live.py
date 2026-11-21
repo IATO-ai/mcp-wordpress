@@ -95,6 +95,17 @@ record('a contributor cannot edit it', call('update_post', {'id': OTHER, 'title'
 real = call('update_post', {'id': POST, 'title': f'{T} changed', 'excerpt': 'A summary', 'slug': f'{T}-changed'})
 record('the real call stores what the preview said', wp('post', 'get', str(POST), '--field=post_title') == wc['title']['after'] and wp('post', 'get', str(POST), '--field=post_name') == wc['slug']['after'] and wp('post', 'get', str(POST), '--field=post_excerpt') == wc['excerpt']['after'])
 
+print('# update_post_content_patch')
+before = receipts()
+now = call('get_post', {'id': POST})
+patch_ops = [{'op': 'append', 'html': '<p>Added & more</p>'}]
+d = call('update_post_content_patch', {'id': POST, 'ops': patch_ops, 'if_revision': now.get('content_hash'), 'dry_run': True})
+record('it previews', ok_preview(d, 'would_update') and d.get('content_hash_before') == now.get('content_hash') and len(d.get('spans', [])) == 1, d)
+record('nothing was written', receipts() == before and call('get_post', {'id': POST}).get('content_hash') == now.get('content_hash'))
+record('a contributor cannot patch it', call('update_post_content_patch', {'id': POST, 'ops': patch_ops, 'dry_run': True}, 'contributor').get('isError') is True)
+real = call('update_post_content_patch', {'id': POST, 'ops': patch_ops})
+record('the real call stores what the preview said', real.get('content_hash_after') == d.get('content_hash_after') == call('get_post', {'id': POST}).get('content_hash'), real)
+
 print('# update_seo_data')
 def seo_is_active():
     return 'wordpress-seo' in subprocess.run(['npx', '@wordpress/env', 'run', SVC, 'wp', 'plugin', 'list', '--status=active', '--field=name'], cwd=REPO, capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout

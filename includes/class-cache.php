@@ -43,6 +43,7 @@ class IATO_MCP_Cache {
 	public const WRITE_TOOLS = [
 		'create_post',
 		'update_post',
+		'update_post_content_patch',
 		'update_seo_data',
 		'update_alt_text',
 		'create_media',

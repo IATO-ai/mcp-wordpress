@@ -167,6 +167,7 @@ require_once IATO_MCP_DIR . 'includes/class-user-profile.php';
 require_once IATO_MCP_DIR . 'includes/class-element-cache-guard.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-sanitize-report.php';
+require_once IATO_MCP_DIR . 'includes/class-content-patch.php';
 require_once IATO_MCP_DIR . 'includes/class-inline-markup.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
