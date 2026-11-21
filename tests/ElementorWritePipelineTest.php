@@ -622,10 +622,11 @@ namespace {
 			// The plugin's own direct write happened first and is what is stored.
 			$this->assertSame( json_encode( $this->tree() ), IATO_Test_WP::$meta[ self::POST ]['_elementor_data'] );
 			$this->assertTrue( $r['meta_persisted'] );
-			// post_content came from the frontend fallback, not from Elementor's save.
-			$this->assertSame( 1, \Elementor\FakeFrontend::$renders );
-			$this->assertSame( '<h2>frontend fallback render</h2>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			// 1.21.2: post_content is Elementor's text version, as its own save and rollback write.
+			$this->assertSame( 0, \Elementor\FakeFrontend::$renders, 'no front-end render' );
+			$this->assertSame( 'the text of the page', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
 			$this->assertTrue( $r['content_updated'] );
+			$this->assertSame( strlen( 'the text of the page' ), $r['post_content_length'] );
 			$this->assertSame( 'sha256:' . hash( 'sha256', json_encode( $this->tree() ) ), $r['current_revision'] );
 		}
 
@@ -635,8 +636,37 @@ namespace {
 			$this->assertFalse( $r['elementor_save'] );
 			$this->assertArrayNotHasKey( 'elementor_save_error', $r );
 			$this->assertTrue( $r['meta_persisted'] );
-			$this->assertSame( 1, \Elementor\FakeFrontend::$renders );
-			$this->assertSame( '<h2>frontend fallback render</h2>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			$this->assertSame( 0, \Elementor\FakeFrontend::$renders );
+			$this->assertSame( 'the text of the page', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+		}
+
+		public function test_elementors_save_wrote_the_same_text_so_nothing_rewrites_it(): void {
+			// 1.21.2: a write that changes no text (a class, a style, a widget with no
+			// text) leaves Elementor's text version as it was. Until 1.21.1 the plugin
+			// read that as "Elementor did not write" and stored the front-end markup.
+			\Elementor\FakeDocument::$mode                     = 'ok';
+			IATO_Test_WP::$posts[ self::POST ]['post_content'] = '<h2>rendered by elementor</h2>';
+			\Elementor\FakeDb::$text                           = 'must not be written';
+			$r = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->tree(), 'sha256:prev' );
+			$this->assertTrue( $r['elementor_save'] );
+			$this->assertFalse( $r['content_updated'] );
+			$this->assertSame( '<h2>rendered by elementor</h2>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			$this->assertSame( 0, \Elementor\FakeFrontend::$renders );
+			$this->assertSame( strlen( '<h2>rendered by elementor</h2>' ), $r['post_content_length'] );
+			$this->assertArrayNotHasKey( 'content_note', $r );
+		}
+
+		public function test_when_the_text_version_cannot_be_had_the_write_stands_with_a_note(): void {
+			\Elementor\FakeDocument::$mode = 'refuse';
+			\Elementor\FakeDb::$mode       = 'throw';
+			$level = ob_get_level();
+			$r     = IATO_MCP_Elementor_Adapter::write_pipeline( self::POST, $this->tree(), 'sha256:prev' );
+			$this->assertTrue( $r['meta_persisted'] );
+			$this->assertSame( '<h2>old content</h2>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			$this->assertFalse( $r['content_updated'] );
+			$this->assertStringContainsString( 'could not be brought up to date', $r['content_note'] );
+			$this->assertSame( $r['content_note'], IATO_MCP_Elementor_Adapter::pipeline_report( $r )['content_note'], 'the note reaches tool responses' );
+			$this->assertSame( $level, ob_get_level(), 'no buffer left open' );
 		}
 
 		public function test_elementor_save_succeeds_reencoded_meta_still_counts_as_persisted(): void {
@@ -1076,8 +1106,13 @@ namespace {
 			$this->assertSame( [ 'element_count_before' => 4, 'element_count_after' => 4, 'element_count_expected' => 4, 'untouched_identical' => true ], $r['verification'] );
 			$this->assertArrayNotHasKey( '_elementor_element_cache', IATO_Test_WP::$meta[ self::POST ], 'the post\'s element cache is cleared' );
 			$this->assertTrue( $r['cache_cleared']['element_cache'] );
+			// 1.21.2: Elementor's text version would leave the addon widget out, so
+			// post_content stays as it was, as rollback leaves it (refresh_post_content()).
+			$this->assertSame( '<h2>old content</h2>', IATO_Test_WP::$posts[ self::POST ]['post_content'] );
+			$this->assertSame( 0, \Elementor\FakeFrontend::$renders );
+			$this->assertStringContainsString( 'cannot load right now', $r['content_note'] );
 			$report = IATO_MCP_Elementor_Adapter::pipeline_report( $r );
-			foreach ( [ 'skipped_reason', 'unregistered_element_types', 'cache_cleared', 'verification' ] as $key ) {
+			foreach ( [ 'skipped_reason', 'unregistered_element_types', 'cache_cleared', 'verification', 'content_note' ] as $key ) {
 				$this->assertSame( $r[ $key ], $report[ $key ], "{$key} reaches tool responses" );
 			}
 		}
