@@ -92,4 +92,31 @@ final class ServerInstructionsTest extends TestCase {
 		preg_match_all( self::LIST_SENTENCE, $text, $lists );
 		$this->assertSame( [ 'status, title, excerpt, slug, parent, menu_order, date, date_gmt, allow_future and author' ], $lists[1] );
 	}
+
+	/** 1.22.0: update_post_content_patch is named while it is switched on, and its arguments exist. */
+	public function test_the_content_patch_paragraph_follows_the_tool(): void {
+		$text = self::instructions( [ 'divi', 'wpbakery' ] );
+		$this->assertStringContainsString( 'EDITING PART OF A POST', $text );
+		$this->assertStringContainsString( 'Text inside an existing Divi post\'s shortcodes can be changed with', $text );
+		$this->assertStringContainsString( 'Text inside an existing WPBakery post\'s shortcodes can be changed with', $text );
+		$this->assertStringNotContainsString( 'Do not attempt to write Divi post content', $text );
+		$this->assertStringContainsString( '  - Use update_post_content_patch to change part of a post', $text, 'the Gutenberg section' );
+
+		require_once IATO_MCP_DIR . 'includes/tools/wp/tool-content-patch.php';
+		$patch = array_keys( IATO_MCP_Server::get_catalog_entry( 'update_post_content_patch' )['definition']['inputSchema']['properties'] );
+		foreach ( [ 'if_revision', 'dry_run' ] as $argument ) {
+			$this->assertStringContainsString( $argument, $text );
+			$this->assertContains( $argument, $patch );
+		}
+		$this->assertStringContainsString( 'return: "minimal"', $text );
+		$this->assertContains( 'return', self::update_post_properties() );
+	}
+
+	public function test_no_content_patch_paragraph_while_the_tool_is_off(): void {
+		IATO_Test_Abilities_State::$disabled_tools = [ 'update_post_content_patch' ];
+		$text = self::instructions( [ 'divi', 'wpbakery' ] );
+		$this->assertStringNotContainsString( 'update_post_content_patch', $text );
+		$this->assertStringContainsString( 'Do not attempt to write Divi post content.', $text );
+		$this->assertStringContainsString( 'Do not attempt to write WPBakery post content.', $text );
+	}
 }

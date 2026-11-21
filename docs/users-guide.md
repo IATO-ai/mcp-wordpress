@@ -160,7 +160,7 @@ Every tool can be individually enabled or disabled. Tools are organized by categ
 
 | Category | Tools |
 |----------|-------|
-| Content | `get_posts`, `get_post`, `create_post`, `update_post`, `search_posts` |
+| Content | `get_posts`, `get_post`, `create_post`, `update_post`, `update_post_content_patch`, `search_posts` |
 | Site | `get_site_info`, `get_site_settings`, `update_site_settings`, `get_custom_css`, `update_custom_css` |
 | SEO | `get_seo_data`, `update_seo_data` |
 | Media | `get_media`, `update_alt_text`, `create_media`, `media_upload_start`, `media_upload_chunk`, `media_upload_finish` |
@@ -206,7 +206,7 @@ Get full details for a single post or page.
 | `id` | integer | Post ID |
 | `slug` | string | Post slug (alternative to ID) |
 
-Returns title, content, excerpt, status, URL, `parent` (0 for none), `menu_order`, author, categories, tags, `date` (the site's local time), `date_gmt` (UTC, or null for a draft with no date of its own) and `modified` (UTC).
+Returns title, content (`post_content` as stored), `content_hash` and `content_bytes` (since 1.22.0; `content_hash` is what `update_post_content_patch` takes as `if_revision`), excerpt, status, URL, `parent` (0 for none), `menu_order`, author, categories, tags, `date` (the site's local time), `date_gmt` (UTC, or null for a draft with no date of its own) and `modified` (UTC).
 
 #### `create_post`
 
@@ -246,8 +246,12 @@ Update an existing post's title, content, slug, excerpt, status, publish date, a
 | `menu_order` | integer | No | Pages only: the order among its siblings |
 | `confirm_url_break` | boolean | No | Required for a slug change on a post that is not a draft, and for a new parent that moves a URL visitors can open |
 | `redirect_old_urls` | boolean | No | With a new parent: a 301 from each published page's old URL. Default `true` when a published page moves |
+| `return` | string | No | `full` (default) or `minimal`. See below |
+| `dry_run` | boolean | No | Preview without saving |
 
 **Capability:** `edit_posts`
+
+**Response size (1.22.0).** A call with `content` returns `content_hash_before`, `content_hash_after`, `bytes_before` and `bytes_after`. With `return: "minimal"` the change receipts leave out `before_value` and `after_value`, and a dry run's `would_change` gives `content`, `title` and `excerpt` as `{bytes, sha256}`. The receipts keep the full values, so rollback is unchanged. A dry run shows the content as WordPress would store it, after its save filters. To change part of a long post, `update_post_content_patch` sends and returns much less.
 
 **Slugs.** WordPress compares a page's slug with the pages and attachments under the same parent, and a post's with posts. A menu item or a page elsewhere with the same name is no conflict. A post whose new slug gives it a published page's URL gets a warning: WordPress shows the page there. A draft is checked as if published, so its slug does not become `-2` when it goes live. A slug WordPress keeps for itself, such as `feed`, is refused with the slug it would use instead.
 
@@ -270,6 +274,37 @@ Update an existing post's title, content, slug, excerpt, status, publish date, a
 | Scheduled | A past date | Goes live, and the response says so |
 
 Scheduling or publishing because of a date needs the capability to publish. If the permalink has the date in it, the response gives `previous_url`, and WordPress redirects the old address. Rolling back a date restores the date, the UTC date and the status together. The post's modified time is not restored.
+
+#### `update_post_content_patch`
+
+Edit part of a post's content without sending the whole post (1.22.0).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | integer | Yes | Post ID |
+| `ops` | array | Yes | 1 to 50 operations, applied in order, all or nothing |
+| `dry_run` | boolean | No | Preview the hashes, sizes, spans and sanitising without saving |
+| `if_revision` | string | No | `content_hash` from `get_post`, or `content_hash_after` from an earlier patch. Refused with `revision_conflict` (and `current_revision`) if the content has changed |
+| `idempotency_key` | string | No | For writes: the same key and arguments within 60 seconds return the first response with `idempotency_replay: true`; other arguments are refused with `idempotency_replay` |
+| `allow_markup_removal` | boolean | No | See "Markup sanitising removes". Default `false` |
+
+**Capability:** `edit_posts`, and `edit_post` on the post
+
+The operations:
+
+| `op` | Fields | What it does |
+|---|---|---|
+| `replace` | `find`, `replace` | Replaces `find`. `replace: ""` deletes it |
+| `insert_before` | `anchor`, `html` | Inserts `html` in front of `anchor` |
+| `insert_after` | `anchor`, `html` | Inserts `html` after `anchor` |
+| `append` | `html` | Adds `html` at the end, as given, with no line break added |
+
+- **Matching.** `find` and `anchor` are exact: they must match the content as `get_post` returns it, byte for byte, including line breaks and entities such as `&amp;`. Each must match exactly once in the content as the operations before it left it; overlapping matches count. No match is refused with `patch_no_match` and a `hint` when the text is there with entities, Windows line breaks or other capitals. Several matches are refused with `patch_multiple_matches`, the count and up to five `match_contexts`. Either way `op_index` names the operation and nothing is written.
+- **Response.** No content: `content_hash_before`, `content_hash_after`, `bytes_before`, `bytes_after`, and `spans`. Each span is an edited region with `offset_before` and `offset_after` (bytes), `removed` and `inserted` (text over 400 bytes is shown as its start and end, with `removed_cut` / `inserted_cut`), `removed_bytes`, `inserted_bytes`, about 80 characters of `context_before` and `context_after`, and the `ops` behind it. Edits that touch or overlap are one span. `stored_matches_patch` is false when sanitising changed what was stored, with `stored_difference` (`markup_normalized` or `changed`) and `sanitized_report`.
+- **Undo.** The change receipt (`post` / `content`) keeps the full content before and after, so `rollback` restores it byte for byte, and refuses with `rollback_conflict` when the post has changed since.
+- **Markup sanitising removes.** Content is sanitised as `update_post` sanitises it. If the post already holds markup that sanitising removes, such as an iframe or a script added in wp-admin, any write to its content through MCP would remove it, so the patch is refused with `existing_markup_would_be_removed`, listing `removed_tags`, `removed_attributes` and `removed_css`. Ask the site owner; `allow_markup_removal: true` goes ahead, and the response's `existing_markup_removed` says what went.
+- **Page builders.** Refused for posts built with Elementor (`elementor_active`: use the Elementor tools) and Beaver Builder (`beaver_builder_active`), where visitors do not see `post_content`. Divi and WPBakery posts keep their layout in shortcodes in the content: change text inside them, and the response carries a `notice`. On block posts, insert whole blocks with their `<!-- wp: -->` comments.
+- **No change.** A patch that leaves the content as it is, or whose every change sanitising removes, returns `action: "no_change"` and writes nothing.
 
 #### `search_posts`
 

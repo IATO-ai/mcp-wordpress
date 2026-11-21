@@ -3,7 +3,7 @@
  * Plugin Name: IATO MCP
  * Plugin URI:  https://iato.ai/wordpress-mcp
  * Description: Connect Claude and other AI clients to your WordPress site to fix SEO and edit Elementor pages and menus, with a rollback for every change.
- * Version:     1.21.2
+ * Version:     1.22.0
  * Author:      IATO
  * Author URI:  https://iato.ai
  * License:     GPL-2.0-or-later
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'IATO_MCP_VERSION', '1.21.2' );
+define( 'IATO_MCP_VERSION', '1.22.0' );
 define( 'IATO_MCP_FILE', __FILE__ );
 define( 'IATO_MCP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IATO_MCP_URL', plugin_dir_url( __FILE__ ) );
@@ -72,6 +72,7 @@ require_once IATO_MCP_DIR . 'includes/class-mcp-server.php';
 require_once IATO_MCP_DIR . 'includes/class-abilities.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-atomic.php';
 require_once IATO_MCP_DIR . 'includes/class-sanitize-report.php';
+require_once IATO_MCP_DIR . 'includes/class-content-patch.php';
 require_once IATO_MCP_DIR . 'includes/class-inline-markup.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-sanitizer.php';
 require_once IATO_MCP_DIR . 'includes/class-elementor-adapter.php';
@@ -100,6 +101,7 @@ require_once IATO_MCP_DIR . 'includes/tools/wp/tool-site.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-custom-css.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-users.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-posts.php';
+require_once IATO_MCP_DIR . 'includes/tools/wp/tool-content-patch.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-seo.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-media.php';
 require_once IATO_MCP_DIR . 'includes/tools/wp/tool-comments.php';
@@ -341,6 +343,20 @@ by default (redirect_old_urls). To restructure:
       internal links should point at the new URLs.
 END_UNIVERSAL;
 
+	// 1.22.0: editing part of a post, while the tool is switched on.
+	$patch_on = class_exists( 'IATO_MCP_Settings' ) && IATO_MCP_Settings::is_tool_enabled( 'update_post_content_patch' );
+	if ( $patch_on ) {
+		$instructions .= "\n\nEDITING PART OF A POST:\n"
+			. "To change a sentence, a link or a paragraph, use update_post_content_patch\n"
+			. "instead of sending the whole content to update_post:\n"
+			. "   1. Read the post with get_post. Copy find and anchor from its content\n"
+			. "      exactly; each must match once.\n"
+			. "   2. Pass its content_hash as if_revision, and dry run first.\n"
+			. "   3. Check the spans in the response; it does not return the content.\n"
+			. "It refuses posts built with Elementor or Beaver Builder. When you do send\n"
+			. 'whole content to update_post, pass return: "minimal" to get hashes back.';
+	}
+
 	// 1.21.0: page assets, only for the tools switched on (they ship off).
 	$asset_tool = static fn( string $tool ): bool => class_exists( 'IATO_MCP_Settings' ) && IATO_MCP_Settings::is_tool_enabled( $tool );
 	$asset_lines = [];
@@ -458,28 +474,38 @@ When get_page_builder returns 'gutenberg':
   - Content is stored as block markup in post_content
   - Standard WordPress CRUD tools apply
 END_GUTENBERG;
+		if ( $patch_on ) {
+			$instructions .= "\n  - Use update_post_content_patch to change part of a post";
+		}
 	}
 
+	// 1.22.0: their content is shortcodes in post_content, so text can be patched.
+	$shortcode_writes = static fn( string $label ): string => $patch_on
+		? "Text inside an existing {$label} post's shortcodes can be changed with\nupdate_post_content_patch; layout is edited in WP admin."
+		: "Do not attempt to write {$label} post content.";
+
 	if ( $builders['divi'] ) {
+		$divi_writes   = $shortcode_writes( 'Divi' );
 		$instructions .= "\n\n" . <<<END_DIVI
 DIVI DETECTED BUT NOT FULLY SUPPORTED:
 When get_page_builder returns 'divi', inform the user:
   'This post was built with Divi. IATO MCP does not yet have
    dedicated Divi write tools. Please edit this post directly
    in the WordPress admin until Divi support ships.'
-Do not attempt to write Divi post content.
+{$divi_writes}
 Read operations are safe.
 END_DIVI;
 	}
 
 	if ( $builders['wpbakery'] ) {
-		$instructions .= "\n\n" . <<<END_WPBAKERY
+		$wpbakery_writes = $shortcode_writes( 'WPBakery' );
+		$instructions   .= "\n\n" . <<<END_WPBAKERY
 WPBAKERY DETECTED BUT NOT FULLY SUPPORTED:
 When get_page_builder returns 'wpbakery', inform the user:
   'This post was built with WPBakery. IATO MCP does not yet
    have dedicated WPBakery write tools. Please edit this post
    directly in the WordPress admin until WPBakery support ships.'
-Do not attempt to write WPBakery post content.
+{$wpbakery_writes}
 Read operations are safe.
 END_WPBAKERY;
 	}
@@ -597,6 +623,10 @@ function iato_mcp_page_builder_notice( string $context = 'create', int $post_id 
 	}
 
 	$action_phrase = 'update' === $context ? 'updated with plain HTML' : 'created with plain HTML';
+	// 1.22.0: Divi and WPBakery keep their content in post_content, so text inside an existing post can be patched.
+	if ( in_array( $builder, [ 'divi', 'wpbakery' ], true ) && class_exists( 'IATO_MCP_Settings' ) && IATO_MCP_Settings::is_tool_enabled( 'update_post_content_patch' ) ) {
+		return "This site uses {$label}. The post was {$action_phrase} and may not match your site's existing post format. {$label} layouts cannot be built via MCP — direct the user to edit this post in WP admin to match site styling. To change text inside an existing {$label} post, use update_post_content_patch.";
+	}
 	return "This site uses {$label}. The post was {$action_phrase} and may not match your site's existing post format. {$label} content cannot currently be written via MCP — direct the user to edit this post in WP admin to match site styling.";
 }
 

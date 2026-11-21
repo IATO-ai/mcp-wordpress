@@ -94,7 +94,7 @@ IATO_MCP_Server::register_tool(
 IATO_MCP_Server::register_tool(
 	'get_post',
 	[
-		'description' => 'Get full details for a single post or page by ID or slug, including parent (0 for none) and menu_order. date is the site\'s local time, date_gmt is UTC (null for a draft with no date of its own), and modified is UTC. Pass include_shadowing=true to detect when an Elementor Theme Builder template overrides the slug-based render (small extra cost; default off to keep the hot path fast).',
+		'description' => 'Get full details for a single post or page by ID or slug, including parent (0 for none) and menu_order. content is post_content as stored; content_hash is what update_post_content_patch takes as if_revision. date is the site\'s local time, date_gmt is UTC (null for a draft with no date of its own), and modified is UTC. Pass include_shadowing=true to detect when an Elementor Theme Builder template overrides the slug-based render (small extra cost; default off to keep the hot path fast).',
 		'inputSchema' => [
 			'type'       => 'object',
 			'properties' => [
@@ -140,6 +140,9 @@ IATO_MCP_Server::register_tool(
 			'title'      => get_the_title( $post ),
 			'slug'       => $post->post_name,
 			'content'    => $post->post_content,
+			// 1.22.0: for update_post_content_patch's if_revision.
+			'content_hash'  => IATO_MCP_Content_Patch::hash( (string) $post->post_content ),
+			'content_bytes' => strlen( (string) $post->post_content ),
 			'excerpt'    => $post->post_excerpt,
 			'status'     => $post->post_status,
 			'url'        => get_permalink( $post ),
@@ -660,6 +663,38 @@ function iato_mcp_finish_page_move( WP_Post $fresh, array $attr_before, ?array $
 	return $out;
 }
 
+/**
+ * Content as WordPress will store it (1.22.0): the plugin's markup rule, as
+ * update_post applies it, then the save filters (kses under the MCP lock), then
+ * emoji as entities on a utf8 column, as wp_insert_post() does. For dry runs and
+ * update_post_content_patch's checks; other plugins' wp_insert_post_data filters
+ * are not run.
+ */
+function iato_mcp_post_content_as_stored( string $content, int $post_id ): string {
+	$value = (string) wp_unslash( sanitize_post_field( 'post_content', wp_slash( IATO_MCP_Elementor_Sanitizer::clean_markup( $content ) ), $post_id, 'db' ) );
+	global $wpdb;
+	if ( isset( $wpdb ) && is_object( $wpdb ) && method_exists( $wpdb, 'get_col_charset' ) && 'utf8' === $wpdb->get_col_charset( $wpdb->posts, 'post_content' ) && function_exists( 'wp_encode_emoji' ) ) {
+		$value = wp_encode_emoji( $value );
+	}
+	return $value;
+}
+
+/**
+ * update_post's dry run with return: "minimal" (1.22.0): content, title and excerpt
+ * become their bytes and sha256, as the Elementor tools' minimal values do.
+ */
+function iato_mcp_update_post_minimal_preview( array $would ): array {
+	foreach ( [ 'title', 'content', 'excerpt' ] as $field ) {
+		if ( isset( $would[ $field ] ) ) {
+			$would[ $field ] = [
+				'before' => IATO_MCP_Elementor_Adapter::value_digest( (string) $would[ $field ]['before'] ),
+				'after'  => IATO_MCP_Elementor_Adapter::value_digest( (string) $would[ $field ]['after'] ),
+			];
+		}
+	}
+	return $would;
+}
+
 // ── update_post ───────────────────────────────────────────────────────────────
 
 IATO_MCP_Server::register_tool(
@@ -684,6 +719,7 @@ IATO_MCP_Server::register_tool(
 				'allow_future'       => [ 'type' => 'boolean', 'description' => 'A published post given a future date is refused with future_date_on_published unless this is true; it then becomes scheduled and leaves the site until that date. A draft keeps its status and uses the date when published. Default: false.' ],
 				'author'             => [ 'type' => 'integer', 'description' => IATO_MCP_POST_AUTHOR_HELP ],
 				'dry_run'            => [ 'type' => 'boolean', 'description' => 'Preview without saving (default: false).' ],
+				'return'             => [ 'type' => 'string',  'enum' => [ 'full', 'minimal' ], 'description' => 'full (default): change receipts hold before_value and after_value. minimal: receipts leave them out, and a dry run gives content, title and excerpt as their bytes and sha256. Either way, a call with content returns content_hash_before, content_hash_after, bytes_before and bytes_after. For editing part of a long post, update_post_content_patch sends and returns less.' ],
 			],
 			'required' => [ 'id' ],
 		],
@@ -702,6 +738,12 @@ IATO_MCP_Server::register_tool(
 		$object_check = IATO_MCP_Auth::require_cap( 'edit_post', $post_id );
 		if ( is_wp_error( $object_check ) ) {
 			return $object_check;
+		}
+
+		// 1.22.0: full or minimal.
+		$return = IATO_MCP_Elementor_Adapter::return_mode( $args );
+		if ( is_wp_error( $return ) ) {
+			return IATO_MCP_Server::refusal( $return );
 		}
 
 		// 1.20.0: page attributes, read first: the slug check uses the parent the post will have.
@@ -873,9 +915,14 @@ IATO_MCP_Server::register_tool(
 		];
 
 		if ( ! empty( $args['dry_run'] ) ) {
+			// 1.22.0: content as WordPress would store it, after its save filters too.
+			$would_store = $postarr;
+			if ( isset( $postarr['post_content'] ) ) {
+				$would_store['post_content'] = iato_mcp_post_content_as_stored( (string) $args['content'], $post_id );
+			}
 			$would = [];
 			foreach ( $before as $field => $before_value ) {
-				$after_value = $postarr[ $field_to_postkey[ $field ] ];
+				$after_value = $would_store[ $field_to_postkey[ $field ] ];
 				if ( $before_value !== $after_value ) {
 					$would[ $field ] = [ 'before' => $before_value, 'after' => $after_value ];
 				}
@@ -899,9 +946,12 @@ IATO_MCP_Server::register_tool(
 				'dry_run'      => true,
 				'action'       => [] === $would ? 'no_change' : 'would_update',
 				'id'           => $post_id,
-				'would_change' => (object) $would,
+				'would_change' => (object) ( 'minimal' === $return ? iato_mcp_update_post_minimal_preview( $would ) : $would ),
 				'not_checked'  => IATO_MCP_Server::DRY_RUN_NOT_CHECKED,
 			];
+			if ( isset( $would_store['post_content'] ) ) {
+				$data += IATO_MCP_Content_Patch::sizes( (string) $post->post_content, $would_store['post_content'] );
+			}
 			if ( null !== $move ) {
 				$data += iato_mcp_page_move_preview( $move );
 				$warnings = array_merge( $warnings, $move['warnings'] );
@@ -913,7 +963,7 @@ IATO_MCP_Server::register_tool(
 			if ( null !== $note ) {
 				$data['status_note'] = $note;
 			}
-			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, (object) ( $postarr + [ 'post_title' => $post->post_title, 'post_content' => $post->post_content, 'post_excerpt' => $post->post_excerpt ] ) ) );
+			IATO_MCP_Sanitize_Report::add_to( $data, iato_mcp_post_sanitize_report( $args, (object) ( $would_store + [ 'post_title' => $post->post_title, 'post_content' => $post->post_content, 'post_excerpt' => $post->post_excerpt ] ) ) );
 			if ( isset( $args['content'] ) ) {
 				$notice = iato_mcp_page_builder_notice( 'update', $post_id );
 				if ( null !== $notice ) {
@@ -993,6 +1043,13 @@ IATO_MCP_Server::register_tool(
 			$data['warnings'] = $warnings;
 		}
 
+		if ( isset( $args['content'] ) ) {
+			$data += IATO_MCP_Content_Patch::sizes( (string) $post->post_content, (string) $fresh->post_content );
+		}
+		if ( 'minimal' === $return ) {
+			// The receipt rows keep the full values for rollback.
+			$receipts = array_map( [ 'IATO_MCP_Change_Receipt', 'slim' ], $receipts );
+		}
 		if ( count( $receipts ) === 1 ) {
 			IATO_MCP_Change_Receipt::append( $data, $receipts[0] );
 		} elseif ( count( $receipts ) > 1 ) {

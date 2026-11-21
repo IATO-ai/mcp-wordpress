@@ -23,6 +23,7 @@
    - [Tier 5 — Compact Format on Reads](#tier-5--compact-format-on-reads)
    - [Tier 6 — Semantic Helpers](#tier-6--semantic-helpers)
    - [Atomic (Editor V4) writes (1.14.0)](#atomic-editor-v4-writes-1140)
+   - [Content patches (1.22.0)](#content-patches-1220)
 4. [Backwards Compatibility](#backwards-compatibility)
 5. [Phased Rollout](#phased-rollout)
 6. [Regression Fixtures](#regression-fixtures)
@@ -662,6 +663,52 @@ Returns `{id, location, before, after, conditions_revision, verified, verified_r
 | `note` | Plain language to pass on |
 
 Capped at 50 entries, then `… and N more`. `sanitized_report` can come without `sanitized` when markup was kept and the value did not change. Kept markup can still report `sanitized: true` with no removals, because kses normalises it (`viewBox` to `viewbox`, which browsers read correctly). `inherited_sanitized_report` covers `inherit_settings_from`.
+
+---
+
+## Content patches (1.22.0)
+
+`update_post_content_patch` brings this surface's patch model to posts not built with Elementor: exact-match edits to `post_content`, and a response without the content. The pure rules are `IATO_MCP_Content_Patch` (`includes/class-content-patch.php`); the tool is `includes/tools/wp/tool-content-patch.php`.
+
+**Request.** `{id, ops, dry_run?, if_revision?, idempotency_key?, allow_markup_removal?}`. `ops` is a list of 1–50 of `{op: "replace", find, replace}`, `{op: "insert_before", anchor, html}`, `{op: "insert_after", anchor, html}`, `{op: "append", html}`, applied in order, all or nothing. `find` and `anchor` match byte for byte, exactly once, in the content as the earlier operations left it; overlapping matches count. `if_revision` is `'sha256:'` + the hex SHA-256 of `post_content`, as `get_post`'s `content_hash` gives it (the format `compute_revision()` uses). `idempotency_key` applies to writes only, through `IATO_MCP_Elementor_Concurrency`.
+
+**Response.**
+
+```json
+{
+  "post_id": 123,
+  "action": "updated",
+  "modified": "2026-11-20 14:00:00",
+  "content_hash_before": "sha256:…",
+  "content_hash_after": "sha256:…",
+  "bytes_before": 18234,
+  "bytes_after": 18236,
+  "spans": [
+    {
+      "ops": [0],
+      "offset_before": 4211,
+      "offset_after": 4211,
+      "removed_bytes": 17,
+      "inserted_bytes": 19,
+      "context_before": "…80 characters…",
+      "removed": "the lazy dog.</p>",
+      "inserted": "the sleepy cat.</p>",
+      "context_after": "…80 characters…"
+    }
+  ],
+  "stored_matches_patch": true,
+  "change_receipt": { "change_id": "wr_…", "target_type": "post", "field": "content", "applied_at": "…", "actor": { "…": "…" } },
+  "cache": { "…": "…" }
+}
+```
+
+`action` is `updated`, `would_update` (dry run) or `no_change`. Spans are the edited regions of the result in content order, with edits that touch or overlap merged; offsets and byte counts are bytes, shown text is cut at character boundaries (over 400 bytes: start, `…`, end, with `removed_cut` / `inserted_cut`), and bytes that are not UTF-8 are shown as U+FFFD. Spans describe the patch before sanitising: when sanitising changed what was stored, `stored_matches_patch` is false, with `stored_difference` (`["markup_normalized"]` or `["changed"]`) and `sanitized_report`; the hashes and sizes are always of what is (or would be) stored. A dry run adds `dry_run: true` and `not_checked`, and predicts the stored content with `iato_mcp_post_content_as_stored()`: the plugin's markup rule, `sanitize_post_field( 'post_content', …, 'db' )` and, on a `utf8` column, `wp_encode_emoji()`.
+
+**Receipt.** `post` / `content` with the full before and after values, the same receipt `update_post` writes, so rollback and its conflict check are unchanged. The response carries it slim (`IATO_MCP_Change_Receipt::slim()`).
+
+**Errors** (JSON, through `IATO_MCP_Server::refusal()`): `invalid_patch_ops`, `invalid_patch_op` (`op_index`), `patch_no_match` (`op_index`, `op`, `field`, `matches: 0`, `hint?`), `patch_multiple_matches` (`matches`, `match_contexts` ≤ 5, `matches_counted_up_to` past 1,000), `revision_conflict` (`current_revision`), `idempotency_replay`, `elementor_active` (`use_tools`), `beaver_builder_active`, `existing_markup_would_be_removed` (`removed_tags`, `removed_attributes`, `removed_css`: sanitising the post as it stands would remove them; `allow_markup_removal: true` proceeds and reports `existing_markup_removed`).
+
+**`update_post` `return`.** `full` (default) or `minimal`: minimal slims the change receipts and gives a dry run's `would_change` content, title and excerpt as `{bytes, sha256}` (`value_digest()`). A call with `content` returns `content_hash_before`, `content_hash_after`, `bytes_before`, `bytes_after` in either mode.
 
 ---
 
